@@ -1,0 +1,5 @@
+[workspace]
+members = [
+  "crates/hearthd",
+]
+resolver = "3"
