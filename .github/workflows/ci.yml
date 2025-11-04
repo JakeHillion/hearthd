@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  nix:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@7ab6e7fd29da88e74b1e314a4ae9ac6b5cda3801 # v31
+
+    - name: Build all outputs
+      run: |
+        # Get current system using Nix
+        SYSTEM=$(nix-instantiate --eval -E builtins.currentSystem | tr -d '"')
+
+        echo "Building for system: $SYSTEM"
+
+        echo "Discovering all buildable outputs..."
+        buildable_outputs=$(nix flake show --json | jq -r --arg system "$SYSTEM" '
+          [
+            (.packages[$system] // {} | to_entries[] | ".#packages." + $system + "." + .key),
+            (.checks[$system] // {} | to_entries[] | ".#checks." + $system + "." + .key),
+            (.devShells[$system] // {} | to_entries[] | ".#devShells." + $system + "." + .key)
+          ] | .[]
+        ')
+
+        echo "Found buildable outputs:"
+        echo "$buildable_outputs"
+
+        echo "Building all outputs..."
+        echo "$buildable_outputs" | xargs nix build
+
+    - name: Flake check
+      run: nix flake check
