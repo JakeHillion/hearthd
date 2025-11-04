@@ -3,3 +3,14 @@ members = [
   "crates/hearthd",
 ]
 resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+license = "Apache-2.0"
+
+[workspace.metadata.crane]
+name = "hearthd-workspace"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
