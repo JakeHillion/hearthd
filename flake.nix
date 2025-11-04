@@ -1,6 +1,15 @@
 {
   description = "hearthd";
 
+  nixConfig = {
+    extra-substituters = [
+      "https://hearthd.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "hearthd.cachix.org-1:Lt/GTziCLrilXymMR1tEX1TZkv5ZEqF6JKfyS5aGEqY="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
