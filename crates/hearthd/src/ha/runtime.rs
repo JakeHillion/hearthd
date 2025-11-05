@@ -1,6 +1,7 @@
 //! Runtime coordination for Home Assistant integrations.
 
-use super::protocol::Message;
+use super::protocol::{Message, Response};
+use crate::config::{LocationConfig, HaIntegrationConfig};
 use std::collections::HashMap;
 
 /// Entity state and metadata
@@ -19,6 +20,12 @@ pub struct Runtime {
 
     /// Loaded integration domains
     integrations: HashMap<String, IntegrationState>,
+
+    /// System location configuration
+    location: LocationConfig,
+
+    /// HA integration configurations, indexed by entry_id
+    ha_configs: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,16 +35,24 @@ struct IntegrationState {
 }
 
 impl Runtime {
-    /// Create a new runtime instance
-    pub fn new() -> Self {
+    /// Create a new runtime instance with location config
+    pub fn new(location: LocationConfig) -> Self {
         Self {
             entities: HashMap::new(),
             integrations: HashMap::new(),
+            location,
+            ha_configs: HashMap::new(),
         }
     }
 
+    /// Register an HA integration config
+    pub fn register_ha_config(&mut self, entry_id: String, config: serde_json::Value) {
+        self.ha_configs.insert(entry_id, config);
+    }
+
     /// Handle a message from the Python sandbox
-    pub fn handle_message(&mut self, message: Message) {
+    /// Returns an optional response to send back
+    pub fn handle_message(&mut self, message: Message) -> Option<Response> {
         match message {
             Message::EntityRegister {
                 entry_id: _,
@@ -56,6 +71,7 @@ impl Runtime {
                         attributes: serde_json::Value::Object(Default::default()),
                     },
                 );
+                None
             }
             Message::StateUpdate {
                 entity_id,
@@ -67,13 +83,15 @@ impl Runtime {
                     entity.state = state;
                     entity.attributes = attributes;
                 }
+                None
             }
             Message::SetupComplete { entry_id, platforms: _ } => {
-                // TODO: Track entry_id instead of domain
                 tracing::info!("Integration {} setup complete", entry_id);
+                None
             }
             Message::SetupFailed { entry_id, error } => {
                 tracing::error!("Integration {} failed to load: {}", entry_id, error);
+                None
             }
             Message::Log { level, logger, message } => {
                 use super::protocol::LogLevel;
@@ -83,18 +101,48 @@ impl Runtime {
                     LogLevel::Warning => tracing::warn!("[{}] {}", logger, message),
                     LogLevel::Error => tracing::error!("[{}] {}", logger, message),
                 }
+                None
             }
             Message::Ready => {
                 tracing::info!("Python sandbox is ready");
+                None
+            }
+            Message::GetConfig { request_id, keys } => {
+                let mut config = HashMap::new();
+
+                for key in keys {
+                    match key.as_str() {
+                        // System location keys
+                        "latitude" => {
+                            config.insert(key, serde_json::json!(self.location.latitude));
+                        }
+                        "longitude" => {
+                            config.insert(key, serde_json::json!(self.location.longitude));
+                        }
+                        "elevation" => {
+                            config.insert(key, serde_json::json!(self.location.elevation));
+                        }
+                        "timezone" => {
+                            config.insert(key, serde_json::json!(self.location.timezone));
+                        }
+                        // Integration-specific keys would be looked up from ha_configs
+                        // For now, we'll handle this when we connect entry_id to requests
+                        _ => {
+                            tracing::warn!("Unknown config key requested: {}", key);
+                        }
+                    }
+                }
+
+                Some(Response::ConfigResponse { request_id, config })
             }
             // TODO: Handle remaining message types
             Message::HttpRequest { .. }
             | Message::ScheduleUpdate { .. }
             | Message::CancelTimer { .. }
-            | Message::GetConfig { .. }
             | Message::UnloadComplete { .. }
             | Message::UpdateComplete { .. } => {
                 tracing::warn!("Unhandled message type: {:?}", message);
+                None
             }
         }
     }
@@ -107,11 +155,5 @@ impl Runtime {
     /// Get all entities
     pub fn entities(&self) -> impl Iterator<Item = &Entity> {
         self.entities.values()
-    }
-}
-
-impl Default for Runtime {
-    fn default() -> Self {
-        Self::new()
     }
 }
