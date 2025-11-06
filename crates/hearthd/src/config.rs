@@ -24,6 +24,11 @@ pub struct SystemConfig {
 
     /// Log level (trace, debug, info, warn, error)
     pub log_level: String,
+
+    /// Path to Home Assistant core source checkout
+    /// Used to import integrations from homeassistant.components
+    /// Our shims take priority for core modules
+    pub ha_source_path: PathBuf,
 }
 
 /// Global location configuration

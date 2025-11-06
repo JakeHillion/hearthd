@@ -7,6 +7,7 @@ It communicates with the Rust parent via a socketpair passed as a file descripto
 """
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -79,15 +80,107 @@ class IntegrationRunner:
         logging.debug(f"[{entry_id}] Config: {config}")
 
         try:
-            # TODO: Dynamically import and setup integration
-            # For now, just acknowledge
-            logging.info(f"[{entry_id}] Integration setup not yet implemented")
+            # Import the integration module
+            module_name = f"homeassistant.components.{domain}"
+            logging.info(f"[{entry_id}] Importing {module_name}")
+
+            try:
+                integration_module = importlib.import_module(module_name)
+            except ModuleNotFoundError as e:
+                # Check if this is a missing dependency or missing integration
+                error_msg = str(e)
+                if "No module named" in error_msg:
+                    # Extract the missing module name
+                    missing_module = error_msg.split("'")[1] if "'" in error_msg else "unknown"
+
+                    # Check if it's the integration itself or a dependency
+                    if missing_module == module_name or missing_module == domain:
+                        # Integration doesn't exist
+                        error_type = "integration_not_found"
+                        error_detail = f"Integration '{domain}' not found in Home Assistant source"
+                    else:
+                        # Missing Python dependency
+                        error_type = "missing_dependency"
+                        error_detail = f"Integration '{domain}' requires Python package '{missing_module}' which is not installed"
+
+                    logging.error(f"[{entry_id}] {error_detail}")
+                    await self.transport.send_message({
+                        "type": "setup_failed",
+                        "entry_id": entry_id,
+                        "error": error_detail,
+                        "error_type": error_type,
+                        "missing_package": missing_module
+                    })
+                    return
+                else:
+                    raise
+            except ImportError as e:
+                # Other import errors
+                logging.error(f"[{entry_id}] Import error: {e}", exc_info=True)
+                await self.transport.send_message({
+                    "type": "setup_failed",
+                    "entry_id": entry_id,
+                    "error": f"Failed to import integration '{domain}': {e}",
+                    "error_type": "import_error"
+                })
+                return
+
+            # Check if async_setup_entry exists
+            if not hasattr(integration_module, "async_setup_entry"):
+                error_detail = f"Integration '{domain}' has no async_setup_entry function"
+                logging.error(f"[{entry_id}] {error_detail}")
+                await self.transport.send_message({
+                    "type": "setup_failed",
+                    "entry_id": entry_id,
+                    "error": error_detail,
+                    "error_type": "invalid_integration"
+                })
+                return
+
+            logging.info(f"[{entry_id}] Successfully imported {domain} integration")
+
+            # Create HomeAssistant instance
+            from homeassistant.core import HomeAssistant, ConfigEntry
+            from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+            # TODO: Get socket FD from self to pass to HomeAssistant
+            hass = HomeAssistant()
+            hass._reader = self.transport.reader
+            hass._writer = self.transport.writer
+            hass._send_message = self.transport.send_message
+            hass._recv_message = self.transport.recv_response
+
+            # Create ConfigEntry
+            config_entry = ConfigEntry(
+                entry_id=entry_id,
+                domain=domain,
+                data=config
+            )
+
+            # Call async_setup_entry
+            logging.info(f"[{entry_id}] Calling async_setup_entry for {domain}")
+
+            # For platforms that support async_setup_entry signature with async_add_entities
+            setup_result = await integration_module.async_setup_entry(hass, config_entry)
+
+            if setup_result is False:
+                error_detail = f"Integration '{domain}' async_setup_entry returned False"
+                logging.error(f"[{entry_id}] {error_detail}")
+                await self.transport.send_message({
+                    "type": "setup_failed",
+                    "entry_id": entry_id,
+                    "error": error_detail,
+                    "error_type": "setup_failed"
+                })
+                return
+
+            logging.info(f"[{entry_id}] Integration setup complete")
 
             # Send setup complete
             await self.transport.send_message({
                 "type": "setup_complete",
                 "entry_id": entry_id,
-                "platforms": []  # TODO: Get from integration
+                "platforms": []  # TODO: Extract platforms from forward_entry_setups
             })
 
         except Exception as e:
@@ -95,7 +188,8 @@ class IntegrationRunner:
             await self.transport.send_message({
                 "type": "setup_failed",
                 "entry_id": entry_id,
-                "error": str(e)
+                "error": str(e),
+                "error_type": "unknown"
             })
 
     async def handle_response(self, response: Dict[str, Any]):
@@ -193,10 +287,27 @@ async def main():
     # Get configuration from environment
     socket_fd_str = os.environ.get("HEARTHD_SOCKET_FD")
     entry_id = os.environ.get("HEARTHD_ENTRY_ID", "unknown")
+    ha_source_path = os.environ.get("HEARTHD_HA_SOURCE")
 
     if not socket_fd_str:
         print("ERROR: HEARTHD_SOCKET_FD not set", file=sys.stderr)
         sys.exit(1)
+
+    if not ha_source_path:
+        print("ERROR: HEARTHD_HA_SOURCE not set", file=sys.stderr)
+        sys.exit(1)
+
+    # Add paths to sys.path in the correct order:
+    # 1. Our shims go first (higher priority for homeassistant.core, etc.)
+    shim_path = os.path.join(os.path.dirname(__file__), "homeassistant-shim")
+    if shim_path not in sys.path:
+        sys.path.insert(0, shim_path)
+        print(f"Added shim path {shim_path} to sys.path", file=sys.stderr)
+
+    # 2. HA source goes second (for homeassistant.components.*)
+    if ha_source_path not in sys.path:
+        sys.path.append(ha_source_path)
+        print(f"Added HA source {ha_source_path} to sys.path", file=sys.stderr)
 
     # Setup logging
     setup_logging(entry_id)

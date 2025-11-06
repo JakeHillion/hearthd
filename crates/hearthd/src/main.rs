@@ -56,7 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Create and start sandbox
         let mut sandbox = Sandbox::new(
             entry_id.clone(),
-            config.system.python_path.clone()
+            config.system.python_path.clone(),
+            config.system.ha_source_path.clone()
         );
 
         match sandbox.start().await {
@@ -82,7 +83,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Wait for setup response
                                 match sandbox.recv().await {
                                     Ok(response_msg) => {
-                                        tracing::info!("[{}] Setup response: {:?}", entry_id, response_msg);
+                                        use ha::protocol::Message;
+                                        match response_msg {
+                                            Message::SetupComplete { ref entry_id, ref platforms } => {
+                                                tracing::info!("[{}] Integration setup complete", entry_id);
+                                                tracing::info!("[{}] Platforms: {:?}", entry_id, platforms);
+                                            }
+                                            Message::SetupFailed { ref entry_id, ref error, ref error_type, ref missing_package } => {
+                                                match error_type.as_deref() {
+                                                    Some("missing_dependency") => {
+                                                        tracing::error!(
+                                                            "[{}] Integration setup failed: Missing Python dependency",
+                                                            entry_id
+                                                        );
+                                                        if let Some(pkg) = missing_package {
+                                                            tracing::error!(
+                                                                "[{}] Please install: pip install {}",
+                                                                entry_id, pkg
+                                                            );
+                                                        }
+                                                        tracing::error!("[{}] Error: {}", entry_id, error);
+                                                    }
+                                                    Some("integration_not_found") => {
+                                                        tracing::error!(
+                                                            "[{}] Integration setup failed: Integration not found in HA source",
+                                                            entry_id
+                                                        );
+                                                        tracing::error!("[{}] Error: {}", entry_id, error);
+                                                    }
+                                                    Some("invalid_integration") => {
+                                                        tracing::error!(
+                                                            "[{}] Integration setup failed: Invalid integration structure",
+                                                            entry_id
+                                                        );
+                                                        tracing::error!("[{}] Error: {}", entry_id, error);
+                                                    }
+                                                    _ => {
+                                                        tracing::error!("[{}] Integration setup failed: {}", entry_id, error);
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                tracing::warn!("[{}] Unexpected message: {:?}", entry_id, response_msg);
+                                            }
+                                        }
                                     }
                                     Err(e) => {
                                         tracing::error!("[{}] Failed to receive setup response: {}", entry_id, e);

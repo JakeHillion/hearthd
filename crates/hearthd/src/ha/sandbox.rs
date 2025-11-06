@@ -20,6 +20,9 @@ pub struct Sandbox {
     /// Path to the Python executable
     python_path: PathBuf,
 
+    /// Path to Home Assistant source (for integrations)
+    ha_source_path: PathBuf,
+
     /// Tokio Unix stream for communication with Python
     stream: Option<BufReader<UnixStream>>,
 
@@ -29,10 +32,11 @@ pub struct Sandbox {
 
 impl Sandbox {
     /// Create a new sandbox instance
-    pub fn new(entry_id: String, python_path: PathBuf) -> Self {
+    pub fn new(entry_id: String, python_path: PathBuf, ha_source_path: PathBuf) -> Self {
         Self {
             entry_id,
             python_path,
+            ha_source_path,
             stream: None,
             child: None,
         }
@@ -56,6 +60,7 @@ impl Sandbox {
             .arg("python/runner.py")
             .env("HEARTHD_SOCKET_FD", python_fd.to_string())
             .env("HEARTHD_ENTRY_ID", &self.entry_id)
+            .env("HEARTHD_HA_SOURCE", &self.ha_source_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

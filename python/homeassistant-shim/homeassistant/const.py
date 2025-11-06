@@ -1,36 +1,62 @@
-"""Constants for Home Assistant."""
+"""Constants for Home Assistant shim."""
 
 from enum import StrEnum
 
-__version__ = "2024.12.0"
 
-# Platforms
 class Platform(StrEnum):
     """Available entity platforms."""
 
-    BINARY_SENSOR = "binary_sensor"
-    SENSOR = "sensor"
-    SWITCH = "switch"
     WEATHER = "weather"
-    # Add more as needed
+    SENSOR = "sensor"
+    BINARY_SENSOR = "binary_sensor"
+    SWITCH = "switch"
+    LIGHT = "light"
+    CLIMATE = "climate"
 
-# Config keys
-CONF_API_KEY = "api_key"
+
+# Configuration keys
+CONF_NAME = "name"
 CONF_LATITUDE = "latitude"
 CONF_LONGITUDE = "longitude"
-CONF_NAME = "name"
+CONF_ELEVATION = "elevation"
 
-# Entity attributes
-ATTR_ATTRIBUTION = "attribution"
-ATTR_DEVICE_CLASS = "device_class"
-ATTR_ENTITY_PICTURE = "entity_picture"
-ATTR_FRIENDLY_NAME = "friendly_name"
-ATTR_ICON = "icon"
-ATTR_SUPPORTED_FEATURES = "supported_features"
-ATTR_UNIT_OF_MEASUREMENT = "unit_of_measurement"
+# Events
+EVENT_CORE_CONFIG_UPDATE = "core_config_update"
 
-# States
-STATE_ON = "on"
-STATE_OFF = "off"
-STATE_UNAVAILABLE = "unavailable"
-STATE_UNKNOWN = "unknown"
+
+# Units - Temperature
+class UnitOfTemperature(StrEnum):
+    """Temperature units."""
+
+    CELSIUS = "°C"
+    FAHRENHEIT = "°F"
+    KELVIN = "K"
+
+
+# Units - Pressure
+class UnitOfPressure(StrEnum):
+    """Pressure units."""
+
+    HPA = "hPa"
+    MBAR = "mbar"
+    INHG = "inHg"
+    PSI = "psi"
+
+
+# Units - Speed
+class UnitOfSpeed(StrEnum):
+    """Speed units."""
+
+    KILOMETERS_PER_HOUR = "km/h"
+    METERS_PER_SECOND = "m/s"
+    MILES_PER_HOUR = "mph"
+    KNOTS = "kn"
+
+
+# Units - Precipitation
+class UnitOfPrecipitationDepth(StrEnum):
+    """Precipitation depth units."""
+
+    MILLIMETERS = "mm"
+    CENTIMETERS = "cm"
+    INCHES = "in"

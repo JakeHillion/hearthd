@@ -81,7 +81,14 @@ pub enum Message {
     },
 
     /// Integration setup failed
-    SetupFailed { entry_id: String, error: String },
+    SetupFailed {
+        entry_id: String,
+        error: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        missing_package: Option<String>,
+    },
 
     /// Integration unload completed
     UnloadComplete { entry_id: String },

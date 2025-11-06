@@ -4,9 +4,32 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from functools import wraps
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def callback(func: Callable) -> Callable:
+    """Decorator to mark a function as a callback."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+
+class UnitSystem:
+    """Unit system stub."""
+
+    def __init__(self):
+        self.name = "metric"
+
+    @property
+    def temperature_unit(self):
+        return "°C"
+
+
+METRIC_SYSTEM = UnitSystem()
 
 
 class Config:
@@ -19,6 +42,45 @@ class Config:
         self.time_zone: str = "UTC"
         self.components: set[str] = set()
         self.config_dir: str = "/tmp/hearthd"
+        self.location_name: str = "Home"
+        self.units = METRIC_SYSTEM
+
+
+class ConfigEntries:
+    """Config entries registry stub."""
+
+    def __init__(self, hass: "HomeAssistant"):
+        self.hass = hass
+        self._entries: dict[str, "ConfigEntry"] = {}
+
+    def async_entries(self, domain: str | None = None) -> list["ConfigEntry"]:
+        """Get all config entries or filter by domain."""
+        if domain is None:
+            return list(self._entries.values())
+        return [e for e in self._entries.values() if e.domain == domain]
+
+
+class ConfigEntry:
+    """Config entry stub."""
+
+    def __init__(self, entry_id: str, domain: str, data: dict[str, Any]):
+        self.entry_id = entry_id
+        self.domain = domain
+        self.data = data
+        self.runtime_data: Any = None
+        self._on_unload_callbacks: list[Callable] = []
+
+    def async_on_unload(self, func: Callable) -> None:
+        """Register a callback to call on unload."""
+        self._on_unload_callbacks.append(func)
+
+
+class Event:
+    """Event object."""
+
+    def __init__(self, event_type: str, data: dict[str, Any] | None = None):
+        self.event_type = event_type
+        self.data = data or {}
 
 
 class HomeAssistant:
@@ -31,6 +93,7 @@ class HomeAssistant:
         self.states = StateRegistry(self)
         self.bus = EventBus(self)
         self.services = ServiceRegistry(self)
+        self.config_entries = ConfigEntries(self)
         self.loop = asyncio.get_event_loop()
 
         self._reader: asyncio.StreamReader | None = None
@@ -111,10 +174,33 @@ class EventBus:
 
     def __init__(self, hass: HomeAssistant):
         self.hass = hass
+        self._listeners: dict[str, list[Callable]] = {}
 
     async def async_fire(self, event_type: str, event_data: dict[str, Any] | None = None):
         """Fire an event."""
         _LOGGER.debug("Event: %s - %s", event_type, event_data)
+
+        # Call registered listeners
+        if event_type in self._listeners:
+            event = Event(event_type, event_data)
+            for listener in self._listeners[event_type]:
+                if asyncio.iscoroutinefunction(listener):
+                    await listener(event)
+                else:
+                    listener(event)
+
+    def async_listen(self, event_type: str, listener: Callable) -> Callable:
+        """Listen for events of a specific type."""
+        if event_type not in self._listeners:
+            self._listeners[event_type] = []
+        self._listeners[event_type].append(listener)
+
+        # Return a function that can be called to remove the listener
+        def remove_listener():
+            if event_type in self._listeners:
+                self._listeners[event_type].remove(listener)
+
+        return remove_listener
 
 
 class ServiceRegistry:

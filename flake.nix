@@ -94,6 +94,7 @@
             packages = with pkgs; [
               rust-analyzer
               treefmtEval.config.build.wrapper
+              python313
             ];
           };
 

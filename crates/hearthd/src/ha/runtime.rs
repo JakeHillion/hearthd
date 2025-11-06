@@ -89,8 +89,18 @@ impl Runtime {
                 tracing::info!("Integration {} setup complete", entry_id);
                 None
             }
-            Message::SetupFailed { entry_id, error } => {
-                tracing::error!("Integration {} failed to load: {}", entry_id, error);
+            Message::SetupFailed { entry_id, error, error_type, missing_package } => {
+                match error_type.as_deref() {
+                    Some("missing_dependency") => {
+                        tracing::error!("Integration {} failed: Missing Python dependency", entry_id);
+                        if let Some(pkg) = missing_package {
+                            tracing::error!("Please install: pip install {}", pkg);
+                        }
+                    }
+                    _ => {
+                        tracing::error!("Integration {} failed to load: {}", entry_id, error);
+                    }
+                }
                 None
             }
             Message::Log { level, logger, message } => {
