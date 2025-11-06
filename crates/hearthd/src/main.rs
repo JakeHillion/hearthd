@@ -4,25 +4,64 @@ mod ha;
 use config::Config;
 use ha::{protocol::Response, Runtime, Sandbox};
 use std::collections::HashMap;
+use std::path::PathBuf;
+
+use clap::Parser;
+use tracing::debug;
+use tracing::info;
+use tracing_subscriber::filter::Targets as TracingTargets;
+use tracing_subscriber::prelude::*;
+
+#[derive(Parser)]
+#[command(name = "hearthd")]
+#[command(about = "Home automation daemon for location-based services", long_about = None)]
+struct Cli {
+    /// Path to the configuration file
+    #[arg(
+        short,
+        long,
+        value_name = "FILE",
+        default_value = "/etc/hearthd/config.toml"
+    )]
+    config: PathBuf,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse config file path from CLI or use default
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "hearthd.toml".to_string());
+    let cli = Cli::parse();
 
-    // Load configuration
-    let config = Config::from_file(&config_path)?;
+    // Check if config file exists
+    if !cli.config.exists() {
+        eprintln!(
+            "Error: Configuration file not found: {}",
+            cli.config.display()
+        );
+        eprintln!("Please create a configuration file or specify a different path with --config");
+        return Err("Configuration file not found".into());
+    }
 
-    // Initialize tracing/logging
-    tracing_subscriber::fmt()
-        .with_max_level(parse_log_level(&config.system.log_level))
+    // Load and parse the configuration file
+    let config = Config::from_file(&cli.config)?;
+
+    // Initialize tracing/logging with proper log level configuration
+    let log_targets = {
+        let mut t = TracingTargets::new().with_default(config.logging.level);
+        for (target, lvl) in &config.logging.overrides {
+            t = t.with_target(target.clone(), *lvl);
+        }
+        t
+    };
+    tracing_subscriber::registry()
+        .with(log_targets)
+        .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("hearthd starting");
-    tracing::info!("Loaded config from: {}", config_path);
-    tracing::info!(
+    // Debug print config at debug level
+    debug!("Configuration loaded: {:#?}", config);
+
+    info!("hearthd starting");
+    info!("Loaded config from: {}", cli.config.display());
+    info!(
         "System location: {}, {} (elevation: {}m, timezone: {})",
         config.location.latitude,
         config.location.longitude,
@@ -39,14 +78,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start all enabled HA integrations
     for (entry_id, integration) in config.integrations.ha {
         if !integration.enabled {
-            tracing::info!("Integration {} is disabled, skipping", entry_id);
+            info!("Integration {} is disabled, skipping", entry_id);
             continue;
         }
 
-        tracing::info!(
+        info!(
             "Starting HA integration: {} (domain: {})",
-            entry_id,
-            integration.domain
+            entry_id, integration.domain
         );
 
         // Convert config to JSON for Python
@@ -57,17 +95,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut sandbox = Sandbox::new(
             entry_id.clone(),
             config.system.python_path.clone(),
-            config.system.ha_source_path.clone()
+            config.system.ha_source_path.clone(),
         );
 
         match sandbox.start().await {
             Ok(()) => {
-                tracing::info!("[{}] Sandbox started successfully", entry_id);
+                info!("[{}] Sandbox started successfully", entry_id);
 
                 // Wait for Ready message
                 match sandbox.recv().await {
                     Ok(msg) => {
-                        tracing::info!("[{}] Received message: {:?}", entry_id, msg);
+                        info!("[{}] Received message: {:?}", entry_id, msg);
 
                         // Send SetupIntegration
                         let setup = Response::SetupIntegration {
@@ -78,18 +116,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         match sandbox.send(setup).await {
                             Ok(()) => {
-                                tracing::info!("[{}] Sent SetupIntegration", entry_id);
+                                info!("[{}] Sent SetupIntegration", entry_id);
 
                                 // Wait for setup response
                                 match sandbox.recv().await {
                                     Ok(response_msg) => {
                                         use ha::protocol::Message;
                                         match response_msg {
-                                            Message::SetupComplete { ref entry_id, ref platforms } => {
-                                                tracing::info!("[{}] Integration setup complete", entry_id);
-                                                tracing::info!("[{}] Platforms: {:?}", entry_id, platforms);
+                                            Message::SetupComplete {
+                                                ref entry_id,
+                                                ref platforms,
+                                            } => {
+                                                info!("[{}] Integration setup complete", entry_id);
+                                                info!("[{}] Platforms: {:?}", entry_id, platforms);
                                             }
-                                            Message::SetupFailed { ref entry_id, ref error, ref error_type, ref missing_package } => {
+                                            Message::SetupFailed {
+                                                ref entry_id,
+                                                ref error,
+                                                ref error_type,
+                                                ref missing_package,
+                                            } => {
                                                 match error_type.as_deref() {
                                                     Some("missing_dependency") => {
                                                         tracing::error!(
@@ -102,39 +148,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                 entry_id, pkg
                                                             );
                                                         }
-                                                        tracing::error!("[{}] Error: {}", entry_id, error);
+                                                        tracing::error!(
+                                                            "[{}] Error: {}",
+                                                            entry_id, error
+                                                        );
                                                     }
                                                     Some("integration_not_found") => {
                                                         tracing::error!(
                                                             "[{}] Integration setup failed: Integration not found in HA source",
                                                             entry_id
                                                         );
-                                                        tracing::error!("[{}] Error: {}", entry_id, error);
+                                                        tracing::error!(
+                                                            "[{}] Error: {}",
+                                                            entry_id, error
+                                                        );
                                                     }
                                                     Some("invalid_integration") => {
                                                         tracing::error!(
                                                             "[{}] Integration setup failed: Invalid integration structure",
                                                             entry_id
                                                         );
-                                                        tracing::error!("[{}] Error: {}", entry_id, error);
+                                                        tracing::error!(
+                                                            "[{}] Error: {}",
+                                                            entry_id, error
+                                                        );
                                                     }
                                                     _ => {
-                                                        tracing::error!("[{}] Integration setup failed: {}", entry_id, error);
+                                                        tracing::error!(
+                                                            "[{}] Integration setup failed: {}",
+                                                            entry_id, error
+                                                        );
                                                     }
                                                 }
                                             }
                                             _ => {
-                                                tracing::warn!("[{}] Unexpected message: {:?}", entry_id, response_msg);
+                                                tracing::warn!(
+                                                    "[{}] Unexpected message: {:?}",
+                                                    entry_id, response_msg
+                                                );
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        tracing::error!("[{}] Failed to receive setup response: {}", entry_id, e);
+                                        tracing::error!(
+                                            "[{}] Failed to receive setup response: {}",
+                                            entry_id, e
+                                        );
                                     }
                                 }
                             }
                             Err(e) => {
-                                tracing::error!("[{}] Failed to send SetupIntegration: {}", entry_id, e);
+                                tracing::error!(
+                                    "[{}] Failed to send SetupIntegration: {}",
+                                    entry_id, e
+                                );
                             }
                         }
                     }
@@ -151,13 +218,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    tracing::info!("All integrations started, entering main loop");
-    tracing::info!("Press Ctrl+C to exit");
+    info!("All integrations started, entering main loop");
+    info!("Press Ctrl+C to exit");
 
     // Wait for Ctrl+C
     match tokio::signal::ctrl_c().await {
         Ok(()) => {
-            tracing::info!("Received shutdown signal");
+            info!("Received shutdown signal");
         }
         Err(e) => {
             tracing::error!("Failed to listen for shutdown signal: {}", e);
@@ -165,29 +232,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Shutdown all sandboxes
-    tracing::info!("Shutting down sandboxes...");
+    info!("Shutting down sandboxes...");
     for (entry_id, mut sandbox) in sandboxes {
-        tracing::info!("[{}] Stopping sandbox", entry_id);
+        info!("[{}] Stopping sandbox", entry_id);
         if let Err(e) = sandbox.stop().await {
             tracing::error!("[{}] Error stopping sandbox: {}", entry_id, e);
         }
     }
 
-    tracing::info!("hearthd shutdown complete");
+    info!("hearthd shutdown complete");
 
     Ok(())
-}
-
-fn parse_log_level(level: &str) -> tracing::Level {
-    match level.to_lowercase().as_str() {
-        "trace" => tracing::Level::TRACE,
-        "debug" => tracing::Level::DEBUG,
-        "info" => tracing::Level::INFO,
-        "warn" | "warning" => tracing::Level::WARN,
-        "error" => tracing::Level::ERROR,
-        _ => {
-            eprintln!("Invalid log level '{}', defaulting to INFO", level);
-            tracing::Level::INFO
-        }
-    }
 }

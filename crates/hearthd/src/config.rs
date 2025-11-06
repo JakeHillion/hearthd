@@ -4,16 +4,53 @@
 //! - Native integrations: Statically typed Rust structs (e.g., MQTT, HTTP API)
 //! - Home Assistant integrations: Dynamically typed, validated by Python code
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use tracing_subscriber::filter::LevelFilter;
 
 /// Top-level configuration structure
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub system: SystemConfig,
     pub location: LocationConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
     pub integrations: IntegrationsConfig,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    #[default]
+    Info,
+    Warn,
+    Error,
+}
+
+impl From<LogLevel> for LevelFilter {
+    fn from(level: LogLevel) -> Self {
+        match level {
+            LogLevel::Trace => LevelFilter::TRACE,
+            LogLevel::Debug => LevelFilter::DEBUG,
+            LogLevel::Info => LevelFilter::INFO,
+            LogLevel::Warn => LevelFilter::WARN,
+            LogLevel::Error => LevelFilter::ERROR,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct LoggingConfig {
+    /// Log level: trace, debug, info, warn, error
+    #[serde(default)]
+    pub level: LogLevel,
+
+    #[serde(default)]
+    pub overrides: HashMap<String, LogLevel>,
 }
 
 /// System-wide configuration
@@ -21,9 +58,6 @@ pub struct Config {
 pub struct SystemConfig {
     /// Path to Python interpreter
     pub python_path: PathBuf,
-
-    /// Log level (trace, debug, info, warn, error)
-    pub log_level: String,
 
     /// Path to Home Assistant core source checkout
     /// Used to import integrations from homeassistant.components
@@ -148,7 +182,7 @@ mod tests {
         let toml = r#"
             [system]
             python_path = "/usr/bin/python3"
-            log_level = "info"
+            ha_source_path = "/tmp/ha"
 
             [location]
             latitude = 59.9139
@@ -156,11 +190,14 @@ mod tests {
             elevation = 10
             timezone = "Europe/Oslo"
 
+            [logging]
+            level = "info"
+
             [integrations]
         "#;
 
         let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.system.log_level, "info");
+        assert_eq!(config.logging.level, LogLevel::Info);
         assert_eq!(config.location.latitude, 59.9139);
         assert!(config.integrations.ha.is_empty());
     }
@@ -170,7 +207,7 @@ mod tests {
         let toml = r#"
             [system]
             python_path = "/usr/bin/python3"
-            log_level = "info"
+            ha_source_path = "/tmp/ha"
 
             [location]
             latitude = 59.9139
@@ -204,7 +241,7 @@ mod tests {
         let toml = r#"
             [system]
             python_path = "/usr/bin/python3"
-            log_level = "debug"
+            ha_source_path = "/tmp/ha"
 
             [location]
             latitude = 59.9139
