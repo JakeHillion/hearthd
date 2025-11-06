@@ -1,0 +1,28 @@
+# Example configuration for hearthd
+#
+# Copy this file to /etc/hearthd/config.toml and customize as needed
+
+[logging]
+# Log level: trace, debug, info, warn, error
+# Use "debug" or "trace" to see the full config printed at startup
+level = "info"
+
+[locations]
+# The default location to use
+default = "home"
+
+# Define your locations with coordinates
+[locations.home]
+latitude = 59.9139
+longitude = 10.7522
+elevation_m = 10  # optional, elevation in meters
+timezone = "Europe/Oslo"  # optional, can be inferred from lat/long
+
+[locations.work]
+latitude = 59.9110
+longitude = 10.7579
+# elevation_m and timezone are optional and can be omitted
+
+[integrations]
+# Integrations section (currently must be empty)
+# This will be used for future integrations
