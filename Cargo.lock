@@ -36,6 +36,7 @@ checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
 name = "hearthd"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "thiserror",

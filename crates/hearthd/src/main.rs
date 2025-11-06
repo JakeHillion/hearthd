@@ -2,10 +2,11 @@ mod config;
 mod ha;
 
 use config::Config;
-use ha::Runtime;
-use std::path::PathBuf;
+use ha::{protocol::Response, Runtime, Sandbox};
+use std::collections::HashMap;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse config file path from CLI or use default
     let config_path = std::env::args()
         .nth(1)
@@ -32,7 +33,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create runtime with location config
     let mut runtime = Runtime::new(config.location);
 
-    // Register all enabled HA integrations
+    // Track sandboxes
+    let mut sandboxes: HashMap<String, Sandbox> = HashMap::new();
+
+    // Start all enabled HA integrations
     for (entry_id, integration) in config.integrations.ha {
         if !integration.enabled {
             tracing::info!("Integration {} is disabled, skipping", entry_id);
@@ -40,24 +44,92 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         tracing::info!(
-            "Registering HA integration: {} (domain: {})",
+            "Starting HA integration: {} (domain: {})",
             entry_id,
             integration.domain
         );
 
         // Convert config to JSON for Python
         let config_json = integration.config_to_json()?;
-        runtime.register_ha_config(entry_id.clone(), config_json);
+        runtime.register_ha_config(entry_id.clone(), config_json.clone());
 
-        // TODO: Create sandbox and send SetupIntegration message
-        tracing::debug!(
-            "Integration {} registered, sandbox creation not yet implemented",
-            entry_id
+        // Create and start sandbox
+        let mut sandbox = Sandbox::new(
+            entry_id.clone(),
+            config.system.python_path.clone()
         );
+
+        match sandbox.start().await {
+            Ok(()) => {
+                tracing::info!("[{}] Sandbox started successfully", entry_id);
+
+                // Wait for Ready message
+                match sandbox.recv().await {
+                    Ok(msg) => {
+                        tracing::info!("[{}] Received message: {:?}", entry_id, msg);
+
+                        // Send SetupIntegration
+                        let setup = Response::SetupIntegration {
+                            domain: integration.domain.clone(),
+                            entry_id: entry_id.clone(),
+                            config: config_json,
+                        };
+
+                        match sandbox.send(setup).await {
+                            Ok(()) => {
+                                tracing::info!("[{}] Sent SetupIntegration", entry_id);
+
+                                // Wait for setup response
+                                match sandbox.recv().await {
+                                    Ok(response_msg) => {
+                                        tracing::info!("[{}] Setup response: {:?}", entry_id, response_msg);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("[{}] Failed to receive setup response: {}", entry_id, e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("[{}] Failed to send SetupIntegration: {}", entry_id, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("[{}] Failed to receive Ready message: {}", entry_id, e);
+                    }
+                }
+
+                sandboxes.insert(entry_id.clone(), sandbox);
+            }
+            Err(e) => {
+                tracing::error!("[{}] Failed to start sandbox: {}", entry_id, e);
+            }
+        }
     }
 
-    tracing::info!("Configuration complete");
-    tracing::info!("Note: Sandbox and main loop not yet implemented");
+    tracing::info!("All integrations started, entering main loop");
+    tracing::info!("Press Ctrl+C to exit");
+
+    // Wait for Ctrl+C
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => {
+            tracing::info!("Received shutdown signal");
+        }
+        Err(e) => {
+            tracing::error!("Failed to listen for shutdown signal: {}", e);
+        }
+    }
+
+    // Shutdown all sandboxes
+    tracing::info!("Shutting down sandboxes...");
+    for (entry_id, mut sandbox) in sandboxes {
+        tracing::info!("[{}] Stopping sandbox", entry_id);
+        if let Err(e) = sandbox.stop().await {
+            tracing::error!("[{}] Error stopping sandbox: {}", entry_id, e);
+        }
+    }
+
+    tracing::info!("hearthd shutdown complete");
 
     Ok(())
 }
