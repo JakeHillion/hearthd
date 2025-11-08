@@ -1,3 +1,4 @@
+mod automation;
 mod config;
 
 use config::Config;
