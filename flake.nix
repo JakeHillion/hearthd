@@ -82,6 +82,44 @@
             cargoExtraArgs = "-p hearthd";
             src = fileSetForCrate ./crates/hearthd;
           });
+
+          # Python environment with Home Assistant dependencies
+          haPythonEnv = pkgs.python313.withPackages (ps: with ps; [
+            # Core HA shim dependencies
+            aiohttp
+            voluptuous
+            python-dateutil
+
+            # Integration-specific packages
+            pymetno # Met.no weather integration
+
+            # Common HA component dependencies
+            orjson
+            aiozoneinfo
+            python-slugify
+            xmltodict
+
+            # Additional transitive dependencies
+            aiohappyeyeballs
+            aiosignal
+            async-timeout
+            atomicwrites
+            attrs
+            ciso8601
+            frozenlist
+            idna
+            multidict
+            propcache
+            text-unidecode
+            tzdata
+            yarl
+          ]);
+
+          # Python interpreter with HA dependencies
+          haPythonInterpreter = pkgs.writeShellScriptBin "ha-python" ''
+            export PYTHONPATH="${haPythonEnv}/${haPythonEnv.sitePackages}:${./python/homeassistant-shim}:$PYTHONPATH"
+            exec ${haPythonEnv}/bin/python "$@"
+          '';
         in
         {
           packages = {
@@ -96,6 +134,12 @@
               treefmtEval.config.build.wrapper
               python313
             ];
+
+            shellHook = ''
+              export HA_PYTHON_INTERPRETER="${haPythonInterpreter}/bin/ha-python"
+              echo "HA Python environment available:"
+              echo "  HA_PYTHON_INTERPRETER=$HA_PYTHON_INTERPRETER"
+            '';
           };
 
           formatter = treefmtEval.config.build.wrapper;
