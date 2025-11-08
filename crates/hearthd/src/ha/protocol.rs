@@ -21,7 +21,7 @@ pub enum Message {
 
     /// Register a new entity
     EntityRegister {
-        entry_id: String,
+        name: String,
         entity_id: String,
         platform: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,7 +61,7 @@ pub enum Message {
     /// Schedule a periodic update timer
     ScheduleUpdate {
         timer_id: String,
-        entry_id: String,
+        name: String,
         interval_seconds: u64,
     },
 
@@ -76,13 +76,13 @@ pub enum Message {
 
     /// Integration setup completed successfully
     SetupComplete {
-        entry_id: String,
+        name: String,
         platforms: Vec<String>,
     },
 
     /// Integration setup failed
     SetupFailed {
-        entry_id: String,
+        name: String,
         error: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         error_type: Option<String>,
@@ -91,7 +91,7 @@ pub enum Message {
     },
 
     /// Integration unload completed
-    UnloadComplete { entry_id: String },
+    UnloadComplete { name: String },
 
     /// Coordinator update completed
     UpdateComplete {
@@ -146,15 +146,15 @@ pub enum Response {
     /// Request to set up an integration
     SetupIntegration {
         domain: String,
-        entry_id: String,
+        name: String,
         config: serde_json::Value,
     },
 
     /// Request to unload an integration
-    UnloadIntegration { entry_id: String },
+    UnloadIntegration { name: String },
 
     /// Timer fired, trigger coordinator update
-    TriggerUpdate { timer_id: String, entry_id: String },
+    TriggerUpdate { timer_id: String, name: String },
 
     /// HTTP request result
     #[allow(clippy::enum_variant_names)] // Response suffix is appropriate here
@@ -180,19 +180,3 @@ pub enum Response {
     /// Error response
     Error { message: String },
 }
-
-#[derive(Debug, thiserror::Error)]
-pub enum ProtocolError {
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-
-    #[error("Invalid message type: {0}")]
-    #[allow(dead_code)] // WIP: May be used for protocol validation
-    InvalidMessageType(String),
-
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-#[allow(dead_code)] // WIP: Will be used for protocol operations
-pub type Result<T> = std::result::Result<T, ProtocolError>;

@@ -64,25 +64,25 @@ class SocketTransport:
 class IntegrationRunner:
     """Main runner for Home Assistant integrations."""
 
-    def __init__(self, entry_id: str, transport: SocketTransport):
-        self.entry_id = entry_id
+    def __init__(self, name: str, transport: SocketTransport):
+        self.name = name
         self.transport = transport
         self.running = True
 
     async def send_ready(self):
         """Send Ready message to indicate we're initialized."""
         await self.transport.send_message({"type": "ready"})
-        logging.info(f"[{self.entry_id}] Sent Ready message")
+        logging.info(f"[{self.name}] Sent Ready message")
 
-    async def handle_setup_integration(self, domain: str, entry_id: str, config: Dict[str, Any]):
+    async def handle_setup_integration(self, domain: str, name: str, config: Dict[str, Any]):
         """Handle SetupIntegration response from Rust."""
-        logging.info(f"[{entry_id}] Setting up integration: {domain}")
-        logging.debug(f"[{entry_id}] Config: {config}")
+        logging.info(f"[{name}] Setting up integration: {domain}")
+        logging.debug(f"[{name}] Config: {config}")
 
         try:
             # Import the integration module
             module_name = f"homeassistant.components.{domain}"
-            logging.info(f"[{entry_id}] Importing {module_name}")
+            logging.info(f"[{name}] Importing {module_name}")
 
             try:
                 integration_module = importlib.import_module(module_name)
@@ -103,10 +103,10 @@ class IntegrationRunner:
                         error_type = "missing_dependency"
                         error_detail = f"Integration '{domain}' requires Python package '{missing_module}' which is not installed"
 
-                    logging.error(f"[{entry_id}] {error_detail}")
+                    logging.error(f"[{name}] {error_detail}")
                     await self.transport.send_message({
                         "type": "setup_failed",
-                        "entry_id": entry_id,
+                        "name": name,
                         "error": error_detail,
                         "error_type": error_type,
                         "missing_package": missing_module
@@ -116,10 +116,10 @@ class IntegrationRunner:
                     raise
             except ImportError as e:
                 # Other import errors
-                logging.error(f"[{entry_id}] Import error: {e}", exc_info=True)
+                logging.error(f"[{name}] Import error: {e}", exc_info=True)
                 await self.transport.send_message({
                     "type": "setup_failed",
-                    "entry_id": entry_id,
+                    "name": name,
                     "error": f"Failed to import integration '{domain}': {e}",
                     "error_type": "import_error"
                 })
@@ -128,16 +128,16 @@ class IntegrationRunner:
             # Check if async_setup_entry exists
             if not hasattr(integration_module, "async_setup_entry"):
                 error_detail = f"Integration '{domain}' has no async_setup_entry function"
-                logging.error(f"[{entry_id}] {error_detail}")
+                logging.error(f"[{name}] {error_detail}")
                 await self.transport.send_message({
                     "type": "setup_failed",
-                    "entry_id": entry_id,
+                    "name": name,
                     "error": error_detail,
                     "error_type": "invalid_integration"
                 })
                 return
 
-            logging.info(f"[{entry_id}] Successfully imported {domain} integration")
+            logging.info(f"[{name}] Successfully imported {domain} integration")
 
             # Create HomeAssistant instance
             from homeassistant.core import HomeAssistant, ConfigEntry
@@ -152,42 +152,42 @@ class IntegrationRunner:
 
             # Create ConfigEntry
             config_entry = ConfigEntry(
-                entry_id=entry_id,
+                entry_id=name,
                 domain=domain,
                 data=config
             )
 
             # Call async_setup_entry
-            logging.info(f"[{entry_id}] Calling async_setup_entry for {domain}")
+            logging.info(f"[{name}] Calling async_setup_entry for {domain}")
 
             # For platforms that support async_setup_entry signature with async_add_entities
             setup_result = await integration_module.async_setup_entry(hass, config_entry)
 
             if setup_result is False:
                 error_detail = f"Integration '{domain}' async_setup_entry returned False"
-                logging.error(f"[{entry_id}] {error_detail}")
+                logging.error(f"[{name}] {error_detail}")
                 await self.transport.send_message({
                     "type": "setup_failed",
-                    "entry_id": entry_id,
+                    "name": name,
                     "error": error_detail,
                     "error_type": "setup_failed"
                 })
                 return
 
-            logging.info(f"[{entry_id}] Integration setup complete")
+            logging.info(f"[{name}] Integration setup complete")
 
             # Send setup complete
             await self.transport.send_message({
                 "type": "setup_complete",
-                "entry_id": entry_id,
+                "name": name,
                 "platforms": []  # TODO: Extract platforms from forward_entry_setups
             })
 
         except Exception as e:
-            logging.error(f"[{entry_id}] Setup failed: {e}", exc_info=True)
+            logging.error(f"[{name}] Setup failed: {e}", exc_info=True)
             await self.transport.send_message({
                 "type": "setup_failed",
-                "entry_id": entry_id,
+                "name": name,
                 "error": str(e),
                 "error_type": "unknown"
             })
@@ -199,23 +199,23 @@ class IntegrationRunner:
         if msg_type == "setup_integration":
             await self.handle_setup_integration(
                 response["domain"],
-                response["entry_id"],
+                response["name"],
                 response["config"]
             )
 
         elif msg_type == "unload_integration":
-            entry_id = response["entry_id"]
-            logging.info(f"[{entry_id}] Unloading integration")
+            name = response["name"]
+            logging.info(f"[{name}] Unloading integration")
             # TODO: Implement unload
             await self.transport.send_message({
                 "type": "unload_complete",
-                "entry_id": entry_id
+                "name": name
             })
 
         elif msg_type == "trigger_update":
             timer_id = response["timer_id"]
-            entry_id = response["entry_id"]
-            logging.debug(f"[{entry_id}] Timer {timer_id} triggered")
+            name = response["name"]
+            logging.debug(f"[{name}] Timer {timer_id} triggered")
             # TODO: Trigger coordinator update
             await self.transport.send_message({
                 "type": "update_complete",
@@ -239,7 +239,7 @@ class IntegrationRunner:
 
     async def run(self):
         """Main message loop."""
-        logging.info(f"[{self.entry_id}] Integration runner starting")
+        logging.info(f"[{self.name}] Integration runner starting")
 
         # Send Ready message
         await self.send_ready()
@@ -256,10 +256,10 @@ class IntegrationRunner:
             logging.error(f"Runner error: {e}", exc_info=True)
         finally:
             await self.transport.close()
-            logging.info(f"[{self.entry_id}] Integration runner stopped")
+            logging.info(f"[{self.name}] Integration runner stopped")
 
 
-def setup_logging(entry_id: str):
+def setup_logging(name: str):
     """Configure logging for this sandbox."""
     # Add TRACE level (below DEBUG)
     TRACE_LEVEL = 5
@@ -272,21 +272,21 @@ def setup_logging(entry_id: str):
     logging.Logger.trace = trace  # type: ignore
 
     # Configure logging
-    log_format = f"[%(asctime)s] [%(levelname)s] [{entry_id}] %(message)s"
+    log_format = f"[%(asctime)s] [%(levelname)s] [{name}] %(message)s"
     logging.basicConfig(
         level=logging.DEBUG,
         format=log_format,
         datefmt="%Y-%m-%d %H:%M:%S"
     )
 
-    logging.info(f"Logging configured for sandbox {entry_id}")
+    logging.info(f"Logging configured for sandbox {name}")
 
 
 async def main():
     """Entry point for the Python integration runner."""
     # Get configuration from environment
     socket_fd_str = os.environ.get("HEARTHD_SOCKET_FD")
-    entry_id = os.environ.get("HEARTHD_ENTRY_ID", "unknown")
+    name = os.environ.get("HEARTHD_name", "unknown")
     ha_source_path = os.environ.get("HEARTHD_HA_SOURCE")
 
     if not socket_fd_str:
@@ -310,7 +310,7 @@ async def main():
         print(f"Added HA source {ha_source_path} to sys.path", file=sys.stderr)
 
     # Setup logging
-    setup_logging(entry_id)
+    setup_logging(name)
 
     try:
         socket_fd = int(socket_fd_str)
@@ -326,7 +326,7 @@ async def main():
         transport = SocketTransport(sock)
         await transport.connect()
 
-        runner = IntegrationRunner(entry_id, transport)
+        runner = IntegrationRunner(name, transport)
         await runner.run()
 
     except Exception as e:
