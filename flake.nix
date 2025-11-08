@@ -82,6 +82,9 @@
             cargoExtraArgs = "-p hearthd";
             src = fileSetForCrate ./crates/hearthd;
           });
+
+          # Python environment configuration
+          haPythonEnv = pkgs.callPackage ./nixos/pkgs/ha-python-env.nix { };
         in
         {
           packages = {
@@ -95,6 +98,8 @@
               rust-analyzer
               treefmtEval.config.build.wrapper
             ];
+
+            HA_PYTHON_INTERPRETER = "${haPythonEnv}/bin/python";
           };
 
           formatter = treefmtEval.config.build.wrapper;
