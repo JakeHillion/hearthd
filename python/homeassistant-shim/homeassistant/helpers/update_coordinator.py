@@ -30,12 +30,14 @@ class DataUpdateCoordinator(Generic[T]):
         name: str,
         update_interval: timedelta | None = None,
         update_method: Callable[[], Any] | None = None,
+        config_entry: Any = None,  # Optional ConfigEntry reference
     ):
         self.hass = hass
         self.logger = logger
         self.name = name
         self.update_interval = update_interval
         self._update_method = update_method
+        self.config_entry = config_entry  # Store config entry reference
 
         self.data: T | None = None
         self.last_update_success = True

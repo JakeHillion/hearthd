@@ -1,11 +1,12 @@
 //! Runtime coordination for Home Assistant integrations.
 
 use super::protocol::{Message, Response};
-use crate::config::{LocationConfig, HaIntegrationConfig};
+use crate::config::LocationConfig;
 use std::collections::HashMap;
 
 /// Entity state and metadata
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // WIP: Will be used for entity queries
 pub struct Entity {
     pub entity_id: String,
     pub platform: String,
@@ -14,6 +15,7 @@ pub struct Entity {
 }
 
 /// Manages the runtime state of loaded integrations and entities.
+#[allow(dead_code)] // WIP: Fields will be used for entity/integration management
 pub struct Runtime {
     /// All registered entities, indexed by entity_id
     entities: HashMap<String, Entity>,
@@ -29,6 +31,7 @@ pub struct Runtime {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // WIP: Will track integration lifecycle
 struct IntegrationState {
     domain: String,
     loaded: bool,
@@ -52,6 +55,7 @@ impl Runtime {
 
     /// Handle a message from the Python sandbox
     /// Returns an optional response to send back
+    #[allow(dead_code)] // WIP: Will be used for async message handling
     pub fn handle_message(&mut self, message: Message) -> Option<Response> {
         match message {
             Message::EntityRegister {
@@ -85,14 +89,25 @@ impl Runtime {
                 }
                 None
             }
-            Message::SetupComplete { entry_id, platforms: _ } => {
+            Message::SetupComplete {
+                entry_id,
+                platforms: _,
+            } => {
                 tracing::info!("Integration {} setup complete", entry_id);
                 None
             }
-            Message::SetupFailed { entry_id, error, error_type, missing_package } => {
+            Message::SetupFailed {
+                entry_id,
+                error,
+                error_type,
+                missing_package,
+            } => {
                 match error_type.as_deref() {
                     Some("missing_dependency") => {
-                        tracing::error!("Integration {} failed: Missing Python dependency", entry_id);
+                        tracing::error!(
+                            "Integration {} failed: Missing Python dependency",
+                            entry_id
+                        );
                         if let Some(pkg) = missing_package {
                             tracing::error!("Please install: pip install {}", pkg);
                         }
@@ -103,7 +118,11 @@ impl Runtime {
                 }
                 None
             }
-            Message::Log { level, logger, message } => {
+            Message::Log {
+                level,
+                logger,
+                message,
+            } => {
                 use super::protocol::LogLevel;
                 match level {
                     LogLevel::Debug => tracing::debug!("[{}] {}", logger, message),
@@ -158,11 +177,13 @@ impl Runtime {
     }
 
     /// Get an entity by ID
+    #[allow(dead_code)] // WIP: Will be used for entity queries
     pub fn get_entity(&self, entity_id: &str) -> Option<&Entity> {
         self.entities.get(entity_id)
     }
 
     /// Get all entities
+    #[allow(dead_code)] // WIP: Will be used for entity listing
     pub fn entities(&self) -> impl Iterator<Item = &Entity> {
         self.entities.values()
     }

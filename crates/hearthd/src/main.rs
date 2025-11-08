@@ -2,7 +2,7 @@ mod config;
 mod ha;
 
 use config::Config;
-use ha::{protocol::Response, Runtime, Sandbox};
+use ha::{Runtime, Sandbox, protocol::Response};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -135,56 +135,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 ref error,
                                                 ref error_type,
                                                 ref missing_package,
-                                            } => {
-                                                match error_type.as_deref() {
-                                                    Some("missing_dependency") => {
+                                            } => match error_type.as_deref() {
+                                                Some("missing_dependency") => {
+                                                    tracing::error!(
+                                                        "[{}] Integration setup failed: Missing Python dependency",
+                                                        entry_id
+                                                    );
+                                                    if let Some(pkg) = missing_package {
                                                         tracing::error!(
-                                                            "[{}] Integration setup failed: Missing Python dependency",
-                                                            entry_id
-                                                        );
-                                                        if let Some(pkg) = missing_package {
-                                                            tracing::error!(
-                                                                "[{}] Please install: pip install {}",
-                                                                entry_id, pkg
-                                                            );
-                                                        }
-                                                        tracing::error!(
-                                                            "[{}] Error: {}",
-                                                            entry_id, error
+                                                            "[{}] Please install: pip install {}",
+                                                            entry_id,
+                                                            pkg
                                                         );
                                                     }
-                                                    Some("integration_not_found") => {
-                                                        tracing::error!(
-                                                            "[{}] Integration setup failed: Integration not found in HA source",
-                                                            entry_id
-                                                        );
-                                                        tracing::error!(
-                                                            "[{}] Error: {}",
-                                                            entry_id, error
-                                                        );
-                                                    }
-                                                    Some("invalid_integration") => {
-                                                        tracing::error!(
-                                                            "[{}] Integration setup failed: Invalid integration structure",
-                                                            entry_id
-                                                        );
-                                                        tracing::error!(
-                                                            "[{}] Error: {}",
-                                                            entry_id, error
-                                                        );
-                                                    }
-                                                    _ => {
-                                                        tracing::error!(
-                                                            "[{}] Integration setup failed: {}",
-                                                            entry_id, error
-                                                        );
-                                                    }
+                                                    tracing::error!(
+                                                        "[{}] Error: {}",
+                                                        entry_id,
+                                                        error
+                                                    );
                                                 }
-                                            }
+                                                Some("integration_not_found") => {
+                                                    tracing::error!(
+                                                        "[{}] Integration setup failed: Integration not found in HA source",
+                                                        entry_id
+                                                    );
+                                                    tracing::error!(
+                                                        "[{}] Error: {}",
+                                                        entry_id,
+                                                        error
+                                                    );
+                                                }
+                                                Some("invalid_integration") => {
+                                                    tracing::error!(
+                                                        "[{}] Integration setup failed: Invalid integration structure",
+                                                        entry_id
+                                                    );
+                                                    tracing::error!(
+                                                        "[{}] Error: {}",
+                                                        entry_id,
+                                                        error
+                                                    );
+                                                }
+                                                _ => {
+                                                    tracing::error!(
+                                                        "[{}] Integration setup failed: {}",
+                                                        entry_id,
+                                                        error
+                                                    );
+                                                }
+                                            },
                                             _ => {
                                                 tracing::warn!(
                                                     "[{}] Unexpected message: {:?}",
-                                                    entry_id, response_msg
+                                                    entry_id,
+                                                    response_msg
                                                 );
                                             }
                                         }
@@ -192,7 +196,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(e) => {
                                         tracing::error!(
                                             "[{}] Failed to receive setup response: {}",
-                                            entry_id, e
+                                            entry_id,
+                                            e
                                         );
                                     }
                                 }
@@ -200,7 +205,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Err(e) => {
                                 tracing::error!(
                                     "[{}] Failed to send SetupIntegration: {}",
-                                    entry_id, e
+                                    entry_id,
+                                    e
                                 );
                             }
                         }

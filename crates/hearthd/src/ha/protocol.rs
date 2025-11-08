@@ -157,6 +157,7 @@ pub enum Response {
     TriggerUpdate { timer_id: String, entry_id: String },
 
     /// HTTP request result
+    #[allow(clippy::enum_variant_names)] // Response suffix is appropriate here
     HttpResponse {
         request_id: String,
         status: u16,
@@ -167,6 +168,7 @@ pub enum Response {
     },
 
     /// Configuration query result
+    #[allow(clippy::enum_variant_names)] // Response suffix is appropriate here
     ConfigResponse {
         request_id: String,
         config: HashMap<String, serde_json::Value>,
@@ -185,10 +187,12 @@ pub enum ProtocolError {
     Serialization(#[from] serde_json::Error),
 
     #[error("Invalid message type: {0}")]
+    #[allow(dead_code)] // WIP: May be used for protocol validation
     InvalidMessageType(String),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
+#[allow(dead_code)] // WIP: Will be used for protocol operations
 pub type Result<T> = std::result::Result<T, ProtocolError>;

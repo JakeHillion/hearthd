@@ -4,7 +4,7 @@
 //! the file descriptor to the Python process via environment variable.
 //! No filesystem paths are used.
 
-use super::protocol::{Message, Response, ProtocolError};
+use super::protocol::{Message, ProtocolError, Response};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -47,12 +47,15 @@ impl Sandbox {
         tracing::info!("[{}] Starting sandbox", self.entry_id);
 
         // Create socketpair for bidirectional communication
-        let (rust_stream, python_stream) =
-            UnixStream::pair().map_err(|e| ProtocolError::Io(e))?;
+        let (rust_stream, python_stream) = UnixStream::pair().map_err(ProtocolError::Io)?;
 
         // Get file descriptor number for Python side
         let python_fd = python_stream.as_raw_fd();
-        tracing::debug!("[{}] Created socketpair, Python FD: {}", self.entry_id, python_fd);
+        tracing::debug!(
+            "[{}] Created socketpair, Python FD: {}",
+            self.entry_id,
+            python_fd
+        );
 
         // Build command to spawn Python runner
         let mut cmd = Command::new(&self.python_path);
@@ -131,20 +134,22 @@ impl Sandbox {
         // Wrap Rust side in buffered reader for line-based reading
         self.stream = Some(BufReader::new(rust_stream));
 
-        tracing::debug!("[{}] Sandbox started, waiting for Ready message", self.entry_id);
+        tracing::debug!(
+            "[{}] Sandbox started, waiting for Ready message",
+            self.entry_id
+        );
 
         Ok(())
     }
 
     /// Send a response to the Python process
     pub async fn send(&mut self, response: Response) -> Result<(), ProtocolError> {
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or_else(|| ProtocolError::Io(std::io::Error::new(
+        let stream = self.stream.as_mut().ok_or_else(|| {
+            ProtocolError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
                 "Sandbox not started",
-            )))?;
+            ))
+        })?;
 
         // Serialize to JSON
         let json = serde_json::to_string(&response)?;
@@ -162,13 +167,12 @@ impl Sandbox {
 
     /// Receive a message from the Python process
     pub async fn recv(&mut self) -> Result<Message, ProtocolError> {
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or_else(|| ProtocolError::Io(std::io::Error::new(
+        let stream = self.stream.as_mut().ok_or_else(|| {
+            ProtocolError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
                 "Sandbox not started",
-            )))?;
+            ))
+        })?;
 
         // Read line (newline-delimited JSON)
         let mut line = String::new();
@@ -200,10 +204,7 @@ impl Sandbox {
 
         // Wait for process to exit
         if let Some(mut child) = self.child.take() {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                child.wait()
-            ).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
                 Ok(Ok(status)) => {
                     tracing::info!("[{}] Process exited with status: {}", self.entry_id, status);
                 }
@@ -211,7 +212,10 @@ impl Sandbox {
                     tracing::error!("[{}] Failed to wait for process: {}", self.entry_id, e);
                 }
                 Err(_) => {
-                    tracing::warn!("[{}] Process did not exit within timeout, killing", self.entry_id);
+                    tracing::warn!(
+                        "[{}] Process did not exit within timeout, killing",
+                        self.entry_id
+                    );
                     let _ = child.kill().await;
                 }
             }

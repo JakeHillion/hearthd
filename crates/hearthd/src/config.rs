@@ -88,10 +88,12 @@ pub struct LocationConfig {
 pub struct IntegrationsConfig {
     /// Native MQTT integration (statically typed)
     #[serde(default)]
+    #[allow(dead_code)] // WIP: MQTT integration not yet implemented
     pub mqtt: Option<MqttConfig>,
 
     /// Native HTTP API integration (statically typed)
     #[serde(default)]
+    #[allow(dead_code)] // WIP: HTTP API not yet implemented
     pub api: Option<ApiConfig>,
 
     /// Home Assistant integrations (dynamically typed)
@@ -102,6 +104,7 @@ pub struct IntegrationsConfig {
 
 /// Native MQTT integration configuration
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // WIP: MQTT integration not yet implemented
 pub struct MqttConfig {
     pub enabled: bool,
     pub broker: String,
@@ -115,6 +118,7 @@ pub struct MqttConfig {
 
 /// Native HTTP API integration configuration
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // WIP: HTTP API not yet implemented
 pub struct ApiConfig {
     pub enabled: bool,
     pub bind: String,
@@ -154,8 +158,7 @@ impl HaIntegrationConfig {
     /// Convert the opaque TOML config to JSON for transmission to Python
     pub fn config_to_json(&self) -> Result<serde_json::Value, ConfigError> {
         // Convert toml::Value -> serde_json::Value
-        let json_str = serde_json::to_string(&self.config)
-            .map_err(ConfigError::JsonConversion)?;
+        let json_str = serde_json::to_string(&self.config).map_err(ConfigError::JsonConversion)?;
 
         serde_json::from_str(&json_str).map_err(ConfigError::JsonConversion)
     }

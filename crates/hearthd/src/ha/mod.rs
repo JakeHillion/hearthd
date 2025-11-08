@@ -5,9 +5,8 @@
 //! via Unix domain sockets.
 
 pub mod protocol;
-pub mod sandbox;
 pub mod runtime;
+pub mod sandbox;
 
-pub use protocol::Message;
-pub use sandbox::Sandbox;
 pub use runtime::Runtime;
+pub use sandbox::Sandbox;
