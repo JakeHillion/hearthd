@@ -5,12 +5,14 @@
 //! No filesystem paths are used.
 
 use super::protocol::{Message, ProtocolError, Response};
-use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
-use std::process::Stdio;
+
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
+
+use std::os::unix::io::AsRawFd;
+use std::path::PathBuf;
+use std::process::Stdio;
 
 /// Manages a sandboxed Python environment for running Home Assistant integrations.
 pub struct Sandbox {

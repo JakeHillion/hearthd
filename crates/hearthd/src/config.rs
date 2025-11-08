@@ -86,45 +86,10 @@ pub struct LocationConfig {
 /// Integration configuration container
 #[derive(Debug, Deserialize)]
 pub struct IntegrationsConfig {
-    /// Native MQTT integration (statically typed)
-    #[serde(default)]
-    #[allow(dead_code)] // WIP: MQTT integration not yet implemented
-    pub mqtt: Option<MqttConfig>,
-
-    /// Native HTTP API integration (statically typed)
-    #[serde(default)]
-    #[allow(dead_code)] // WIP: HTTP API not yet implemented
-    pub api: Option<ApiConfig>,
-
     /// Home Assistant integrations (dynamically typed)
     /// Key = entry_id, Value = integration config
     #[serde(default)]
     pub ha: HashMap<String, HaIntegrationConfig>,
-}
-
-/// Native MQTT integration configuration
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)] // WIP: MQTT integration not yet implemented
-pub struct MqttConfig {
-    pub enabled: bool,
-    pub broker: String,
-
-    #[serde(default)]
-    pub username: Option<String>,
-
-    #[serde(default)]
-    pub password: Option<String>,
-}
-
-/// Native HTTP API integration configuration
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)] // WIP: HTTP API not yet implemented
-pub struct ApiConfig {
-    pub enabled: bool,
-    pub bind: String,
-
-    #[serde(default)]
-    pub auth_token: Option<String>,
 }
 
 /// Home Assistant integration configuration
