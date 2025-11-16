@@ -1,6 +1,6 @@
 mod config;
 
-use config::Config;
+use config::{format_diagnostics, Config};
 
 use std::path::PathBuf;
 
@@ -14,41 +14,33 @@ use tracing_subscriber::prelude::*;
 #[command(name = "hearthd")]
 #[command(about = "Home automation daemon for location-based services", long_about = None)]
 struct Cli {
-    /// Path to the configuration file
+    /// Path to configuration file(s). Can be specified multiple times to merge configs.
+    /// Example: --config base.toml --config secrets.toml
     #[arg(
         short,
         long,
         value_name = "FILE",
         default_value = "/etc/hearthd/config.toml"
     )]
-    config: PathBuf,
+    config: Vec<PathBuf>,
 }
 
 fn main() -> Result<(), i32> {
     let cli = Cli::parse();
 
-    // Check if config file exists
-    if !cli.config.exists() {
-        eprintln!(
-            "Error: Configuration file not found: {}",
-            cli.config.display()
-        );
-        eprintln!("Please create a configuration file or specify a different path with --config");
-        return Err(1);
-    }
-
-    // Load and parse the configuration file
-    let cfg = match Config::from_file(&cli.config) {
-        Ok(cfg) => cfg,
+    // Load and parse the configuration files
+    let (cfg, diagnostics) = match Config::from_files(&cli.config) {
+        Ok((cfg, diagnostics)) => (cfg, diagnostics),
         Err(e) => {
-            eprintln!(
-                "Error: Failed to parse configuration file: {}",
-                cli.config.display()
-            );
-            eprintln!("Reason: {}", e);
+            eprintln!("{}", e);
             return Err(1);
         }
     };
+
+    // Display any warnings (errors would have prevented loading)
+    if !diagnostics.is_empty() {
+        eprintln!("{}", format_diagnostics(&diagnostics));
+    }
 
     let log_targets = {
         let mut t = TracingTargets::new().with_default(cfg.logging.level);
