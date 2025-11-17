@@ -27,7 +27,12 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, treefmt-nix, fenix, crane, advisory-db }:
-    flake-utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ]
+    {
+      nixosModules.default = { config, lib, pkgs, ... }: {
+        imports = [ ./nixos/modules/hearthd.nix ];
+        _module.args = { hearthd-flake = self; };
+      };
+    } // flake-utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ]
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
