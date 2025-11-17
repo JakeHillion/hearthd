@@ -1,0 +1,22 @@
+---
+source: crates/hearthd/src/examples.rs
+expression: error_str
+---
+[31mError:[0m Merge conflict in field 'locations.home.latitude'
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m config1.toml:3:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m3 │[0m [31ml[0m[31ma[0m[31mt[0m[31mi[0m[31mt[0m[31mu[0m[31md[0m[31me[0m[31m [0m[31m=[0m[31m [0m[31m5[0m[31m9[0m[31m.[0m[31m9[0m[31m1[0m[31m3[0m[31m9[0m
+ [38;5;240m  │[0m [31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m┬[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m  
+ [38;5;240m  │[0m          [31m╰[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m first definition here
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mNote[0m: Field 'latitude' for location 'home' defined in multiple config files
+[38;5;246m───╯[0m
+[31mError:[0m Merge conflict in field 'locations.home.latitude'
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m config2.toml:3:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m3 │[0m [33ml[0m[33ma[0m[33mt[0m[33mi[0m[33mt[0m[33mu[0m[33md[0m[33me[0m[33m [0m[33m=[0m[33m [0m[33m6[0m[33m0[0m[33m.[0m[33m0[0m
+ [38;5;240m  │[0m [33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m┬[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m  
+ [38;5;240m  │[0m        [33m╰[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m[33m─[0m conflicts with this definition
+ [38;5;240m  │[0m 
+ [38;5;240m  │[0m [38;5;115mNote[0m: Field 'latitude' for location 'home' defined in multiple config files
+[38;5;246m───╯[0m

@@ -1,0 +1,8 @@
+---
+source: crates/hearthd/src/examples.rs
+expression: output_str
+---
+[33mWarning[0m: Empty configuration file
+  ┌─ empty.toml:1:1
+  │
+  = Config file 'empty.toml' is empty and has no effect
