@@ -103,6 +103,7 @@
             packages = with pkgs; [
               rust-analyzer
               treefmtEval.config.build.wrapper
+              cargo-insta
             ];
 
             HA_PYTHON_INTERPRETER = "${haPythonEnv}/bin/python";
