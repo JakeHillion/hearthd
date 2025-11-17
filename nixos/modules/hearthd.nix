@@ -63,9 +63,13 @@ in
 
     package = mkOption {
       type = types.package;
-      default = hearthd-flake.packages.${pkgs.system}.hearthd;
-      defaultText = literalExpression "hearthd-flake.packages.\${pkgs.system}.hearthd";
-      description = "The hearthd package to use.";
+      default = hearthd-flake.packages.${pkgs.system}.hearthd.overrideAttrs (oldAttrs: {
+        cargoExtraArgs = "-p hearthd --features systemd";
+        buildInputs = (oldAttrs.buildInputs or [ ]) ++ [ pkgs.systemd ];
+        nativeBuildInputs = (oldAttrs.nativeBuildInputs or [ ]) ++ [ pkgs.pkg-config ];
+      });
+      defaultText = literalExpression "hearthd-flake.packages.\${pkgs.system}.hearthd with systemd feature enabled";
+      description = "The hearthd package to use. By default, built with systemd support.";
     };
 
     config = mkOption {
@@ -115,7 +119,7 @@ in
       after = [ "network.target" ];
 
       serviceConfig = {
-        Type = "simple";
+        Type = "notify";
         DynamicUser = true;
         RuntimeDirectory = "hearthd";
         ExecStart = startScript;

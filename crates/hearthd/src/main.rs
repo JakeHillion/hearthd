@@ -59,6 +59,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("hearthd starting");
 
+    // Notify systemd that the service is ready
+    #[cfg(feature = "systemd")]
+    {
+        if let Err(e) = libsystemd::daemon::notify(false, &[libsystemd::daemon::NotifyState::Ready]) {
+            warn!("Failed to notify systemd: {}", e);
+        } else {
+            debug!("Notified systemd that service is ready");
+        }
+    }
+
     // Main daemon logic will go here
     Ok(())
 }
