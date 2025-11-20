@@ -3,6 +3,7 @@ use hearthd::Config;
 use std::path::PathBuf;
 
 use clap::Parser;
+use tokio::signal::unix::{SignalKind, signal};
 use tracing::{debug, info, warn};
 use tracing_subscriber::filter::Targets as TracingTargets;
 use tracing_subscriber::prelude::*;
@@ -22,7 +23,8 @@ struct Cli {
     config: Vec<PathBuf>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Load and parse the configuration files
@@ -59,6 +61,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("hearthd starting");
 
-    // Main daemon logic will go here
+    // Set up signal handlers
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
+
+    info!("hearthd ready, waiting for exit signal (SIGINT or SIGTERM)");
+
+    // Wait for shutdown signal
+    tokio::select! {
+        _ = sigterm.recv() => {
+            info!("Received SIGTERM, shutting down gracefully");
+        }
+        _ = sigint.recv() => {
+            info!("Received SIGINT, shutting down gracefully");
+        }
+    }
+
+    info!("hearthd stopped");
     Ok(())
 }
