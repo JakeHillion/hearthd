@@ -63,6 +63,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("hearthd starting");
 
+    // Notify systemd that the service is ready
+    #[cfg(feature = "systemd")]
+    {
+        if let Err(e) = libsystemd::daemon::notify(false, &[libsystemd::daemon::NotifyState::Ready])
+        {
+            warn!("Failed to notify systemd: {}", e);
+        } else {
+            debug!("Notified systemd that service is ready");
+        }
+    }
+
     // Set up signal handlers
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
