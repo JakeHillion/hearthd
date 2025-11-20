@@ -79,8 +79,12 @@
           commonArgs = {
             inherit src;
             strictDeps = true;
-            buildInputs = [ ];
-            nativeBuildInputs = [ ];
+            buildInputs = [
+              pkgs.systemd
+            ];
+            nativeBuildInputs = [
+              pkgs.pkg-config
+            ];
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
