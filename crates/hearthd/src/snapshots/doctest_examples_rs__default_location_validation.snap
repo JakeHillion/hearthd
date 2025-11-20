@@ -1,0 +1,8 @@
+---
+source: crates/hearthd/src/examples.rs
+expression: error_str
+---
+[31mError[0m: Validation error in 'locations.default'
+  ┌─ <unknown>:1:1
+  │
+  = default location 'nonexistent' not found in locations

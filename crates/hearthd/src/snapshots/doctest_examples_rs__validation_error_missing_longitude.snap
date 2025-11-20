@@ -1,0 +1,8 @@
+---
+source: crates/hearthd/src/examples.rs
+expression: error_str
+---
+[31mError[0m: Validation error in 'locations.home.longitude'
+  ┌─ <unknown>:1:1
+  │
+  = longitude is required

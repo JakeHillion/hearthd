@@ -27,12 +27,23 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, treefmt-nix, fenix, crane, advisory-db }:
-    flake-utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ]
+    {
+      nixosModules.default = { config, lib, pkgs, ... }: {
+        imports = [ ./nixos/modules/hearthd.nix ];
+        _module.args = { hearthd-flake = self; };
+      };
+    } // flake-utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ]
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
           lib = pkgs.lib;
-          toolchain = fenix.packages.${system}.stable.toolchain;
+          toolchain = fenix.packages.${system}.stable.withComponents [
+            "cargo"
+            "clippy"
+            "rust-src"
+            "rustc"
+            "rustfmt"
+          ];
           craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
 
           treefmtEval = treefmt-nix.lib.evalModule pkgs {
@@ -98,6 +109,7 @@
               rust-analyzer
               treefmtEval.config.build.wrapper
               python313
+              cargo-insta
             ];
 
             HA_PYTHON_INTERPRETER = "${haPythonEnv}/bin/python";
