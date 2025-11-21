@@ -1,3 +1,8 @@
+//! Legacy diagnostics module kept for backward compatibility with partial.rs tests.
+//! The main implementation now uses hearthd_config::diagnostics.
+
+#![allow(dead_code)]
+
 use std::ops::Range;
 use std::path::PathBuf;
 
