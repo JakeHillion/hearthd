@@ -395,10 +395,40 @@ fn generate_sub_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenS
                     }
                 })
             } else {
-                // For plain types (no Spanned), use simple first-wins
+                // For plain types (no Spanned), still detect conflicts but without span info
                 Ok(quote! {
-                    if self.#name.is_none() {
-                        self.#name = std::mem::take(&mut other.#name);
+                    if let Some(_value) = std::mem::take(&mut other.#name) {
+                        if self.#name.is_some() {
+                            // Conflict detected - field already set
+                            let field_path = format!("{}.{}", field_prefix, #name_str);
+                            let message = format!("Field '{}' defined in multiple config files", field_path);
+                            let conflict_loc = hearthd_config::MergeConflictLocation {
+                                file_path: source_info.file_path.clone(),
+                                span: 0..0, // No span info for plain types
+                                content: source_info.content.clone(),
+                            };
+                            let first_loc = field_locs.get(#name_str).cloned().unwrap_or_else(|| {
+                                hearthd_config::MergeConflictLocation {
+                                    file_path: std::path::PathBuf::new(),
+                                    span: 0..0,
+                                    content: String::new(),
+                                }
+                            });
+                            diagnostics.push(hearthd_config::Diagnostic::Error(hearthd_config::Error::Merge(hearthd_config::MergeError {
+                                field_path,
+                                message,
+                                conflicts: vec![first_loc, conflict_loc],
+                            })));
+                        } else {
+                            // First occurrence - record it
+                            self.#name = Some(_value);
+                            let conflict_loc = hearthd_config::MergeConflictLocation {
+                                file_path: source_info.file_path.clone(),
+                                span: 0..0,
+                                content: source_info.content.clone(),
+                            };
+                            field_locs.insert(#name_str.to_string(), conflict_loc);
+                        }
                     }
                 })
             }
