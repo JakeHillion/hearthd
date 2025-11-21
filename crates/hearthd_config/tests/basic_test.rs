@@ -23,29 +23,5 @@ fn test_basic_derive() {
     assert_eq!(config.level, LogLevel::Info);
 }
 
-#[test]
-fn test_from_files() {
-    use std::fs;
-    use std::io::Write;
-
-    let temp_dir = std::env::temp_dir().join("hearthd_config_test");
-    fs::create_dir_all(&temp_dir).unwrap();
-
-    let config_path = temp_dir.join("test.toml");
-    let mut file = fs::File::create(&config_path).unwrap();
-    write!(file, r#"
-level = "debug"
-
-[overrides]
-"test" = "info"
-"#).unwrap();
-
-    let result = SimpleConfig::from_files(&[config_path]);
-    assert!(result.is_ok(), "Failed to load config: {:?}", result.err());
-
-    let (config, _diag) = result.unwrap();
-    assert_eq!(config.level, LogLevel::Debug);
-    assert_eq!(config.overrides.get("test"), Some(&LogLevel::Info));
-
-    fs::remove_dir_all(&temp_dir).ok();
-}
+// Note: from_files is not auto-generated when manual validation is needed.
+// The hearthd crate tests the full functionality with its Config struct.

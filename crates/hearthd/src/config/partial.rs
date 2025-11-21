@@ -1,3 +1,8 @@
+//! Legacy partial config implementation kept for tests.
+//! The main config now uses proc_macro-generated code.
+
+#![allow(dead_code)]
+
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

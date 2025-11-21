@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
-use quote::{quote, format_ident};
+use quote::{format_ident, quote};
 use syn::{
-    Data, DeriveInput, Fields, GenericArgument, PathArguments, Type, TypePath,
-    Error, Result, Ident, Field,
+    Data, DeriveInput, Error, Field, Fields, GenericArgument, Ident, PathArguments, Result, Type,
+    TypePath,
 };
 
 struct FieldInfo {
@@ -12,10 +12,18 @@ struct FieldInfo {
 }
 
 enum FieldType {
-    Simple(Type),
-    HashMap { key_type: Type, value_type: Type },
-    HashMapOfStructs { key_type: Type, value_type: Type },
-    Nested(Type),
+    Simple(#[allow(dead_code)] Type),
+    HashMap {
+        key_type: Type,
+        #[allow(dead_code)]
+        value_type: Type,
+    },
+    HashMapOfStructs {
+        key_type: Type,
+        #[allow(dead_code)]
+        value_type: Type,
+    },
+    Nested(#[allow(dead_code)] Type),
 }
 
 pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<TokenStream> {
@@ -24,10 +32,8 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
     // Check for #[config(no_span)] attribute to override span tracking
     let no_span = input.attrs.iter().any(|attr| {
         if attr.path().is_ident("config") {
-            if let Ok(nested) = attr.parse_args::<syn::Meta>() {
-                if let syn::Meta::Path(path) = nested {
-                    return path.is_ident("no_span");
-                }
+            if let Ok(syn::Meta::Path(path)) = attr.parse_args::<syn::Meta>() {
+                return path.is_ident("no_span");
             }
         }
         false
@@ -40,15 +46,19 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => &fields.named,
-            _ => return Err(Error::new_spanned(
-                name,
-                "MergeableConfig only supports structs with named fields",
-            )),
+            _ => {
+                return Err(Error::new_spanned(
+                    name,
+                    "MergeableConfig only supports structs with named fields",
+                ))
+            }
         },
-        _ => return Err(Error::new_spanned(
-            name,
-            "MergeableConfig only supports structs",
-        )),
+        _ => {
+            return Err(Error::new_spanned(
+                name,
+                "MergeableConfig only supports structs",
+            ))
+        }
     };
 
     // Analyze fields
@@ -60,10 +70,8 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
         // Check if field has #[serde(flatten)] attribute
         let flattened = field.attrs.iter().any(|attr| {
             if attr.path().is_ident("serde") {
-                if let Ok(nested) = attr.parse_args::<syn::Meta>() {
-                    if let syn::Meta::Path(path) = nested {
-                        return path.is_ident("flatten");
-                    }
+                if let Ok(syn::Meta::Path(path)) = attr.parse_args::<syn::Meta>() {
+                    return path.is_ident("flatten");
                 }
             }
             false
@@ -73,9 +81,15 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
             let (key_type, value_type) = extract_hashmap_types(field_ty)?;
             // Check if value type is a struct (not a simple type)
             if is_simple_type(&value_type) {
-                FieldType::HashMap { key_type, value_type }
+                FieldType::HashMap {
+                    key_type,
+                    value_type,
+                }
             } else {
-                FieldType::HashMapOfStructs { key_type, value_type }
+                FieldType::HashMapOfStructs {
+                    key_type,
+                    value_type,
+                }
             }
         } else if is_simple_type(field_ty) {
             FieldType::Simple(field_ty.clone())
@@ -123,7 +137,11 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
     })
 }
 
-fn generate_partial_struct(config_name: &Ident, fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>, use_spans: bool) -> Result<TokenStream> {
+fn generate_partial_struct(
+    config_name: &Ident,
+    fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>,
+    use_spans: bool,
+) -> Result<TokenStream> {
     let partial_name = format_ident!("Partial{}", config_name);
 
     let mut partial_fields = Vec::new();
@@ -134,10 +152,8 @@ fn generate_partial_struct(config_name: &Ident, fields: &syn::punctuated::Punctu
         // Check if field has #[serde(flatten)] attribute
         let has_flatten = field.attrs.iter().any(|attr| {
             if attr.path().is_ident("serde") {
-                if let Ok(nested) = attr.parse_args::<syn::Meta>() {
-                    if let syn::Meta::Path(path) = nested {
-                        return path.is_ident("flatten");
-                    }
+                if let Ok(syn::Meta::Path(path)) = attr.parse_args::<syn::Meta>() {
+                    return path.is_ident("flatten");
                 }
             }
             false
@@ -302,7 +318,11 @@ fn generate_root_merge_impl(config_name: &Ident, fields: &[FieldInfo]) -> Result
     })
 }
 
-fn generate_sub_merge_impl(config_name: &Ident, fields: &[FieldInfo], use_spans: bool) -> Result<TokenStream> {
+fn generate_sub_merge_impl(
+    config_name: &Ident,
+    fields: &[FieldInfo],
+    use_spans: bool,
+) -> Result<TokenStream> {
     let partial_name = format_ident!("Partial{}", config_name);
 
     // Generate field-level merge logic
@@ -314,6 +334,7 @@ fn generate_sub_merge_impl(config_name: &Ident, fields: &[FieldInfo], use_spans:
     Ok(quote! {
         impl #partial_name {
             /// Merge another partial config into this one, tracking conflicts
+            #[allow(clippy::ptr_arg)]
             pub fn merge_from(
                 &mut self,
                 mut other: Self,
@@ -338,25 +359,8 @@ fn generate_sub_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenS
                 // For Spanned types, detect conflicts
                 Ok(quote! {
                     if let Some(value) = std::mem::take(&mut other.#name) {
-                        if self.#name.is_some() {
-                            let field_path = format!("{}.{}", field_prefix, #name_str);
-                            let conflict_loc = hearthd_config::MergeConflictLocation {
-                                file_path: source_info.file_path.clone(),
-                                span: value.span(),
-                                content: source_info.content.clone(),
-                            };
-
-                            if let Some(prev_loc) = field_locs.get(#name_str) {
-                                let message = format!("Field '{}' defined in multiple config files", field_path);
-                                diagnostics.push(hearthd_config::Diagnostic::Error(hearthd_config::Error::Merge(hearthd_config::MergeError {
-                                    field_path,
-                                    message,
-                                    conflicts: vec![prev_loc.clone(), conflict_loc],
-                                })));
-                            } else {
-                                field_locs.insert(#name_str.to_string(), conflict_loc);
-                            }
-                        } else {
+                        if self.#name.is_none() {
+                            // First occurrence - just record it
                             let conflict_loc = hearthd_config::MergeConflictLocation {
                                 file_path: source_info.file_path.clone(),
                                 span: value.span(),
@@ -364,6 +368,29 @@ fn generate_sub_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenS
                             };
                             self.#name = Some(value);
                             field_locs.insert(#name_str.to_string(), conflict_loc);
+                        } else {
+                            // Conflict detected - field already set
+                            let field_path = format!("{}.{}", field_prefix, #name_str);
+                            let first_loc = field_locs.get(#name_str).cloned().unwrap_or_else(|| {
+                                // Fallback: extract location from the existing Spanned value
+                                let existing = self.#name.as_ref().unwrap();
+                                hearthd_config::MergeConflictLocation {
+                                    file_path: source_info.file_path.clone(),
+                                    span: existing.span(),
+                                    content: source_info.content.clone(),
+                                }
+                            });
+                            let conflict_loc = hearthd_config::MergeConflictLocation {
+                                file_path: source_info.file_path.clone(),
+                                span: value.span(),
+                                content: source_info.content.clone(),
+                            };
+                            let message = format!("Field '{}' defined in multiple config files", field_path);
+                            diagnostics.push(hearthd_config::Diagnostic::Error(hearthd_config::Error::Merge(hearthd_config::MergeError {
+                                field_path,
+                                message,
+                                conflicts: vec![first_loc, conflict_loc],
+                            })));
                         }
                     }
                 })
@@ -376,38 +403,36 @@ fn generate_sub_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenS
                 })
             }
         }
-        FieldType::HashMap { .. } => {
-            Ok(quote! {
-                if let Some(map) = other.#name {
-                    if self.#name.is_none() {
-                        self.#name = Some(std::collections::HashMap::new());
-                    }
+        FieldType::HashMap { .. } => Ok(quote! {
+            if let Some(map) = other.#name {
+                if self.#name.is_none() {
+                    self.#name = Some(std::collections::HashMap::new());
+                }
 
-                    let self_map = self.#name.as_mut().unwrap();
-                    for (key, value_spanned) in map {
-                        let field_path = format!("{}.{}.{}", field_prefix, #name_str, key);
-                        let conflict_loc = hearthd_config::MergeConflictLocation {
-                            file_path: source_info.file_path.clone(),
-                            span: value_spanned.span(),
-                            content: source_info.content.clone(),
-                        };
+                let self_map = self.#name.as_mut().unwrap();
+                for (key, value_spanned) in map {
+                    let field_path = format!("{}.{}.{}", field_prefix, #name_str, key);
+                    let conflict_loc = hearthd_config::MergeConflictLocation {
+                        file_path: source_info.file_path.clone(),
+                        span: value_spanned.span(),
+                        content: source_info.content.clone(),
+                    };
 
-                        let key_str = key.to_string();
-                        if let Some(prev_loc) = field_locs.get(&key_str) {
-                            let message = format!("Field '{}' defined in multiple config files", field_path);
-                            diagnostics.push(hearthd_config::Diagnostic::Error(hearthd_config::Error::Merge(hearthd_config::MergeError {
-                                field_path,
-                                message,
-                                conflicts: vec![prev_loc.clone(), conflict_loc],
-                            })));
-                        } else {
-                            self_map.insert(key.clone(), value_spanned);
-                            field_locs.insert(key_str, conflict_loc);
-                        }
+                    let key_str = key.to_string();
+                    if let Some(prev_loc) = field_locs.get(&key_str) {
+                        let message = format!("Field '{}' defined in multiple config files", field_path);
+                        diagnostics.push(hearthd_config::Diagnostic::Error(hearthd_config::Error::Merge(hearthd_config::MergeError {
+                            field_path,
+                            message,
+                            conflicts: vec![prev_loc.clone(), conflict_loc],
+                        })));
+                    } else {
+                        self_map.insert(key.clone(), value_spanned);
+                        field_locs.insert(key_str, conflict_loc);
                     }
                 }
-            })
-        }
+            }
+        }),
         FieldType::HashMapOfStructs { .. } => {
             if field.flattened {
                 Ok(quote! {
@@ -659,89 +684,6 @@ fn generate_load_impl(config_name: &Ident) -> Result<TokenStream> {
     })
 }
 
-fn generate_try_from_impl(config_name: &Ident, fields: &[FieldInfo]) -> Result<TokenStream> {
-    let partial_name = format_ident!("Partial{}", config_name);
-
-    let try_from_fields: Vec<_> = fields
-        .iter()
-        .map(|f| {
-            let name = &f.name;
-            match &f.field_type {
-                FieldType::Simple(_) => {
-                    quote! {
-                        #name: partial.#name.map(|s| *s.get_ref()).unwrap_or_default()
-                    }
-                }
-                FieldType::HashMap { .. } => {
-                    quote! {
-                        #name: partial.#name
-                            .map(|hm| hm.into_iter().map(|(k, v)| (k, *v.get_ref())).collect())
-                            .unwrap_or_default()
-                    }
-                }
-                FieldType::HashMapOfStructs { .. } => {
-                    quote! {
-                        #name: partial.#name
-                            .map(|hm| {
-                                hm.into_iter()
-                                    .filter_map(|(k, v)| v.try_into().ok().map(|converted| (k, converted)))
-                                    .collect()
-                            })
-                            .unwrap_or_default()
-                    }
-                }
-                FieldType::Nested(_) => {
-                    quote! {
-                        #name: partial.#name
-                            .map(|p| p.try_into().unwrap_or_default())
-                            .unwrap_or_default()
-                    }
-                }
-            }
-        })
-        .collect();
-
-    Ok(quote! {
-        impl TryFrom<#partial_name> for #config_name {
-            type Error = Vec<hearthd_config::Diagnostic>;
-
-            fn try_from(partial: #partial_name) -> Result<Self, Self::Error> {
-                Ok(Self {
-                    #(#try_from_fields,)*
-                })
-            }
-        }
-    })
-}
-
-fn generate_config_impl(config_name: &Ident) -> Result<TokenStream> {
-    let partial_name = format_ident!("Partial{}", config_name);
-
-    Ok(quote! {
-        impl #config_name {
-            pub fn from_files(paths: &[std::path::PathBuf]) -> Result<(Self, hearthd_config::Diagnostics), hearthd_config::Diagnostics> {
-                let configs = #partial_name::load_with_imports(paths)
-                    .map_err(|e| hearthd_config::Diagnostics(vec![hearthd_config::Diagnostic::Error(hearthd_config::Error::Load(e))]))?;
-
-                let (partial, mut diagnostics) = #partial_name::merge(configs);
-
-                let config: Self = partial.try_into().unwrap_or_else(|errs: Vec<hearthd_config::Diagnostic>| {
-                    diagnostics.extend(errs);
-                    Self::default()
-                });
-
-                let has_errors = diagnostics.iter().any(|d| d.is_error());
-
-                if has_errors {
-                    Err(hearthd_config::Diagnostics(diagnostics))
-                } else {
-                    Ok((config, hearthd_config::Diagnostics(diagnostics)))
-                }
-            }
-        }
-    })
-}
-
 fn is_hashmap(ty: &Type) -> bool {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {
@@ -757,7 +699,8 @@ fn extract_hashmap_types(ty: &Type) -> Result<(Type, Type)> {
             if let PathArguments::AngleBracketed(args) = &segment.arguments {
                 if args.args.len() == 2 {
                     if let (GenericArgument::Type(key), GenericArgument::Type(value)) =
-                        (&args.args[0], &args.args[1]) {
+                        (&args.args[0], &args.args[1])
+                    {
                         return Ok((key.clone(), value.clone()));
                     }
                 }
@@ -790,10 +733,22 @@ fn is_simple_type(ty: &Type) -> bool {
             let ident = &segment.ident;
             return matches!(
                 ident.to_string().as_str(),
-                "bool" | "i8" | "i16" | "i32" | "i64" | "i128" |
-                "u8" | "u16" | "u32" | "u64" | "u128" |
-                "f32" | "f64" | "String" | "str" |
-                "LogLevel" // Custom simple enum types
+                "bool"
+                    | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "f32"
+                    | "f64"
+                    | "String"
+                    | "str"
+                    | "LogLevel" // Custom simple enum types
             );
         }
     }

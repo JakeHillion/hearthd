@@ -2,8 +2,10 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use hearthd_config::{
+    Diagnostic, Diagnostics, Error, MergeableConfig, SourceInfo, SubConfig, ValidationError,
+};
 use tracing_subscriber::filter::LevelFilter;
-use hearthd_config::{Diagnostics, MergeableConfig, SubConfig, Diagnostic, Error, ValidationError, SourceInfo};
 
 #[derive(Debug, Default, MergeableConfig)]
 pub struct Config {
@@ -55,7 +57,7 @@ pub struct LocationsConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, SubConfig)]
-#[config(no_span)]  // Don't use Spanned - this is used as a HashMap value
+#[config(no_span)] // Don't use Spanned - this is used as a HashMap value
 #[allow(dead_code)] // Fields are used by application code, not in tests
 pub struct Location {
     /// Latitude in decimal degrees
@@ -180,18 +182,19 @@ impl Config {
         let (partial, mut diagnostics) = PartialConfig::merge(configs);
 
         // Manual conversion with validation
-        let logging = partial.logging
-            .map(|pl| {
-                LoggingConfig {
-                    level: pl.level.map(|s| *s.get_ref()).unwrap_or_default(),
-                    overrides: pl.overrides
-                        .map(|hm| hm.into_iter().map(|(k, v)| (k, *v.get_ref())).collect())
-                        .unwrap_or_default(),
-                }
+        let logging = partial
+            .logging
+            .map(|pl| LoggingConfig {
+                level: pl.level.map(|s| *s.get_ref()).unwrap_or_default(),
+                overrides: pl
+                    .overrides
+                    .map(|hm| hm.into_iter().map(|(k, v)| (k, *v.get_ref())).collect())
+                    .unwrap_or_default(),
             })
             .unwrap_or_default();
 
-        let locations_result = partial.locations
+        let locations_result = partial
+            .locations
             .map(|pl| LocationsConfig::try_from((pl, partial.source.clone())));
 
         let locations = match locations_result {
