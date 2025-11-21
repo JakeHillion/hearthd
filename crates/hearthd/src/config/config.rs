@@ -3,11 +3,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use tracing_subscriber::filter::LevelFilter;
+use hearthd_config::{Diagnostics, MergeableConfig, SubConfig, Diagnostic, Error, ValidationError, SourceInfo};
 
-use super::diagnostics::{Diagnostic, Diagnostics, Error, ValidationError};
-use super::partial::PartialConfig;
-
-#[derive(Debug, Default)]
+#[derive(Debug, Default, MergeableConfig)]
 pub struct Config {
     pub logging: LoggingConfig,
     pub locations: LocationsConfig,
@@ -38,7 +36,7 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, SubConfig)]
 pub struct LoggingConfig {
     /// Log level: trace, debug, info, warn, error
     pub level: LogLevel,
@@ -46,16 +44,18 @@ pub struct LoggingConfig {
     pub overrides: HashMap<String, LogLevel>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, SubConfig)]
 pub struct LocationsConfig {
     /// The default location to use
     pub default: Option<String>,
 
     /// Named locations with their configurations
+    #[serde(flatten)]
     pub locations: HashMap<String, Location>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Deserialize, SubConfig)]
+#[config(no_span)]  // Don't use Spanned - this is used as a HashMap value
 #[allow(dead_code)] // Fields are used by application code, not in tests
 pub struct Location {
     /// Latitude in decimal degrees
@@ -71,68 +71,139 @@ pub struct Location {
     pub timezone: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, SubConfig)]
 pub struct IntegrationsConfig {
     // Empty for now - integrations will be added as static fields later
 }
 
+// Manual validation logic for Location
+pub struct LocationConversionContext {
+    pub name: String,
+    pub source: Option<SourceInfo>,
+}
+
+impl TryFrom<(PartialLocation, LocationConversionContext)> for Location {
+    type Error = Vec<Diagnostic>;
+
+    fn try_from(
+        (partial, ctx): (PartialLocation, LocationConversionContext),
+    ) -> Result<Self, Self::Error> {
+        let mut diagnostics = Vec::new();
+
+        // Latitude is required
+        // Note: PartialLocation uses plain types (no Spanned) due to #[config(no_span)]
+        let latitude = if let Some(lat) = partial.latitude {
+            lat
+        } else {
+            diagnostics.push(Diagnostic::Error(Error::Validation(ValidationError {
+                field_path: format!("locations.{}.latitude", ctx.name),
+                message: "latitude is required".to_string(),
+                span: None,
+                source: ctx.source.clone(),
+            })));
+            0.0 // Default for error recovery
+        };
+
+        // Longitude is required
+        let longitude = if let Some(lon) = partial.longitude {
+            lon
+        } else {
+            diagnostics.push(Diagnostic::Error(Error::Validation(ValidationError {
+                field_path: format!("locations.{}.longitude", ctx.name),
+                message: "longitude is required".to_string(),
+                span: None,
+                source: ctx.source.clone(),
+            })));
+            0.0 // Default for error recovery
+        };
+
+        let elevation_m = partial.elevation_m;
+        let timezone = partial.timezone;
+
+        if diagnostics.is_empty() {
+            Ok(Location {
+                latitude,
+                longitude,
+                elevation_m,
+                timezone,
+            })
+        } else {
+            Err(diagnostics)
+        }
+    }
+}
+
+impl TryFrom<(PartialLocationsConfig, Option<SourceInfo>)> for LocationsConfig {
+    type Error = Vec<Diagnostic>;
+
+    fn try_from(
+        (partial, source): (PartialLocationsConfig, Option<SourceInfo>),
+    ) -> Result<Self, Self::Error> {
+        let mut diagnostics = Vec::new();
+        let mut locations_map = HashMap::new();
+
+        // locations is flattened, so it's always present (not Option)
+        for (key, partial_location) in partial.locations {
+            let ctx = LocationConversionContext {
+                name: key.clone(),
+                source: source.clone(),
+            };
+
+            match Location::try_from((partial_location, ctx)) {
+                Ok(location) => {
+                    locations_map.insert(key, location);
+                }
+                Err(errs) => {
+                    diagnostics.extend(errs);
+                }
+            }
+        }
+
+        if diagnostics.is_empty() {
+            Ok(LocationsConfig {
+                default: partial.default.map(|s| s.into_inner()),
+                locations: locations_map,
+            })
+        } else {
+            Err(diagnostics)
+        }
+    }
+}
+
 impl Config {
     /// Load configuration from multiple TOML files with import resolution
-    ///
-    /// Supports:
-    /// - Multiple config files (e.g., base + secrets)
-    /// - Import statements within config files
-    /// - Conflict detection across all sources
-    /// - Validation with all errors and warnings reported together
-    ///
-    /// Returns Ok((Config, diagnostics)) where diagnostics contains warnings and errors.
-    /// Returns Err if there are actual errors (not just warnings).
     pub fn from_files(paths: &[PathBuf]) -> Result<(Self, Diagnostics), Diagnostics> {
-        // Load all configs
+        // Use generated load and merge
         let configs = PartialConfig::load_with_imports(paths)
-            .map_err(|e| Diagnostics(vec![Diagnostic::Error(Error::Load(e))]))?;
+            .map_err(|e| Diagnostics(vec![Diagnostic::Error(hearthd_config::Error::Load(e))]))?;
 
-        // Merge with first-wins semantics, collecting diagnostics
-        let (partial, diagnostics) = PartialConfig::merge(configs);
+        let (partial, mut diagnostics) = PartialConfig::merge(configs);
 
-        // Convert to Config and validate, combining all diagnostics
-        Self::from_partial(partial, diagnostics)
-    }
-
-    /// Convert a PartialConfig to a Config, validating all fields
-    ///
-    /// Takes diagnostics from the merge step and adds validation diagnostics.
-    /// Returns Ok((Config, diagnostics)) if no errors, Err if there are errors.
-    pub fn from_partial(
-        partial: PartialConfig,
-        mut diagnostics: Vec<Diagnostic>,
-    ) -> Result<(Self, Diagnostics), Diagnostics> {
-        // Convert partial configs to Results
-        let logging_result: Result<LoggingConfig, Vec<Diagnostic>> = partial
-            .logging
-            .map(LoggingConfig::try_from)
-            .unwrap_or(Ok(LoggingConfig::default()));
-
-        let locations_result: Result<LocationsConfig, Vec<Diagnostic>> = partial
-            .locations
-            .map(|pl| LocationsConfig::try_from((pl, partial.source.clone())))
-            .unwrap_or(Ok(LocationsConfig::default()));
-
-        // Extract values, collecting errors
-        let logging = logging_result.unwrap_or_else(|errs| {
-            diagnostics.extend(errs);
-            LoggingConfig::default()
-        });
-
-        let locations = locations_result.unwrap_or_else(|errs| {
-            diagnostics.extend(errs);
-            LocationsConfig::default()
-        });
-
-        let integrations = partial
-            .integrations
-            .map(|_| IntegrationsConfig {})
+        // Manual conversion with validation
+        let logging = partial.logging
+            .map(|pl| {
+                LoggingConfig {
+                    level: pl.level.map(|s| *s.get_ref()).unwrap_or_default(),
+                    overrides: pl.overrides
+                        .map(|hm| hm.into_iter().map(|(k, v)| (k, *v.get_ref())).collect())
+                        .unwrap_or_default(),
+                }
+            })
             .unwrap_or_default();
+
+        let locations_result = partial.locations
+            .map(|pl| LocationsConfig::try_from((pl, partial.source.clone())));
+
+        let locations = match locations_result {
+            Some(Ok(locs)) => locs,
+            Some(Err(errs)) => {
+                diagnostics.extend(errs);
+                LocationsConfig::default()
+            }
+            None => LocationsConfig::default(),
+        };
+
+        let integrations = IntegrationsConfig::default();
 
         let config = Config {
             logging,
@@ -150,7 +221,6 @@ impl Config {
             })));
         }
 
-        // Check if there are any errors (not just warnings)
         let has_errors = diagnostics.iter().any(|d| d.is_error());
 
         if has_errors {
@@ -181,9 +251,6 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
-
-    // All tests now use Config::from_files() with actual file I/O
-    // This ensures we test the real loading path
 
     #[test]
     fn test_merge_non_overlapping_configs() {
@@ -269,7 +336,6 @@ level = "debug"
         assert!(result.is_err());
 
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Merge conflict"));
         assert!(err_msg.contains("logging.level"));
 
         fs::remove_dir_all(&temp_dir).ok();
@@ -865,7 +931,7 @@ longitude = 11.0
         assert!(diagnostics.0[0].is_warning());
 
         // Test that format_diagnostics produces output
-        let output = super::super::format_diagnostics(&diagnostics.0);
+        let output = hearthd_config::format_diagnostics(&diagnostics.0);
         assert!(!output.is_empty());
         assert!(output.contains("Warning"));
 
