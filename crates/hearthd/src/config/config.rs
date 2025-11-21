@@ -11,6 +11,7 @@ use super::partial::PartialConfig;
 pub struct Config {
     pub logging: LoggingConfig,
     pub locations: LocationsConfig,
+    pub http: HttpConfig,
     #[allow(dead_code)]
     pub integrations: IntegrationsConfig,
 }
@@ -71,6 +72,24 @@ pub struct Location {
     pub timezone: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct HttpConfig {
+    /// Listen address for the HTTP API server
+    pub listen: String,
+
+    /// Port for the HTTP API server
+    pub port: u16,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            listen: "127.0.0.1".to_string(),
+            port: 8565,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct IntegrationsConfig {
     // Empty for now - integrations will be added as static fields later
@@ -129,6 +148,8 @@ impl Config {
             LocationsConfig::default()
         });
 
+        let http = partial.http.map(HttpConfig::from).unwrap_or_default();
+
         let integrations = partial
             .integrations
             .map(|_| IntegrationsConfig {})
@@ -137,6 +158,7 @@ impl Config {
         let config = Config {
             logging,
             locations,
+            http,
             integrations,
         };
 

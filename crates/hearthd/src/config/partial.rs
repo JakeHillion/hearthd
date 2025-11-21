@@ -6,7 +6,7 @@ use super::diagnostics::{
     Diagnostic, Error, LoadError, MergeConflictLocation, MergeError, SourceInfo, ValidationError,
     Warning,
 };
-use super::{Location, LocationsConfig, LogLevel, LoggingConfig};
+use super::{HttpConfig, Location, LocationsConfig, LogLevel, LoggingConfig};
 
 #[derive(Debug, Default, Deserialize)]
 pub struct PartialConfig {
@@ -15,6 +15,7 @@ pub struct PartialConfig {
 
     pub logging: Option<PartialLoggingConfig>,
     pub locations: Option<PartialLocationsConfig>,
+    pub http: Option<PartialHttpConfig>,
     pub integrations: Option<PartialIntegrationsConfig>,
 
     /// Source information for error reporting (not serialized)
@@ -41,6 +42,24 @@ pub struct PartialLocation {
     pub longitude: Option<f64>,
     pub elevation_m: Option<f64>,
     pub timezone: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PartialHttpConfig {
+    pub listen: Option<toml::Spanned<String>>,
+    pub port: Option<toml::Spanned<u16>>,
+}
+
+impl From<PartialHttpConfig> for HttpConfig {
+    fn from(partial: PartialHttpConfig) -> Self {
+        Self {
+            listen: partial
+                .listen
+                .map(|s| s.into_inner())
+                .unwrap_or_else(|| "127.0.0.1".to_string()),
+            port: partial.port.map(|p| p.into_inner()).unwrap_or(8565),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -277,6 +296,7 @@ impl PartialConfig {
             // Check if config is empty (no meaningful content)
             let is_empty = config.logging.is_none()
                 && config.locations.is_none()
+                && config.http.is_none()
                 && config.integrations.is_none()
                 && config.imports.is_empty();
 
@@ -564,6 +584,64 @@ impl PartialConfig {
                 }
             }
 
+            // Merge http config
+            if let Some(http) = config.http {
+                if result.http.is_none() {
+                    result.http = Some(PartialHttpConfig {
+                        listen: None,
+                        port: None,
+                    });
+                }
+
+                let result_http = result.http.as_mut().unwrap();
+
+                // Check http.listen conflict (first-wins)
+                if let Some(listen_spanned) = http.listen {
+                    let conflict_loc = MergeConflictLocation {
+                        file_path: source_info.file_path.clone(),
+                        span: listen_spanned.span(),
+                        content: source_info.content.clone(),
+                    };
+
+                    if let Some(prev_loc) =
+                        result_http.listen.as_ref().map(|_| conflict_loc.clone())
+                    {
+                        // Note: we need to track the first location separately
+                        // For now, just report conflict
+                        diagnostics.push(Diagnostic::Error(Error::Merge(MergeError {
+                            field_path: "http.listen".to_string(),
+                            message: "HTTP listen address defined in multiple config files"
+                                .to_string(),
+                            conflicts: vec![prev_loc, conflict_loc],
+                        })));
+                    } else {
+                        // First occurrence: keep it
+                        result_http.listen = Some(listen_spanned);
+                    }
+                }
+
+                // Check http.port conflict (first-wins)
+                if let Some(port_spanned) = http.port {
+                    let conflict_loc = MergeConflictLocation {
+                        file_path: source_info.file_path.clone(),
+                        span: port_spanned.span(),
+                        content: source_info.content.clone(),
+                    };
+
+                    if let Some(prev_loc) = result_http.port.as_ref().map(|_| conflict_loc.clone())
+                    {
+                        diagnostics.push(Diagnostic::Error(Error::Merge(MergeError {
+                            field_path: "http.port".to_string(),
+                            message: "HTTP port defined in multiple config files".to_string(),
+                            conflicts: vec![prev_loc, conflict_loc],
+                        })));
+                    } else {
+                        // First occurrence: keep it
+                        result_http.port = Some(port_spanned);
+                    }
+                }
+            }
+
             // Merge integrations config (currently empty, but set up for future)
             if config.integrations.is_some() && result.integrations.is_none() {
                 result.integrations = config.integrations;
@@ -793,14 +871,11 @@ imports = ["a.toml"]
     #[test]
     fn test_merge_single_config() {
         let config = PartialConfig {
-            imports: vec![],
             logging: Some(PartialLoggingConfig {
                 level: Some(toml::Spanned::new(0..4, LogLevel::Info)),
                 overrides: None,
             }),
-            locations: None,
-            integrations: None,
-            source: None,
+            ..Default::default()
         };
 
         let (result, diagnostics) = PartialConfig::merge(vec![config]);
@@ -812,22 +887,18 @@ imports = ["a.toml"]
     #[test]
     fn test_merge_non_overlapping_configs() {
         let config1 = PartialConfig {
-            imports: vec![],
             logging: Some(PartialLoggingConfig {
                 level: Some(toml::Spanned::new(0..4, LogLevel::Info)),
                 overrides: None,
             }),
-            locations: None,
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("config1.toml"),
                 content: String::new(),
             }),
+            ..Default::default()
         };
 
         let config2 = PartialConfig {
-            imports: vec![],
-            logging: None,
             locations: Some(PartialLocationsConfig {
                 default: None,
                 locations: {
@@ -844,11 +915,11 @@ imports = ["a.toml"]
                     map
                 },
             }),
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("config2.toml"),
                 content: String::new(),
             }),
+            ..Default::default()
         };
 
         let (result, diagnostics) = PartialConfig::merge(vec![config1, config2]);
@@ -868,31 +939,27 @@ level = "debug"
 "#;
 
         let config1 = PartialConfig {
-            imports: vec![],
             logging: Some(PartialLoggingConfig {
                 level: Some(toml::Spanned::new(10..24, LogLevel::Info)),
                 overrides: None,
             }),
-            locations: None,
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("/tmp/config1.toml"),
                 content: content1.to_string(),
             }),
+            ..Default::default()
         };
 
         let config2 = PartialConfig {
-            imports: vec![],
             logging: Some(PartialLoggingConfig {
                 level: Some(toml::Spanned::new(10..25, LogLevel::Debug)),
                 overrides: None,
             }),
-            locations: None,
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("/tmp/config2.toml"),
                 content: content2.to_string(),
             }),
+            ..Default::default()
         };
 
         let (result, diagnostics) = PartialConfig::merge(vec![config1, config2]);
@@ -912,14 +979,11 @@ level = "debug"
     #[test]
     fn test_merge_empty_config_warning() {
         let config = PartialConfig {
-            imports: vec![],
-            logging: None,
-            locations: None,
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("/tmp/empty.toml"),
                 content: String::new(),
             }),
+            ..Default::default()
         };
 
         let (_result, diagnostics) = PartialConfig::merge(vec![config]);
@@ -940,8 +1004,6 @@ longitude = 11.0
 "#;
 
         let config1 = PartialConfig {
-            imports: vec![],
-            logging: None,
             locations: Some(PartialLocationsConfig {
                 default: None,
                 locations: {
@@ -958,16 +1020,14 @@ longitude = 11.0
                     map
                 },
             }),
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("/tmp/config1.toml"),
                 content: content1.to_string(),
             }),
+            ..Default::default()
         };
 
         let config2 = PartialConfig {
-            imports: vec![],
-            logging: None,
             locations: Some(PartialLocationsConfig {
                 default: None,
                 locations: {
@@ -984,11 +1044,11 @@ longitude = 11.0
                     map
                 },
             }),
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("/tmp/config2.toml"),
                 content: content2.to_string(),
             }),
+            ..Default::default()
         };
 
         let (result, diagnostics) = PartialConfig::merge(vec![config1, config2]);
@@ -1015,7 +1075,6 @@ default = "home"
 "#;
 
         let config1 = PartialConfig {
-            imports: vec![],
             logging: Some(PartialLoggingConfig {
                 level: Some(toml::Spanned::new(10..24, LogLevel::Info)),
                 overrides: None,
@@ -1024,15 +1083,14 @@ default = "home"
                 default: Some(toml::Spanned::new(50..54, "home".to_string())),
                 locations: HashMap::new(),
             }),
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("/tmp/config1.toml"),
                 content: content.to_string(),
             }),
+            ..Default::default()
         };
 
         let config2 = PartialConfig {
-            imports: vec![],
             logging: Some(PartialLoggingConfig {
                 level: Some(toml::Spanned::new(10..25, LogLevel::Debug)),
                 overrides: None,
@@ -1041,11 +1099,11 @@ default = "home"
                 default: Some(toml::Spanned::new(50..54, "work".to_string())),
                 locations: HashMap::new(),
             }),
-            integrations: None,
             source: Some(SourceInfo {
                 file_path: PathBuf::from("/tmp/config2.toml"),
                 content: content.to_string(),
             }),
+            ..Default::default()
         };
 
         let (_result, diagnostics) = PartialConfig::merge(vec![config1, config2]);
