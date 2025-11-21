@@ -3,7 +3,7 @@ use hearthd::Config;
 use std::path::PathBuf;
 
 use clap::Parser;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 use tracing::{debug, info, warn};
 use tracing_subscriber::filter::Targets as TracingTargets;
 use tracing_subscriber::prelude::*;

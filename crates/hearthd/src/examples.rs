@@ -106,7 +106,7 @@
 //! assert!(result.is_ok());
 //!
 //! let (_config, diagnostics) = result.unwrap();
-//! let output = format_diagnostics(&diagnostics.0);
+//! let output = format_diagnostics(&diagnostics.0[..]);
 //! println!("{}", output);
 //!
 //! let output_str = output
@@ -300,7 +300,7 @@
 //! let (config, diagnostics) = result.unwrap();
 //! assert_eq!(config.locations.locations.get("home").unwrap().latitude, 59.9139);
 //!
-//! let output = format_diagnostics(&diagnostics.0);
+//! let output = format_diagnostics(&diagnostics.0[..]);
 //! println!("{}", output);
 //!
 //! let output_str = output

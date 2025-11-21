@@ -190,6 +190,7 @@ version = "0.1.0"
 dependencies = [
  "ariadne",
  "clap",
+ "hearthd_config",
  "insta",
  "serde",
  "tempfile",
@@ -197,6 +198,27 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "hearthd_config"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "hearthd_config_derive",
+ "insta",
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "hearthd_config_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
