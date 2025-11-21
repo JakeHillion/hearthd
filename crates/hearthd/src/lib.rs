@@ -1,3 +1,4 @@
+pub mod api;
 mod config;
 
 #[cfg(doc)]

@@ -65,6 +65,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
 
+    // Create shutdown channel for HTTP server
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Start HTTP API server
+    let http_listen = cfg.http.listen.clone();
+    let http_port = cfg.http.port;
+    let http_server = tokio::spawn(async move {
+        if let Err(e) = hearthd::api::serve(http_listen, http_port, shutdown_rx).await {
+            warn!("HTTP API server error: {}", e);
+        }
+    });
+
     info!("hearthd ready, waiting for exit signal (SIGINT or SIGTERM)");
 
     // Wait for shutdown signal
@@ -75,6 +87,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ = sigint.recv() => {
             info!("Received SIGINT, shutting down gracefully");
         }
+    }
+
+    // Trigger HTTP server shutdown
+    if shutdown_tx.send(()).is_err() {
+        warn!("HTTP server already stopped");
+    }
+
+    // Wait for HTTP server to finish
+    match http_server.await {
+        Ok(()) => debug!("HTTP server stopped cleanly"),
+        Err(e) => warn!("HTTP server task error: {}", e),
     }
 
     info!("hearthd stopped");
