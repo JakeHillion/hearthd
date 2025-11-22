@@ -64,7 +64,17 @@ impl From<PartialHttpConfig> for HttpConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PartialIntegrationsConfig {
-    // Empty for now - integrations will be added as static fields later
+    pub mqtt: Option<PartialMqttIntegrationConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PartialMqttIntegrationConfig {
+    pub broker: Option<String>,
+    pub port: Option<u16>,
+    pub discovery_prefix: Option<String>,
+    pub client_id: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
 }
 
 /// Context for converting a partial location to a full location
