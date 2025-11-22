@@ -1,12 +1,23 @@
-use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::Path;
+use std::path::PathBuf;
 
-use super::diagnostics::{
-    Diagnostic, Error, LoadError, MergeConflictLocation, MergeError, SourceInfo, ValidationError,
-    Warning,
-};
-use super::{HttpConfig, Location, LocationsConfig, LogLevel, LoggingConfig};
+use serde::Deserialize;
+
+use super::HttpConfig;
+use super::Location;
+use super::LocationsConfig;
+use super::LogLevel;
+use super::LoggingConfig;
+use super::diagnostics::Diagnostic;
+use super::diagnostics::Error;
+use super::diagnostics::LoadError;
+use super::diagnostics::MergeConflictLocation;
+use super::diagnostics::MergeError;
+use super::diagnostics::SourceInfo;
+use super::diagnostics::ValidationError;
+use super::diagnostics::Warning;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct PartialConfig {
@@ -656,9 +667,10 @@ impl PartialConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
     use std::io::Write;
+
+    use super::*;
 
     #[test]
     fn test_partial_config_from_file() {

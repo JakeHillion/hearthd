@@ -1,7 +1,13 @@
-use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
-use serde::Serialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
+
+use axum::Json;
+use axum::Router;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::routing::get;
+use serde::Serialize;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 

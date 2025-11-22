@@ -1,10 +1,13 @@
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use serde::Deserialize;
 use tracing_subscriber::filter::LevelFilter;
 
-use super::diagnostics::{Diagnostic, Diagnostics, Error, ValidationError};
+use super::diagnostics::Diagnostic;
+use super::diagnostics::Diagnostics;
+use super::diagnostics::Error;
+use super::diagnostics::ValidationError;
 use super::partial::PartialConfig;
 
 #[derive(Debug, Default)]
@@ -200,9 +203,10 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
     use std::io::Write;
+
+    use super::*;
 
     // All tests now use Config::from_files() with actual file I/O
     // This ensures we test the real loading path

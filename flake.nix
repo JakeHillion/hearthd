@@ -42,6 +42,8 @@
             "clippy"
             "rust-src"
             "rustc"
+          ];
+          fmt-toolchain = fenix.packages.${system}.default.withComponents [
             "rustfmt"
           ];
           craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
@@ -51,10 +53,14 @@
             programs = {
               rustfmt = {
                 enable = true;
-                package = toolchain;
+                package = fmt-toolchain;
               };
               nixpkgs-fmt.enable = true;
             };
+            settings.formatter.rustfmt.options = [
+              "--config-path"
+              "${./rustfmt.toml}"
+            ];
           };
 
           src = craneLib.cleanCargoSource (craneLib.path ./.);
@@ -107,8 +113,8 @@
             checks = self.checks.${system};
             packages = with pkgs; [
               rust-analyzer
-              treefmtEval.config.build.wrapper
               cargo-insta
+              fmt-toolchain
             ];
 
             HA_PYTHON_INTERPRETER = "${haPythonEnv}/bin/python";

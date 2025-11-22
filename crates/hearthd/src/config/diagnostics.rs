@@ -138,7 +138,11 @@ impl Diagnostic {
 
 /// Format all diagnostics for display using Ariadne
 pub fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
-    use ariadne::{Color, Label, Report, ReportKind, Source};
+    use ariadne::Color;
+    use ariadne::Label;
+    use ariadne::Report;
+    use ariadne::ReportKind;
+    use ariadne::Source;
 
     let mut output = Vec::new();
 
