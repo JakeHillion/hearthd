@@ -92,7 +92,44 @@ impl Default for HttpConfig {
 
 #[derive(Debug, Default)]
 pub struct IntegrationsConfig {
-    // Empty for now - integrations will be added as static fields later
+    #[cfg(feature = "integration_mqtt")]
+    pub mqtt: Option<MqttIntegrationConfig>,
+}
+
+#[cfg(feature = "integration_mqtt")]
+#[derive(Debug, Clone)]
+pub struct MqttIntegrationConfig {
+    /// MQTT broker hostname or IP address
+    pub broker: String,
+
+    /// MQTT broker port
+    pub port: u16,
+
+    /// Discovery prefix for Zigbee2MQTT (default: "homeassistant")
+    pub discovery_prefix: String,
+
+    /// MQTT client ID
+    pub client_id: String,
+
+    /// Optional username for authentication
+    pub username: Option<String>,
+
+    /// Optional password for authentication
+    pub password: Option<String>,
+}
+
+#[cfg(feature = "integration_mqtt")]
+impl Default for MqttIntegrationConfig {
+    fn default() -> Self {
+        Self {
+            broker: "localhost".to_string(),
+            port: 1883,
+            discovery_prefix: "homeassistant".to_string(),
+            client_id: "hearthd".to_string(),
+            username: None,
+            password: None,
+        }
+    }
 }
 
 impl Config {
@@ -152,7 +189,19 @@ impl Config {
 
         let integrations = partial
             .integrations
-            .map(|_| IntegrationsConfig {})
+            .map(|pi| IntegrationsConfig {
+                #[cfg(feature = "integration_mqtt")]
+                mqtt: pi.mqtt.map(|pm| MqttIntegrationConfig {
+                    broker: pm.broker.unwrap_or_else(|| "localhost".to_string()),
+                    port: pm.port.unwrap_or(1883),
+                    discovery_prefix: pm
+                        .discovery_prefix
+                        .unwrap_or_else(|| "homeassistant".to_string()),
+                    client_id: pm.client_id.unwrap_or_else(|| "hearthd".to_string()),
+                    username: pm.username,
+                    password: pm.password,
+                }),
+            })
             .unwrap_or_default();
 
         let config = Config {
@@ -201,6 +250,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::diagnostics;
     use std::fs;
     use std::io::Write;
 
@@ -887,7 +937,7 @@ longitude = 11.0
         assert!(diagnostics.0[0].is_warning());
 
         // Test that format_diagnostics produces output
-        let output = super::super::format_diagnostics(&diagnostics.0);
+        let output = diagnostics::format_diagnostics(&diagnostics.0);
         assert!(!output.is_empty());
         assert!(output.contains("Warning"));
 
