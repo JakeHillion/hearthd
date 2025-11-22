@@ -1,10 +1,12 @@
-use hearthd::Config;
-
 use std::path::PathBuf;
 
 use clap::Parser;
-use tokio::signal::unix::{SignalKind, signal};
-use tracing::{debug, info, warn};
+use hearthd::Config;
+use tokio::signal::unix::SignalKind;
+use tokio::signal::unix::signal;
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
 use tracing_subscriber::filter::Targets as TracingTargets;
 use tracing_subscriber::prelude::*;
 
