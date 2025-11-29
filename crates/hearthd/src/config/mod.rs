@@ -1,10 +1,7 @@
 mod config;
-mod diagnostics;
-mod partial;
 
 // Re-export specific types for clarity
 pub use config::LogLevel;
 pub use config::*;
-pub use diagnostics::Diagnostic;
-pub use diagnostics::Diagnostics;
-pub use diagnostics::format_diagnostics;
+// Re-export diagnostics from hearthd_config (the proc-macro based implementation)
+pub use hearthd_config::{Diagnostic, Diagnostics, format_diagnostics};
