@@ -1,6 +1,8 @@
 [workspace]
 members = [
   "crates/hearthd",
+  "crates/hearthd_config",
+  "crates/hearthd_config_derive",
 ]
 resolver = "3"
 
