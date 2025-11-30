@@ -1,4 +1,5 @@
 mod diagnostics;
+mod located;
 
 // Re-export diagnostic types
 pub use diagnostics::Diagnostic;
@@ -13,6 +14,7 @@ pub use diagnostics::Warning;
 pub use diagnostics::format_diagnostics;
 pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;
+pub use located::Located;
 
 /// Trait that associates a config type with its partial variant.
 ///

@@ -136,8 +136,11 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
     let try_from_impl: Option<TokenStream> = None;
     let config_impl: Option<TokenStream> = None;
 
+    let attach_source_impl = generate_attach_source_impl(name, &field_infos, use_spans)?;
+
     Ok(quote! {
         #partial_struct
+        #attach_source_impl
         #merge_impl
         #load_impl
         #try_from_impl
@@ -170,9 +173,9 @@ fn generate_partial_struct(
         let field_decl = if is_hashmap(field_ty) {
             let (key_type, value_type) = extract_hashmap_types(field_ty)?;
             if is_simple_type(&value_type) {
-                // Only use Spanned if use_spans is true
+                // Only use Located if use_spans is true
                 if use_spans {
-                    quote! { std::collections::HashMap<#key_type, toml::Spanned<#value_type>> }
+                    quote! { std::collections::HashMap<#key_type, hearthd_config::Located<#value_type>> }
                 } else {
                     quote! { std::collections::HashMap<#key_type, #value_type> }
                 }
@@ -180,25 +183,25 @@ fn generate_partial_struct(
                 quote! { std::collections::HashMap<#key_type, <#value_type as hearthd_config::HasPartialConfig>::PartialConfig> }
             }
         } else if let Some(inner_ty) = is_option_type(field_ty) {
-            // Option<T> - only use Spanned if use_spans is true
+            // Option<T> - only use Located if use_spans is true
             if is_simple_type(&inner_ty) {
                 if use_spans {
-                    quote! { toml::Spanned<#inner_ty> }
+                    quote! { hearthd_config::Located<#inner_ty> }
                 } else {
                     quote! { #inner_ty }
                 }
             } else {
                 // Option of complex type (shouldn't happen often)
                 if use_spans {
-                    quote! { toml::Spanned<#inner_ty> }
+                    quote! { hearthd_config::Located<#inner_ty> }
                 } else {
                     quote! { #inner_ty }
                 }
             }
         } else if is_simple_type(field_ty) {
-            // Only use Spanned if use_spans is true
+            // Only use Located if use_spans is true
             if use_spans {
-                quote! { toml::Spanned<#field_ty> }
+                quote! { hearthd_config::Located<#field_ty> }
             } else {
                 quote! { #field_ty }
             }
@@ -412,30 +415,17 @@ fn generate_sub_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenS
                     if let Some(value) = std::mem::take(&mut other.#name) {
                         if self.#name.is_none() {
                             // First occurrence - just record it
-                            let conflict_loc = hearthd_config::MergeConflictLocation {
-                                file_path: source_info.file_path.clone(),
-                                span: value.span(),
-                                content: source_info.content.clone(),
-                            };
+                            let conflict_loc = value.to_conflict_location();
                             self.#name = Some(value);
                             field_locs.insert(#name_str.to_string(), conflict_loc);
                         } else {
                             // Conflict detected - field already set
                             let field_path = format!("{}.{}", field_prefix, #name_str);
                             let first_loc = field_locs.get(#name_str).cloned().unwrap_or_else(|| {
-                                // Fallback: extract location from the existing Spanned value
-                                let existing = self.#name.as_ref().unwrap();
-                                hearthd_config::MergeConflictLocation {
-                                    file_path: source_info.file_path.clone(),
-                                    span: existing.span(),
-                                    content: source_info.content.clone(),
-                                }
+                                // Fallback: extract location from the existing Located value
+                                self.#name.as_ref().unwrap().to_conflict_location()
                             });
-                            let conflict_loc = hearthd_config::MergeConflictLocation {
-                                file_path: source_info.file_path.clone(),
-                                span: value.span(),
-                                content: source_info.content.clone(),
-                            };
+                            let conflict_loc = value.to_conflict_location();
                             let message = format!("Field '{}' defined in multiple config files", field_path);
                             diagnostics.push(hearthd_config::Diagnostic::Error(hearthd_config::Error::Merge(hearthd_config::MergeError {
                                 field_path,
@@ -495,11 +485,7 @@ fn generate_sub_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenS
                         let self_map = self.#name.as_mut().unwrap();
                         for (key, value_spanned) in map {
                             let field_path = format!("{}.{}.{}", field_prefix, #name_str, key);
-                            let conflict_loc = hearthd_config::MergeConflictLocation {
-                                file_path: source_info.file_path.clone(),
-                                span: value_spanned.span(),
-                                content: source_info.content.clone(),
-                            };
+                            let conflict_loc = value_spanned.to_conflict_location();
 
                             let key_str = key.to_string();
                             if let Some(prev_loc) = field_locs.get(&key_str) {
@@ -619,11 +605,7 @@ fn generate_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenStrea
             if use_spans {
                 Ok(quote! {
                     if let Some(value) = config.#name {
-                        let conflict_loc = hearthd_config::MergeConflictLocation {
-                            file_path: source_info.file_path.clone(),
-                            span: value.span(),
-                            content: source_info.content.clone(),
-                        };
+                        let conflict_loc = value.to_conflict_location();
 
                         if let Some(prev_loc) = #loc_var.as_ref() {
                             diagnostics.push(hearthd_config::Diagnostic::Error(hearthd_config::Error::Merge(hearthd_config::MergeError {
@@ -671,11 +653,7 @@ fn generate_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenStrea
 
                         let result_map = result.#name.as_mut().unwrap();
                         for (key, value_spanned) in map {
-                            let conflict_loc = hearthd_config::MergeConflictLocation {
-                                file_path: source_info.file_path.clone(),
-                                span: value_spanned.span(),
-                                content: source_info.content.clone(),
-                            };
+                            let conflict_loc = value_spanned.to_conflict_location();
 
                             let field_path = format!("{}.{}", #name_str, key);
                             if let Some(prev_loc) = #locs_var.get(&key) {
@@ -780,6 +758,105 @@ fn generate_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenStrea
     }
 }
 
+fn generate_attach_source_impl(
+    config_name: &Ident,
+    fields: &[FieldInfo],
+    use_spans: bool,
+) -> Result<TokenStream> {
+    let partial_name = format_ident!("Partial{}", config_name);
+
+    if !use_spans {
+        // If not using spans, generate an empty method (no-op)
+        return Ok(quote! {
+            impl #partial_name {
+                /// Attach source information to all Located<T> fields in this config.
+                /// This is called automatically during loading.
+                /// (No-op for configs with #[config(no_span)])
+                pub fn attach_source_info(&mut self, _source: hearthd_config::SourceInfo) {
+                    // No-op: this config doesn't use Located<T>
+                }
+            }
+        });
+    }
+
+    let mut attach_statements = Vec::new();
+
+    for field in fields {
+        let name = &field.name;
+
+        match &field.field_type {
+            FieldType::Simple(_) => {
+                if field.flattened {
+                    // Flattened fields are not Option-wrapped
+                    attach_statements.push(quote! {
+                        self.#name = self.#name.with_source(source.clone());
+                    });
+                } else {
+                    attach_statements.push(quote! {
+                        if let Some(ref mut value) = self.#name {
+                            *value = value.clone().with_source(source.clone());
+                        }
+                    });
+                }
+            }
+            FieldType::HashMap { .. } => {
+                // HashMap<K, Located<V>> - attach to each value
+                if field.flattened {
+                    attach_statements.push(quote! {
+                        for (_key, value) in self.#name.iter_mut() {
+                            *value = value.clone().with_source(source.clone());
+                        }
+                    });
+                } else {
+                    attach_statements.push(quote! {
+                        if let Some(ref mut map) = self.#name {
+                            for (_key, value) in map.iter_mut() {
+                                *value = value.clone().with_source(source.clone());
+                            }
+                        }
+                    });
+                }
+            }
+            FieldType::HashMapOfStructs { .. } => {
+                // HashMap<K, PartialStruct> - recursively attach to each struct
+                if field.flattened {
+                    attach_statements.push(quote! {
+                        for (_key, partial_value) in self.#name.iter_mut() {
+                            partial_value.attach_source_info(source.clone());
+                        }
+                    });
+                } else {
+                    attach_statements.push(quote! {
+                        if let Some(ref mut map) = self.#name {
+                            for (_key, partial_value) in map.iter_mut() {
+                                partial_value.attach_source_info(source.clone());
+                            }
+                        }
+                    });
+                }
+            }
+            FieldType::Nested(_) => {
+                // Nested struct - recursively attach
+                attach_statements.push(quote! {
+                    if let Some(ref mut nested) = self.#name {
+                        nested.attach_source_info(source.clone());
+                    }
+                });
+            }
+        }
+    }
+
+    Ok(quote! {
+        impl #partial_name {
+            /// Attach source information to all Located<T> fields in this config.
+            /// This is called automatically during loading.
+            pub fn attach_source_info(&mut self, source: hearthd_config::SourceInfo) {
+                #(#attach_statements)*
+            }
+        }
+    })
+}
+
 fn generate_load_impl(config_name: &Ident) -> Result<TokenStream> {
     let partial_name = format_ident!("Partial{}", config_name);
 
@@ -796,10 +873,13 @@ fn generate_load_impl(config_name: &Ident) -> Result<TokenStream> {
                     error: e.to_string(),
                 })?;
 
-                config.source = Some(hearthd_config::SourceInfo {
+                let source_info = hearthd_config::SourceInfo {
                     file_path: path.to_path_buf(),
                     content,
-                });
+                };
+
+                config.source = Some(source_info.clone());
+                config.attach_source_info(source_info);
 
                 Ok(config)
             }
