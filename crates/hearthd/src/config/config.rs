@@ -5,8 +5,8 @@ use hearthd_config::Diagnostic;
 use hearthd_config::Diagnostics;
 use hearthd_config::Error;
 use hearthd_config::MergeableConfig;
-use hearthd_config::SourceInfo;
 use hearthd_config::SubConfig;
+use hearthd_config::TryFromPartial;
 use hearthd_config::ValidationError;
 use serde::Deserialize;
 use tracing_subscriber::filter::LevelFilter;
@@ -104,29 +104,20 @@ pub struct IntegrationsConfig {
 }
 
 // Manual validation logic for Location
-pub struct LocationConversionContext {
-    pub name: String,
-    pub source: Option<SourceInfo>,
-}
-
-impl TryFrom<(PartialLocation, LocationConversionContext)> for Location {
-    type Error = Vec<Diagnostic>;
-
-    fn try_from(
-        (partial, ctx): (PartialLocation, LocationConversionContext),
-    ) -> Result<Self, Self::Error> {
+impl hearthd_config::TryFromPartial for Location {
+    fn try_from_partial(partial: PartialLocation) -> Result<Self, Vec<Diagnostic>> {
         let mut diagnostics = Vec::new();
 
         // Latitude is required
-        // Note: PartialLocation uses plain types (no Spanned) due to #[config(no_span)]
+        // Note: PartialLocation uses plain types (no Located) due to #[config(no_span)]
         let latitude = if let Some(lat) = partial.latitude {
             lat
         } else {
             diagnostics.push(Diagnostic::Error(Error::Validation(ValidationError {
-                field_path: format!("locations.{}.latitude", ctx.name),
+                field_path: "latitude".to_string(),
                 message: "latitude is required".to_string(),
                 span: None,
-                source: ctx.source.clone(),
+                source: partial.source.clone(),
             })));
             0.0 // Default for error recovery
         };
@@ -136,10 +127,10 @@ impl TryFrom<(PartialLocation, LocationConversionContext)> for Location {
             lon
         } else {
             diagnostics.push(Diagnostic::Error(Error::Validation(ValidationError {
-                field_path: format!("locations.{}.longitude", ctx.name),
+                field_path: "longitude".to_string(),
                 message: "longitude is required".to_string(),
                 span: None,
-                source: ctx.source.clone(),
+                source: partial.source.clone(),
             })));
             0.0 // Default for error recovery
         };
@@ -160,28 +151,20 @@ impl TryFrom<(PartialLocation, LocationConversionContext)> for Location {
     }
 }
 
-impl TryFrom<(PartialLocationsConfig, Option<SourceInfo>)> for LocationsConfig {
-    type Error = Vec<Diagnostic>;
-
-    fn try_from(
-        (partial, source): (PartialLocationsConfig, Option<SourceInfo>),
-    ) -> Result<Self, Self::Error> {
+impl hearthd_config::TryFromPartial for LocationsConfig {
+    fn try_from_partial(partial: PartialLocationsConfig) -> Result<Self, Vec<Diagnostic>> {
         let mut diagnostics = Vec::new();
         let mut locations_map = HashMap::new();
 
         // locations is flattened, so it's always present (not Option)
         for (key, partial_location) in partial.locations {
-            let ctx = LocationConversionContext {
-                name: key.clone(),
-                source: source.clone(),
-            };
-
-            match Location::try_from((partial_location, ctx)) {
+            match Location::try_from_partial(partial_location) {
                 Ok(location) => {
-                    locations_map.insert(key, location);
+                    locations_map.insert(key.clone(), location);
                 }
                 Err(errs) => {
-                    diagnostics.extend(errs);
+                    // Prepend the HashMap key to all field paths
+                    diagnostics.extend(errs.into_iter().map(|d| d.prepend_path(&key)));
                 }
             }
         }
@@ -197,10 +180,8 @@ impl TryFrom<(PartialLocationsConfig, Option<SourceInfo>)> for LocationsConfig {
     }
 }
 
-impl TryFrom<PartialHttpConfig> for HttpConfig {
-    type Error = Vec<Diagnostic>;
-
-    fn try_from(partial: PartialHttpConfig) -> Result<Self, Self::Error> {
+impl hearthd_config::TryFromPartial for HttpConfig {
+    fn try_from_partial(partial: PartialHttpConfig) -> Result<Self, Vec<Diagnostic>> {
         Ok(HttpConfig {
             listen: partial
                 .listen
@@ -208,6 +189,85 @@ impl TryFrom<PartialHttpConfig> for HttpConfig {
                 .unwrap_or_else(|| "127.0.0.1".to_string()),
             port: partial.port.map(|p| p.into_inner()).unwrap_or(8565),
         })
+    }
+}
+
+impl hearthd_config::TryFromPartial for LoggingConfig {
+    fn try_from_partial(partial: PartialLoggingConfig) -> Result<Self, Vec<Diagnostic>> {
+        Ok(LoggingConfig {
+            level: partial.level.map(|s| *s.get_ref()).unwrap_or_default(),
+            overrides: partial
+                .overrides
+                .map(|hm| hm.into_iter().map(|(k, v)| (k, *v.get_ref())).collect())
+                .unwrap_or_default(),
+        })
+    }
+}
+
+impl hearthd_config::TryFromPartial for IntegrationsConfig {
+    fn try_from_partial(_partial: PartialIntegrationsConfig) -> Result<Self, Vec<Diagnostic>> {
+        // Empty for now - no fields to validate
+        Ok(IntegrationsConfig::default())
+    }
+}
+
+impl hearthd_config::TryFromPartial for Config {
+    fn try_from_partial(partial: PartialConfig) -> Result<Self, Vec<Diagnostic>> {
+        let mut diagnostics = Vec::new();
+
+        // Convert logging config
+        let logging = match partial.logging.map(LoggingConfig::try_from_partial) {
+            Some(Ok(cfg)) => cfg,
+            Some(Err(errs)) => {
+                diagnostics.extend(errs.into_iter().map(|d| d.prepend_path("logging")));
+                LoggingConfig::default()
+            }
+            None => LoggingConfig::default(),
+        };
+
+        // Convert locations config
+        let locations = match partial.locations.map(LocationsConfig::try_from_partial) {
+            Some(Ok(cfg)) => cfg,
+            Some(Err(errs)) => {
+                diagnostics.extend(errs.into_iter().map(|d| d.prepend_path("locations")));
+                LocationsConfig::default()
+            }
+            None => LocationsConfig::default(),
+        };
+
+        // Convert http config
+        let http = match partial.http.map(HttpConfig::try_from_partial) {
+            Some(Ok(cfg)) => cfg,
+            Some(Err(errs)) => {
+                diagnostics.extend(errs.into_iter().map(|d| d.prepend_path("http")));
+                HttpConfig::default()
+            }
+            None => HttpConfig::default(),
+        };
+
+        // Convert integrations config
+        let integrations = match partial
+            .integrations
+            .map(IntegrationsConfig::try_from_partial)
+        {
+            Some(Ok(cfg)) => cfg,
+            Some(Err(errs)) => {
+                diagnostics.extend(errs.into_iter().map(|d| d.prepend_path("integrations")));
+                IntegrationsConfig::default()
+            }
+            None => IntegrationsConfig::default(),
+        };
+
+        if diagnostics.is_empty() {
+            Ok(Config {
+                logging,
+                locations,
+                http,
+                integrations,
+            })
+        } else {
+            Err(diagnostics)
+        }
     }
 }
 
@@ -220,47 +280,13 @@ impl Config {
 
         let (partial, mut diagnostics) = PartialConfig::merge(configs);
 
-        // Manual conversion with validation
-        let logging = partial
-            .logging
-            .map(|pl| LoggingConfig {
-                level: pl.level.map(|s| *s.get_ref()).unwrap_or_default(),
-                overrides: pl
-                    .overrides
-                    .map(|hm| hm.into_iter().map(|(k, v)| (k, *v.get_ref())).collect())
-                    .unwrap_or_default(),
-            })
-            .unwrap_or_default();
-
-        let locations_result = partial
-            .locations
-            .map(|pl| LocationsConfig::try_from((pl, partial.source.clone())));
-
-        let locations = match locations_result {
-            Some(Ok(locs)) => locs,
-            Some(Err(errs)) => {
+        // Convert from partial config using TryFromPartial
+        let config = match Config::try_from_partial(partial) {
+            Ok(cfg) => cfg,
+            Err(errs) => {
                 diagnostics.extend(errs);
-                LocationsConfig::default()
+                Config::default()
             }
-            None => LocationsConfig::default(),
-        };
-
-        let http = partial
-            .http
-            .map(HttpConfig::try_from)
-            .unwrap_or(Ok(HttpConfig::default()))
-            .unwrap_or_else(|errs| {
-                diagnostics.extend(errs);
-                HttpConfig::default()
-            });
-
-        let integrations = IntegrationsConfig::default();
-
-        let config = Config {
-            logging,
-            locations,
-            http,
-            integrations,
         };
 
         // Validate cross-field constraints

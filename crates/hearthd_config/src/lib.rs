@@ -1,4 +1,5 @@
 mod diagnostics;
+mod finalize;
 mod located;
 
 // Re-export diagnostic types
@@ -12,6 +13,7 @@ pub use diagnostics::SourceInfo;
 pub use diagnostics::ValidationError;
 pub use diagnostics::Warning;
 pub use diagnostics::format_diagnostics;
+pub use finalize::TryFromPartial;
 pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;
 pub use located::Located;
