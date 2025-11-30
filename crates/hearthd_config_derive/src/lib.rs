@@ -100,3 +100,52 @@ pub fn derive_sub_config(input: TokenStream) -> TokenStream {
         Err(err) => err.to_compile_error().into(),
     }
 }
+
+/// Derive macro for implementing `TryFromPartial` trait for config validation.
+///
+/// This macro automatically generates the conversion logic from `Partial{TypeName}` to
+/// `{TypeName}` with comprehensive validation and error recovery.
+///
+/// # Generated Code
+///
+/// - `impl TryFromPartial for {TypeName}`: Converts partial config to final config
+/// - Validates required fields and collects all errors
+/// - Recursively calls `try_from_partial` on nested structs
+/// - Prepends field paths to nested errors for accurate reporting
+///
+/// # Field Handling
+///
+/// - **Simple fields**: Unwraps `Located<T>`, validates if required
+/// - **Optional fields**: Uses `.map()` to unwrap, no error if missing
+/// - **HashMap of simple values**: Maps over entries, unwraps each value
+/// - **HashMap of structs**: Recursively calls `try_from_partial`, prepends key to errors
+/// - **Nested structs**: Recursively calls `try_from_partial`, prepends field name to errors
+///
+/// # Example
+///
+/// ```ignore
+/// use hearthd_config::{TryFromPartial, SubConfig};
+///
+/// #[derive(TryFromPartial, SubConfig)]
+/// struct Location {
+///     latitude: f64,
+///     longitude: f64,
+///     elevation_m: Option<f64>,
+/// }
+///
+/// // Generates:
+/// // impl TryFromPartial for Location {
+/// //     fn try_from_partial(partial: PartialLocation) -> Result<Self, Vec<Diagnostic>> {
+/// //         // validation logic for each field...
+/// //     }
+/// // }
+/// ```
+#[proc_macro_derive(TryFromPartial, attributes(config))]
+pub fn derive_try_from_partial(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    match generate::expand_try_from_partial(input) {
+        Ok(expanded) => expanded.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}

@@ -1005,3 +1005,305 @@ fn is_simple_type(ty: &Type) -> bool {
     }
     false
 }
+
+/// Generate TryFromPartial implementation for a config struct
+pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
+    let name = &input.ident;
+    let partial_name = format_ident!("Partial{}", name);
+
+    // Check for #[config(no_span)] attribute
+    let no_span = input.attrs.iter().any(|attr| {
+        if attr.path().is_ident("config") {
+            if let Ok(syn::Meta::Path(path)) = attr.parse_args::<syn::Meta>() {
+                return path.is_ident("no_span");
+            }
+        }
+        false
+    });
+    let use_spans = !no_span;
+
+    // Only support structs
+    let fields = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => &fields.named,
+            _ => {
+                return Err(Error::new_spanned(
+                    name,
+                    "TryFromPartial only supports structs with named fields",
+                ));
+            }
+        },
+        _ => {
+            return Err(Error::new_spanned(
+                name,
+                "TryFromPartial only supports structs",
+            ));
+        }
+    };
+
+    // Analyze fields (reuse existing infrastructure)
+    let mut field_infos = Vec::new();
+    for field in fields {
+        let field_name = field.ident.as_ref().unwrap().clone();
+        let field_ty = &field.ty;
+
+        // Check if field has #[serde(flatten)] attribute
+        let flattened = field.attrs.iter().any(|attr| {
+            if attr.path().is_ident("serde") {
+                if let Ok(syn::Meta::Path(path)) = attr.parse_args::<syn::Meta>() {
+                    return path.is_ident("flatten");
+                }
+            }
+            false
+        });
+
+        let field_type = if is_hashmap(field_ty) {
+            let (key_type, value_type) = extract_hashmap_types(field_ty)?;
+            if is_simple_type(&value_type) {
+                FieldType::HashMap {
+                    key_type,
+                    value_type,
+                }
+            } else {
+                FieldType::HashMapOfStructs {
+                    key_type,
+                    value_type,
+                }
+            }
+        } else if is_simple_type(field_ty) {
+            FieldType::Simple(field_ty.clone())
+        } else if let Some(inner_ty) = is_option_type(field_ty) {
+            if is_simple_type(&inner_ty) {
+                FieldType::Simple(field_ty.clone())
+            } else {
+                FieldType::Nested(field_ty.clone())
+            }
+        } else {
+            FieldType::Nested(field_ty.clone())
+        };
+
+        field_infos.push(FieldInfo {
+            name: field_name,
+            field_type,
+            flattened,
+        });
+    }
+
+    // Generate field conversion code
+    let field_conversions = generate_try_from_partial_conversions(&field_infos, fields, use_spans)?;
+
+    // Collect field names for final struct construction
+    let field_names: Vec<_> = field_infos.iter().map(|f| &f.name).collect();
+
+    // Collect all HashMap key types for trait bounds
+    let mut key_types: Vec<&Type> = Vec::new();
+    for field in &field_infos {
+        match &field.field_type {
+            FieldType::HashMap { key_type, .. } | FieldType::HashMapOfStructs { key_type, .. } => {
+                key_types.push(key_type);
+            }
+            _ => {}
+        }
+    }
+
+    // Generate where clause for HashMap keys if needed
+    let where_clause = if !key_types.is_empty() {
+        quote! { where #(#key_types: std::fmt::Display + std::hash::Hash + Eq + Clone),* }
+    } else {
+        quote! {}
+    };
+
+    Ok(quote! {
+        impl hearthd_config::TryFromPartial for #name #where_clause {
+            fn try_from_partial(partial: #partial_name) -> Result<Self, Vec<hearthd_config::Diagnostic>> {
+                let mut diagnostics = Vec::new();
+
+                #(#field_conversions)*
+
+                if diagnostics.is_empty() {
+                    Ok(#name {
+                        #(#field_names,)*
+                    })
+                } else {
+                    Err(diagnostics)
+                }
+            }
+        }
+    })
+}
+
+fn generate_try_from_partial_conversions(
+    field_infos: &[FieldInfo],
+    fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>,
+    use_spans: bool,
+) -> Result<Vec<TokenStream>> {
+    let mut conversions = Vec::new();
+
+    for (field_info, field) in field_infos.iter().zip(fields.iter()) {
+        let name = &field_info.name;
+        let name_str = name.to_string();
+        let field_ty = &field.ty;
+
+        let conversion = match &field_info.field_type {
+            FieldType::Simple(_) => {
+                // Check if the final type is Option<T> (optional field)
+                let is_optional = is_option_type(field_ty).is_some();
+
+                if is_optional {
+                    // Optional field - no validation error if missing
+                    if use_spans {
+                        quote! {
+                            let #name = partial.#name.map(|located| located.into_inner());
+                        }
+                    } else {
+                        quote! {
+                            let #name = partial.#name;
+                        }
+                    }
+                } else {
+                    // Required field - generate validation error if missing
+                    let default_value = get_default_value(field_ty);
+
+                    if use_spans {
+                        quote! {
+                            let #name = if let Some(located) = partial.#name {
+                                located.into_inner()
+                            } else {
+                                diagnostics.push(hearthd_config::Diagnostic::Error(
+                                    hearthd_config::Error::Validation(hearthd_config::ValidationError {
+                                        field_path: #name_str.to_string(),
+                                        message: format!("{} is required", #name_str),
+                                        span: None,
+                                        source: partial.source.clone(),
+                                    })
+                                ));
+                                #default_value
+                            };
+                        }
+                    } else {
+                        quote! {
+                            let #name = if let Some(value) = partial.#name {
+                                value
+                            } else {
+                                diagnostics.push(hearthd_config::Diagnostic::Error(
+                                    hearthd_config::Error::Validation(hearthd_config::ValidationError {
+                                        field_path: #name_str.to_string(),
+                                        message: format!("{} is required", #name_str),
+                                        span: None,
+                                        source: partial.source.clone(),
+                                    })
+                                ));
+                                #default_value
+                            };
+                        }
+                    }
+                }
+            }
+            FieldType::HashMap { .. } => {
+                // HashMap of simple values - map over entries and unwrap
+                if use_spans {
+                    quote! {
+                        let #name = partial.#name
+                            .map(|hm| hm.into_iter().map(|(k, v)| (k, v.into_inner())).collect())
+                            .unwrap_or_default();
+                    }
+                } else {
+                    quote! {
+                        let #name = partial.#name.unwrap_or_default();
+                    }
+                }
+            }
+            FieldType::HashMapOfStructs { value_type, .. } => {
+                // HashMap of structs - iterate and recursively call try_from_partial
+                if field_info.flattened {
+                    quote! {
+                        let mut #name = std::collections::HashMap::new();
+                        for (key, partial_value) in partial.#name {
+                            match <#value_type>::try_from_partial(partial_value) {
+                                Ok(value) => {
+                                    #name.insert(key.clone(), value);
+                                }
+                                Err(errs) => {
+                                    diagnostics.extend(errs.into_iter().map(|d| d.prepend_path(&key)));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        let mut #name = std::collections::HashMap::new();
+                        if let Some(map) = partial.#name {
+                            for (key, partial_value) in map {
+                                match <#value_type>::try_from_partial(partial_value) {
+                                    Ok(value) => {
+                                        #name.insert(key.clone(), value);
+                                    }
+                                    Err(errs) => {
+                                        diagnostics.extend(errs.into_iter().map(|d| d.prepend_path(&key)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            FieldType::Nested(ty) => {
+                // Nested struct - recursively call try_from_partial with path prepending
+                // Check if the final type is Option<T>
+                let is_optional = is_option_type(field_ty).is_some();
+
+                if is_optional {
+                    // For Option<NestedStruct>, the partial is Option<PartialNestedStruct>
+                    // Extract the inner type from Option
+                    let inner_ty = is_option_type(ty).unwrap_or_else(|| ty.clone());
+
+                    quote! {
+                        let #name = partial.#name.map(|partial_nested| {
+                            match <#inner_ty>::try_from_partial(partial_nested) {
+                                Ok(value) => Some(value),
+                                Err(errs) => {
+                                    diagnostics.extend(errs.into_iter().map(|d| d.prepend_path(#name_str)));
+                                    None
+                                }
+                            }
+                        }).flatten();
+                    }
+                } else {
+                    quote! {
+                        let #name = match partial.#name.map(|partial_nested| <#ty>::try_from_partial(partial_nested)) {
+                            Some(Ok(value)) => value,
+                            Some(Err(errs)) => {
+                                diagnostics.extend(errs.into_iter().map(|d| d.prepend_path(#name_str)));
+                                <#ty>::default()
+                            }
+                            None => <#ty>::default(),
+                        };
+                    }
+                }
+            }
+        };
+
+        conversions.push(conversion);
+    }
+
+    Ok(conversions)
+}
+
+fn get_default_value(ty: &Type) -> TokenStream {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            let ident = &segment.ident;
+            match ident.to_string().as_str() {
+                "bool" => return quote! { false },
+                "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128" => {
+                    return quote! { 0 };
+                }
+                "f32" | "f64" => return quote! { 0.0 },
+                "String" => return quote! { String::new() },
+                _ => {}
+            }
+        }
+    }
+    // Default to Default::default() for other types
+    quote! { Default::default() }
+}

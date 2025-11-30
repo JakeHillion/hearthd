@@ -16,6 +16,7 @@ pub use diagnostics::format_diagnostics;
 pub use finalize::TryFromPartial;
 pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;
+pub use hearthd_config_derive::TryFromPartial;
 pub use located::Located;
 
 /// Trait that associates a config type with its partial variant.
