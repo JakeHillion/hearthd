@@ -177,8 +177,7 @@ fn generate_partial_struct(
                     quote! { std::collections::HashMap<#key_type, #value_type> }
                 }
             } else {
-                let partial_value = format_ident!("Partial{}", get_type_name(&value_type)?);
-                quote! { std::collections::HashMap<#key_type, #partial_value> }
+                quote! { std::collections::HashMap<#key_type, <#value_type as hearthd_config::HasPartialConfig>::PartialConfig> }
             }
         } else if let Some(inner_ty) = is_option_type(field_ty) {
             // Option<T> - only use Spanned if use_spans is true
@@ -204,8 +203,7 @@ fn generate_partial_struct(
                 quote! { #field_ty }
             }
         } else {
-            let nested_partial = format_ident!("Partial{}", get_type_name(field_ty)?);
-            quote! { #nested_partial }
+            quote! { <#field_ty as hearthd_config::HasPartialConfig>::PartialConfig }
         };
 
         let field_tokens = if has_flatten {
@@ -232,6 +230,10 @@ fn generate_partial_struct(
 
             #[serde(skip)]
             pub source: Option<hearthd_config::SourceInfo>,
+        }
+
+        impl hearthd_config::HasPartialConfig for #config_name {
+            type PartialConfig = #partial_name;
         }
     })
 }
@@ -922,13 +924,4 @@ fn is_simple_type(ty: &Type) -> bool {
         }
     }
     false
-}
-
-fn get_type_name(ty: &Type) -> Result<&Ident> {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            return Ok(&segment.ident);
-        }
-    }
-    Err(Error::new_spanned(ty, "Expected a named type"))
 }

@@ -13,3 +13,13 @@ pub use diagnostics::Warning;
 pub use diagnostics::format_diagnostics;
 pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;
+
+/// Trait that associates a config type with its partial variant.
+///
+/// This trait is automatically implemented by the `MergeableConfig` and `SubConfig`
+/// derive macros. It allows the macro-generated code to reference the partial type
+/// without requiring it to be directly in scope.
+pub trait HasPartialConfig {
+    /// The partial configuration type (where all fields are optional and wrapped in Spanned)
+    type PartialConfig;
+}
