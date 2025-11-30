@@ -7,6 +7,7 @@ use hearthd_config::Error;
 use hearthd_config::MergeableConfig;
 use hearthd_config::SubConfig;
 use hearthd_config::TryFromPartial;
+use hearthd_config::Validate;
 use hearthd_config::ValidationError;
 use serde::Deserialize;
 use tracing_subscriber::filter::LevelFilter;
@@ -103,56 +104,23 @@ pub struct IntegrationsConfig {
     // Empty for now - integrations will be added as static fields later
 }
 
-impl Config {
-    /// Load configuration from multiple TOML files with import resolution
-    pub fn from_files(paths: &[PathBuf]) -> Result<(Self, Diagnostics), Diagnostics> {
-        // Use generated load and merge
-        let configs = PartialConfig::load_with_imports(paths)
-            .map_err(|e| Diagnostics(vec![Diagnostic::Error(hearthd_config::Error::Load(e))]))?;
+impl Validate for Config {
+    fn validate(&self) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
 
-        let (partial, mut diagnostics) = PartialConfig::merge(configs);
-
-        // Convert from partial config using TryFromPartial
-        let config = match Config::try_from_partial(partial) {
-            Ok(cfg) => cfg,
-            Err(errs) => {
-                diagnostics.extend(errs);
-                Config::default()
-            }
-        };
-
-        // Validate cross-field constraints
-        if let Err(validation_error) = config.validate() {
-            diagnostics.push(Diagnostic::Error(Error::Validation(ValidationError {
-                field_path: "locations.default".to_string(),
-                message: validation_error,
-                span: None,
-                source: None,
-            })));
-        }
-
-        let has_errors = diagnostics.iter().any(|d| d.is_error());
-
-        if has_errors {
-            Err(Diagnostics(diagnostics))
-        } else {
-            Ok((config, Diagnostics(diagnostics)))
-        }
-    }
-
-    /// Validate the configuration
-    pub fn validate(&self) -> Result<(), String> {
         // Validate that default location exists if specified
         if let Some(ref default) = self.locations.default {
             if !self.locations.locations.contains_key(default) {
-                return Err(format!(
-                    "default location '{}' not found in locations",
-                    default
-                ));
+                diagnostics.push(Diagnostic::Error(Error::Validation(ValidationError {
+                    field_path: "locations.default".to_string(),
+                    message: format!("default location '{}' not found in locations", default),
+                    span: None,
+                    source: None,
+                })));
             }
         }
 
-        Ok(())
+        diagnostics
     }
 }
 
@@ -160,6 +128,8 @@ impl Config {
 mod tests {
     use std::fs;
     use std::io::Write;
+
+    use hearthd_config::PartialMergeableConfig;
 
     use super::*;
 
@@ -859,14 +829,16 @@ longitude = 11.0
         use serde::Deserialize;
         use tempfile::TempDir;
 
-        #[derive(MergeableConfig, Deserialize, Debug)]
+        #[derive(Default, TryFromPartial, MergeableConfig, Deserialize, Debug)]
         #[allow(dead_code)]
         struct TestConfig {
             name: String,
             details: Details,
         }
 
-        #[derive(SubConfig, Deserialize, Debug, Clone, PartialEq)]
+        impl Validate for TestConfig {}
+
+        #[derive(TryFromPartial, SubConfig, Deserialize, Debug, Clone, PartialEq)]
         #[allow(dead_code)]
         struct Details {
             description: String,
@@ -910,13 +882,15 @@ longitude = 11.0
         use serde::Deserialize;
         use tempfile::TempDir;
 
-        #[derive(MergeableConfig, Deserialize, Debug)]
+        #[derive(Default, TryFromPartial, MergeableConfig, Deserialize, Debug)]
         #[config(no_span)]
         #[allow(dead_code)]
         struct TestConfig {
             port: u16,
             host: String,
         }
+
+        impl Validate for TestConfig {}
 
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("config.toml");

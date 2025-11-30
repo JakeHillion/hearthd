@@ -1,6 +1,8 @@
 mod diagnostics;
 mod finalize;
 mod located;
+mod mergeable;
+mod validate;
 
 // Re-export diagnostic types
 pub use diagnostics::Diagnostic;
@@ -18,6 +20,9 @@ pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;
 pub use hearthd_config_derive::TryFromPartial;
 pub use located::Located;
+pub use mergeable::MergeableConfig;
+pub use mergeable::PartialMergeableConfig;
+pub use validate::Validate;
 
 /// Trait that associates a config type with its partial variant.
 ///

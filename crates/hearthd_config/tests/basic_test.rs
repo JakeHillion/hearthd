@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 use hearthd_config::MergeableConfig;
+use hearthd_config::TryFromPartial;
+use hearthd_config::Validate;
 use serde::Deserialize;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -11,11 +13,13 @@ pub enum LogLevel {
     Debug,
 }
 
-#[derive(Debug, Default, MergeableConfig)]
+#[derive(Debug, Default, TryFromPartial, MergeableConfig)]
 pub struct SimpleConfig {
     pub level: LogLevel,
     pub overrides: HashMap<String, LogLevel>,
 }
+
+impl Validate for SimpleConfig {}
 
 #[test]
 fn test_basic_derive() {

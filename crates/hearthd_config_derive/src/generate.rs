@@ -122,29 +122,34 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
 
     // Generate code
     let partial_struct = generate_partial_struct(name, fields, use_spans)?;
-    let merge_impl = if is_root {
-        generate_root_merge_impl(name, &field_infos, use_spans)?
-    } else {
-        generate_sub_merge_impl(name, &field_infos, use_spans)?
-    };
-    let load_impl = if is_root {
-        Some(generate_load_impl(name)?)
+    let partial_trait_impl = if is_root {
+        Some(generate_partial_mergeable_trait_impl(
+            name,
+            &field_infos,
+            use_spans,
+        )?)
     } else {
         None
     };
-    // TryFrom and from_files are implemented manually to handle validation
-    let try_from_impl: Option<TokenStream> = None;
-    let config_impl: Option<TokenStream> = None;
+    let merge_impl = if is_root {
+        None // Now part of trait impl
+    } else {
+        Some(generate_sub_merge_impl(name, &field_infos, use_spans)?)
+    };
+    let mergeable_trait_impl = if is_root {
+        Some(generate_mergeable_trait_impl(name)?)
+    } else {
+        None
+    };
 
     let attach_source_impl = generate_attach_source_impl(name, &field_infos, use_spans)?;
 
     Ok(quote! {
         #partial_struct
         #attach_source_impl
+        #partial_trait_impl
         #merge_impl
-        #load_impl
-        #try_from_impl
-        #config_impl
+        #mergeable_trait_impl
     })
 }
 
@@ -237,119 +242,6 @@ fn generate_partial_struct(
 
         impl hearthd_config::HasPartialConfig for #config_name {
             type PartialConfig = #partial_name;
-        }
-    })
-}
-
-fn generate_root_merge_impl(
-    config_name: &Ident,
-    fields: &[FieldInfo],
-    use_spans: bool,
-) -> Result<TokenStream> {
-    let partial_name = format_ident!("Partial{}", config_name);
-
-    // Collect all HashMap key types for trait bounds
-    let mut key_types: Vec<&Type> = Vec::new();
-    for field in fields {
-        match &field.field_type {
-            FieldType::HashMap { key_type, .. } | FieldType::HashMapOfStructs { key_type, .. } => {
-                key_types.push(key_type);
-            }
-            _ => {}
-        }
-    }
-
-    // Generate tracking variables
-    let tracking_vars: Vec<_> = fields
-        .iter()
-        .map(|f| {
-            let name = &f.name;
-            match &f.field_type {
-                FieldType::HashMap { key_type, .. } => {
-                    let var_name = format_ident!("{}_locs", name);
-                    quote! {
-                        let mut #var_name: std::collections::HashMap<#key_type, hearthd_config::MergeConflictLocation> = std::collections::HashMap::new();
-                    }
-                }
-                FieldType::HashMapOfStructs { key_type, .. } => {
-                    let var_name = format_ident!("{}_field_locs", name);
-                    quote! {
-                        let mut #var_name: std::collections::HashMap<#key_type, std::collections::HashMap<String, hearthd_config::MergeConflictLocation>> = std::collections::HashMap::new();
-                    }
-                }
-                FieldType::Nested(_) => {
-                    let var_name = format_ident!("{}_field_locs", name);
-                    quote! {
-                        let mut #var_name: std::collections::HashMap<(), std::collections::HashMap<String, hearthd_config::MergeConflictLocation>> = std::collections::HashMap::new();
-                    }
-                }
-                _ => {
-                    let var_name = format_ident!("{}_loc", name);
-                    quote! {
-                        let mut #var_name: Option<hearthd_config::MergeConflictLocation> = None;
-                    }
-                }
-            }
-        })
-        .collect();
-
-    // Generate merge logic for each field
-    let merge_logic: Vec<_> = fields
-        .iter()
-        .map(|f| generate_field_merge(f, use_spans))
-        .collect::<Result<Vec<_>>>()?;
-
-    // Generate empty check
-    let empty_checks: Vec<_> = fields
-        .iter()
-        .map(|f| {
-            let name = &f.name;
-            quote! { config.#name.is_none() }
-        })
-        .collect();
-
-    // Generate where clause for HashMap keys if needed
-    let where_clause_bounds = if !key_types.is_empty() {
-        quote! { #(#key_types: std::fmt::Display + std::hash::Hash + Eq + Clone,)* }
-    } else {
-        quote! {}
-    };
-
-    Ok(quote! {
-        impl #partial_name {
-            pub fn merge<I>(configs: I) -> (Self, Vec<hearthd_config::Diagnostic>)
-            where
-                I: IntoIterator<Item = Self>,
-                #where_clause_bounds
-            {
-                let mut result = Self::default();
-                let mut diagnostics = Vec::new();
-                let mut imports = Vec::new();
-
-                #(#tracking_vars)*
-
-                for config in configs {
-                    imports.extend(config.imports.clone());
-
-                    let source_info = config.source.as_ref().cloned().unwrap_or_else(|| hearthd_config::SourceInfo {
-                        file_path: std::path::PathBuf::from("<unknown>"),
-                        content: String::new(),
-                    });
-
-                    let is_empty = #(#empty_checks)&&* && config.imports.is_empty();
-
-                    if is_empty {
-                        diagnostics.push(hearthd_config::Diagnostic::Warning(hearthd_config::Warning::EmptyConfig {
-                            file_path: source_info.file_path.clone(),
-                        }));
-                    }
-
-                    #(#merge_logic)*
-                }
-
-                result.imports = imports;
-                (result, diagnostics)
-            }
         }
     })
 }
@@ -857,12 +749,85 @@ fn generate_attach_source_impl(
     })
 }
 
-fn generate_load_impl(config_name: &Ident) -> Result<TokenStream> {
+/// Generate the PartialMergeableConfig trait implementation for root configs.
+/// This combines the load and merge functionality into a single trait impl.
+fn generate_partial_mergeable_trait_impl(
+    config_name: &Ident,
+    fields: &[FieldInfo],
+    use_spans: bool,
+) -> Result<TokenStream> {
     let partial_name = format_ident!("Partial{}", config_name);
 
+    // Collect all HashMap key types for trait bounds in merge
+    let mut key_types: Vec<&Type> = Vec::new();
+    for field in fields {
+        match &field.field_type {
+            FieldType::HashMap { key_type, .. } | FieldType::HashMapOfStructs { key_type, .. } => {
+                key_types.push(key_type);
+            }
+            _ => {}
+        }
+    }
+
+    // Generate tracking variables for merge
+    let tracking_vars: Vec<_> = fields
+        .iter()
+        .map(|f| {
+            let name = &f.name;
+            match &f.field_type {
+                FieldType::HashMap { key_type, .. } => {
+                    let var_name = format_ident!("{}_locs", name);
+                    quote! {
+                        let mut #var_name: std::collections::HashMap<#key_type, hearthd_config::MergeConflictLocation> = std::collections::HashMap::new();
+                    }
+                }
+                FieldType::HashMapOfStructs { key_type, .. } => {
+                    let var_name = format_ident!("{}_field_locs", name);
+                    quote! {
+                        let mut #var_name: std::collections::HashMap<#key_type, std::collections::HashMap<String, hearthd_config::MergeConflictLocation>> = std::collections::HashMap::new();
+                    }
+                }
+                FieldType::Nested(_) => {
+                    let var_name = format_ident!("{}_field_locs", name);
+                    quote! {
+                        let mut #var_name: std::collections::HashMap<(), std::collections::HashMap<String, hearthd_config::MergeConflictLocation>> = std::collections::HashMap::new();
+                    }
+                }
+                _ => {
+                    let var_name = format_ident!("{}_loc", name);
+                    quote! {
+                        let mut #var_name: Option<hearthd_config::MergeConflictLocation> = None;
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // Generate merge logic for each field
+    let merge_logic: Vec<_> = fields
+        .iter()
+        .map(|f| generate_field_merge(f, use_spans))
+        .collect::<Result<Vec<_>>>()?;
+
+    // Generate empty check
+    let empty_checks: Vec<_> = fields
+        .iter()
+        .map(|f| {
+            let name = &f.name;
+            quote! { config.#name.is_none() }
+        })
+        .collect();
+
+    // Generate where clause for HashMap keys if needed
+    let where_clause_bounds = if !key_types.is_empty() {
+        quote! { #(#key_types: std::fmt::Display + std::hash::Hash + Eq + Clone,)* }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
-        impl #partial_name {
-            pub fn from_file(path: &std::path::Path) -> Result<Self, hearthd_config::LoadError> {
+        impl hearthd_config::PartialMergeableConfig for #partial_name {
+            fn from_file(path: &std::path::Path) -> Result<Self, hearthd_config::LoadError> {
                 let content = std::fs::read_to_string(path).map_err(|e| hearthd_config::LoadError::Io {
                     path: path.to_path_buf(),
                     error: e.to_string(),
@@ -884,54 +849,96 @@ fn generate_load_impl(config_name: &Ident) -> Result<TokenStream> {
                 Ok(config)
             }
 
-            pub fn load_with_imports(paths: &[std::path::PathBuf]) -> Result<Vec<Self>, hearthd_config::LoadError> {
+            fn load_with_imports(paths: &[std::path::PathBuf]) -> Result<Vec<Self>, hearthd_config::LoadError> {
+                fn load_recursive(
+                    path: &std::path::Path,
+                    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+                    configs: &mut Vec<#partial_name>,
+                ) -> Result<(), hearthd_config::LoadError> {
+                    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+                    if visited.contains(&canonical_path) {
+                        return Err(hearthd_config::LoadError::ImportCycle {
+                            path: canonical_path.clone(),
+                            cycle: visited.iter().cloned().collect(),
+                        });
+                    }
+
+                    visited.insert(canonical_path.clone());
+
+                    let config = #partial_name::from_file(path)?;
+
+                    for import_path in &config.imports {
+                        let import_path_buf = std::path::PathBuf::from(import_path);
+
+                        let resolved_path = if import_path_buf.is_absolute() {
+                            import_path_buf
+                        } else {
+                            let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+                            parent_dir.join(import_path_buf)
+                        };
+
+                        load_recursive(&resolved_path, visited, configs)?;
+                    }
+
+                    configs.push(config);
+                    visited.remove(&canonical_path);
+
+                    Ok(())
+                }
+
                 let mut visited = std::collections::HashSet::new();
                 let mut all_configs = Vec::new();
 
                 for path in paths {
-                    Self::load_recursive(path, &mut visited, &mut all_configs)?;
+                    load_recursive(path, &mut visited, &mut all_configs)?;
                 }
 
                 Ok(all_configs)
             }
 
-            fn load_recursive(
-                path: &std::path::Path,
-                visited: &mut std::collections::HashSet<std::path::PathBuf>,
-                configs: &mut Vec<Self>,
-            ) -> Result<(), hearthd_config::LoadError> {
-                let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            fn merge<I>(configs: I) -> (Self, Vec<hearthd_config::Diagnostic>)
+            where
+                I: IntoIterator<Item = Self>,
+                #where_clause_bounds
+            {
+                let mut result = Self::default();
+                let mut diagnostics = Vec::new();
+                let mut imports = Vec::new();
 
-                if visited.contains(&canonical_path) {
-                    return Err(hearthd_config::LoadError::ImportCycle {
-                        path: canonical_path.clone(),
-                        cycle: visited.iter().cloned().collect(),
+                #(#tracking_vars)*
+
+                for config in configs {
+                    imports.extend(config.imports.clone());
+
+                    let source_info = config.source.as_ref().cloned().unwrap_or_else(|| hearthd_config::SourceInfo {
+                        file_path: std::path::PathBuf::from("<unknown>"),
+                        content: String::new(),
                     });
+
+                    let is_empty = #(#empty_checks)&&* && config.imports.is_empty();
+
+                    if is_empty {
+                        diagnostics.push(hearthd_config::Diagnostic::Warning(hearthd_config::Warning::EmptyConfig {
+                            file_path: source_info.file_path.clone(),
+                        }));
+                    }
+
+                    #(#merge_logic)*
                 }
 
-                visited.insert(canonical_path.clone());
-
-                let config = Self::from_file(path)?;
-
-                for import_path in &config.imports {
-                    let import_path_buf = std::path::PathBuf::from(import_path);
-
-                    let resolved_path = if import_path_buf.is_absolute() {
-                        import_path_buf
-                    } else {
-                        let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-                        parent_dir.join(import_path_buf)
-                    };
-
-                    Self::load_recursive(&resolved_path, visited, configs)?;
-                }
-
-                configs.push(config);
-                visited.remove(&canonical_path);
-
-                Ok(())
+                result.imports = imports;
+                (result, diagnostics)
             }
         }
+    })
+}
+
+/// Generate the MergeableConfig trait implementation for root configs.
+/// This provides the from_files() method with default implementation.
+fn generate_mergeable_trait_impl(config_name: &Ident) -> Result<TokenStream> {
+    Ok(quote! {
+        impl hearthd_config::MergeableConfig for #config_name {}
     })
 }
 

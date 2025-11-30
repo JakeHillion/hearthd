@@ -2,13 +2,16 @@
 // PartialFoo to be directly in scope. This validates the HasPartialConfig trait approach.
 
 use hearthd_config::MergeableConfig;
+use hearthd_config::TryFromPartial;
+use hearthd_config::Validate;
 
 // Define a SubConfig in a separate module to simulate cross-module usage
 mod external_config {
     use hearthd_config::SubConfig;
+    use hearthd_config::TryFromPartial;
     use serde::Deserialize;
 
-    #[derive(Debug, Clone, PartialEq, Deserialize, SubConfig)]
+    #[derive(Debug, Clone, PartialEq, Deserialize, TryFromPartial, SubConfig)]
     pub struct DatabaseConfig {
         pub host: String,
         pub port: u16,
@@ -20,11 +23,13 @@ mod external_config {
 // This simulates the real-world scenario where PartialDatabaseConfig is not in scope
 use external_config::DatabaseConfig;
 
-#[derive(Debug, MergeableConfig)]
+#[derive(Debug, Default, TryFromPartial, MergeableConfig)]
 pub struct AppConfig {
     pub app_name: String,
     pub database: DatabaseConfig,
 }
+
+impl Validate for AppConfig {}
 
 #[test]
 fn test_cross_module_config() {
