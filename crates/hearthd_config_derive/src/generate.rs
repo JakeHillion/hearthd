@@ -191,12 +191,8 @@ fn generate_partial_struct(
                     quote! { #inner_ty }
                 }
             } else {
-                // Option of complex type (shouldn't happen often)
-                if use_spans {
-                    quote! { hearthd_config::Located<#inner_ty> }
-                } else {
-                    quote! { #inner_ty }
-                }
+                // Option<ComplexStruct> - use PartialConfig
+                quote! { <#inner_ty as hearthd_config::HasPartialConfig>::PartialConfig }
             }
         } else if is_simple_type(field_ty) {
             // Only use Located if use_spans is true
