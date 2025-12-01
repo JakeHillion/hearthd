@@ -17,6 +17,7 @@ struct FieldInfo {
     name: Ident,
     field_type: FieldType,
     flattened: bool,
+    default_fn: Option<String>,
 }
 
 enum FieldType {
@@ -85,6 +86,9 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
             false
         });
 
+        // Parse default function if present
+        let default_fn = parse_default_fn(field);
+
         let field_type = if is_hashmap(field_ty) {
             let (key_type, value_type) = extract_hashmap_types(field_ty)?;
             // Check if value type is a struct (not a simple type)
@@ -117,6 +121,7 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
             name: field_name,
             field_type,
             flattened,
+            default_fn,
         });
     }
 
@@ -1002,6 +1007,26 @@ fn is_simple_type(ty: &Type) -> bool {
     false
 }
 
+/// Parse #[config(default = "function_name")] attribute from a field
+fn parse_default_fn(field: &Field) -> Option<String> {
+    for attr in &field.attrs {
+        if attr.path().is_ident("config") {
+            if let Ok(syn::Meta::NameValue(nv)) = attr.parse_args::<syn::Meta>() {
+                if nv.path.is_ident("default") {
+                    if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(lit_str),
+                        ..
+                    }) = &nv.value
+                    {
+                        return Some(lit_str.value());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Generate TryFromPartial implementation for a config struct
 pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
@@ -1053,6 +1078,9 @@ pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
             false
         });
 
+        // Parse default function if present
+        let default_fn = parse_default_fn(field);
+
         let field_type = if is_hashmap(field_ty) {
             let (key_type, value_type) = extract_hashmap_types(field_ty)?;
             if is_simple_type(&value_type) {
@@ -1082,6 +1110,7 @@ pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
             name: field_name,
             field_type,
             flattened,
+            default_fn,
         });
     }
 
@@ -1156,8 +1185,24 @@ fn generate_try_from_partial_conversions(
                             let #name = partial.#name;
                         }
                     }
+                } else if let Some(default_fn_name) = &field_info.default_fn {
+                    // Required field with default function - no error, call default function
+                    let default_fn_ident =
+                        syn::Ident::new(default_fn_name, proc_macro2::Span::call_site());
+
+                    if use_spans {
+                        quote! {
+                            let #name = partial.#name
+                                .map(|located| located.into_inner())
+                                .unwrap_or_else(|| #default_fn_ident());
+                        }
+                    } else {
+                        quote! {
+                            let #name = partial.#name.unwrap_or_else(|| #default_fn_ident());
+                        }
+                    }
                 } else {
-                    // Required field - generate validation error if missing
+                    // Required field without default - generate validation error if missing
                     let default_value = get_default_value(field_ty);
 
                     if use_spans {
@@ -1264,7 +1309,23 @@ fn generate_try_from_partial_conversions(
                             }
                         }).flatten();
                     }
+                } else if let Some(default_fn_name) = &field_info.default_fn {
+                    // Required nested field with default function - no error, call default function
+                    let default_fn_ident =
+                        syn::Ident::new(default_fn_name, proc_macro2::Span::call_site());
+
+                    quote! {
+                        let #name = match partial.#name.map(|partial_nested| <#ty>::try_from_partial(partial_nested)) {
+                            Some(Ok(value)) => value,
+                            Some(Err(errs)) => {
+                                diagnostics.extend(errs.into_iter().map(|d| d.prepend_path(#name_str)));
+                                #default_fn_ident()
+                            }
+                            None => #default_fn_ident(),
+                        };
+                    }
                 } else {
+                    // Required nested field without default - use Default::default()
                     quote! {
                         let #name = match partial.#name.map(|partial_nested| <#ty>::try_from_partial(partial_nested)) {
                             Some(Ok(value)) => value,

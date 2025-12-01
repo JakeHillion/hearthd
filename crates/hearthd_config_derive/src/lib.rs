@@ -21,6 +21,9 @@ mod generate;
 ///
 /// - `#[config(no_span)]`: Disable `Spanned` wrapping for this struct (useful for types
 ///   used as HashMap values where span tracking isn't needed)
+/// - `#[config(default = "function_name")]`: Specify a default function for a required field.
+///   The function will be called if the field is missing from the config. No validation error
+///   will be generated for missing fields with defaults.
 ///
 /// # Example
 ///
@@ -78,6 +81,8 @@ pub fn derive_mergeable_config(input: TokenStream) -> TokenStream {
 /// # Attributes
 ///
 /// - `#[config(no_span)]`: Disable `Spanned` wrapping for this struct
+/// - `#[config(default = "function_name")]`: Specify a default function for a required field.
+///   The function will be called if the field is missing from the config.
 /// - `#[serde(flatten)]`: Mark HashMap fields that are flattened in the parent struct
 ///
 /// # Example
@@ -116,29 +121,39 @@ pub fn derive_sub_config(input: TokenStream) -> TokenStream {
 /// # Field Handling
 ///
 /// - **Simple fields**: Unwraps `Located<T>`, validates if required
+/// - **Fields with defaults**: Uses `#[config(default = "fn")]` to call the default function
+///   when the field is missing. No validation error is generated.
 /// - **Optional fields**: Uses `.map()` to unwrap, no error if missing
 /// - **HashMap of simple values**: Maps over entries, unwraps each value
 /// - **HashMap of structs**: Recursively calls `try_from_partial`, prepends key to errors
 /// - **Nested structs**: Recursively calls `try_from_partial`, prepends field name to errors
+///
+/// # Attributes
+///
+/// - `#[config(default = "function_name")]`: Specify a default function for a required field.
+///   The function must return the field's type and will be called if the field is missing.
 ///
 /// # Example
 ///
 /// ```ignore
 /// use hearthd_config::{TryFromPartial, SubConfig};
 ///
-/// #[derive(TryFromPartial, SubConfig)]
-/// struct Location {
-///     latitude: f64,
-///     longitude: f64,
-///     elevation_m: Option<f64>,
+/// fn default_port() -> u16 {
+///     8080
 /// }
 ///
-/// // Generates:
-/// // impl TryFromPartial for Location {
-/// //     fn try_from_partial(partial: PartialLocation) -> Result<Self, Vec<Diagnostic>> {
-/// //         // validation logic for each field...
-/// //     }
-/// // }
+/// #[derive(TryFromPartial, SubConfig)]
+/// struct HttpConfig {
+///     #[config(default = "default_port")]
+///     port: u16,              // Uses default_port() if missing
+///     host: String,           // Required, error if missing
+///     timeout: Option<u32>,   // Optional, no error if missing
+/// }
+///
+/// // If config only has "host = 'localhost'":
+/// // - port will be 8080 (from default_port())
+/// // - host will be "localhost"
+/// // - timeout will be None
 /// ```
 #[proc_macro_derive(TryFromPartial, attributes(config))]
 pub fn derive_try_from_partial(input: TokenStream) -> TokenStream {
