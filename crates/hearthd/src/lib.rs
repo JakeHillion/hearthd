@@ -1,4 +1,5 @@
 pub mod api;
+pub mod automations;
 mod config;
 
 #[cfg(doc)]

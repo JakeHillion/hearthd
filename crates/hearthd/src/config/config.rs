@@ -18,6 +18,7 @@ pub struct Config {
     pub http: HttpConfig,
     #[allow(dead_code)]
     pub integrations: IntegrationsConfig,
+    pub automations: AutomationsConfig,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -101,6 +102,20 @@ impl Default for HttpConfig {
 #[derive(Debug, Default, TryFromPartial, SubConfig)]
 pub struct IntegrationsConfig {
     // Empty for now - integrations will be added as static fields later
+}
+
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+pub struct AutomationsConfig {
+    /// Named automations (key is name, value contains file path)
+    #[serde(flatten)]
+    pub automations: HashMap<String, AutomationEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
+#[config(no_span)]
+pub struct AutomationEntry {
+    /// Path to the .hda file
+    pub file: String,
 }
 
 impl Config {
