@@ -1,0 +1,275 @@
+//! Parser for the HearthD Automations language.
+
+use chumsky::prelude::*;
+use chumsky::span::SimpleSpan;
+
+use crate::automations::ast::*;
+use crate::automations::lexer::Token;
+
+/// Parse a complete automation program.
+pub fn parse(input: &str) -> Result<Spanned<Program>, Vec<Rich<'static, Token>>> {
+    let tokens = crate::automations::lexer::lexer()
+        .parse(input)
+        .into_result()
+        .map_err(|errs| {
+            errs.into_iter()
+                .map(|err| Rich::<Token>::custom(*err.span(), format!("Lexer error: {}", err)))
+                .collect::<Vec<_>>()
+        })?;
+    let input_len = input.len();
+    let result = automation_parser()
+        .parse(
+            tokens
+                .as_slice()
+                .map((input_len..input_len).into(), |(t, s)| (t, s)),
+        )
+        .into_result()
+        .map(|auto| Spanned::new(Program::Automation(auto.node), auto.span))
+        .map_err(|errs| errs.into_iter().map(|e| e.into_owned()).collect());
+    result
+}
+
+/// Parser for expressions.
+pub(crate) fn expr_parser<'tokens, 'src: 'tokens, I>()
+-> impl Parser<'tokens, I, Spanned<Expr>, extra::Err<Rich<'tokens, Token>>> + Clone
+where
+    I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
+{
+    recursive(|expr| {
+        // Primary expressions
+        let literal = select! {
+            Token::Int(n) => Expr::Int(n),
+            Token::Float(f) => Expr::Float(f),
+            Token::String(s) => Expr::String(s),
+            Token::Bool(b) => Expr::Bool(b),
+            Token::UnitLiteral { value, unit } => Expr::UnitLiteral { value, unit },
+        }
+        .labelled("literal");
+
+        let ident = select! {
+            Token::Ident(s) => Expr::Ident(s),
+        }
+        .labelled("identifier");
+
+        let list = expr
+            .clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBracket), just(Token::RBracket))
+            .map(Expr::List)
+            .labelled("list");
+
+        let paren_expr = expr
+            .clone()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map(|e| e.node);
+
+        let atom = choice((literal, ident, list, paren_expr))
+            .map_with(|node, e| Spanned::new(node, e.span()))
+            .boxed();
+
+        // Field access and function calls
+        let call = atom.clone().foldl_with(
+            choice((
+                // Field access: .field
+                just(Token::Dot)
+                    .ignore_then(select! { Token::Ident(s) => s })
+                    .map(|field| (field, false)),
+                // Optional chaining: ?.field
+                just(Token::Question)
+                    .then(just(Token::Dot))
+                    .ignore_then(select! { Token::Ident(s) => s })
+                    .map(|field| (field, true)),
+            ))
+            .repeated(),
+            |expr, (field, is_optional), e| {
+                let node = if is_optional {
+                    Expr::OptionalField {
+                        expr: Box::new(expr),
+                        field,
+                    }
+                } else {
+                    Expr::Field {
+                        expr: Box::new(expr),
+                        field,
+                    }
+                };
+                Spanned::new(node, e.span())
+            },
+        );
+
+        // Unary operators
+        let unary_op = select! {
+            Token::Not => UnaryOp::Not,
+            Token::Minus => UnaryOp::Neg,
+            Token::Star => UnaryOp::Deref,
+            Token::Await => UnaryOp::Await,
+        };
+
+        let unary = unary_op.repeated().foldr_with(call, |op, expr, e| {
+            Spanned::new(
+                Expr::UnaryOp {
+                    op,
+                    expr: Box::new(expr),
+                },
+                e.span(),
+            )
+        });
+
+        // Multiplicative: *, /, %
+        let mul_op = select! {
+            Token::Star => BinOp::Mul,
+            Token::Slash => BinOp::Div,
+            Token::Percent => BinOp::Mod,
+        };
+
+        let mul =
+            unary
+                .clone()
+                .foldl_with(mul_op.then(unary).repeated(), |left, (op, right), e| {
+                    Spanned::new(
+                        Expr::BinOp {
+                            op,
+                            left: Box::new(left),
+                            right: Box::new(right),
+                        },
+                        e.span(),
+                    )
+                });
+
+        // Additive: +, -
+        let add_op = select! {
+            Token::Plus => BinOp::Add,
+            Token::Minus => BinOp::Sub,
+        };
+
+        let add = mul
+            .clone()
+            .foldl_with(add_op.then(mul).repeated(), |left, (op, right), e| {
+                Spanned::new(
+                    Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    e.span(),
+                )
+            });
+
+        // Comparison: <, >, <=, >=
+        let cmp_op = select! {
+            Token::Lt => BinOp::Lt,
+            Token::Le => BinOp::Le,
+            Token::Gt => BinOp::Gt,
+            Token::Ge => BinOp::Ge,
+        };
+
+        let cmp = add
+            .clone()
+            .foldl_with(cmp_op.then(add).repeated(), |left, (op, right), e| {
+                Spanned::new(
+                    Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    e.span(),
+                )
+            });
+
+        // Equality: ==, !=
+        let eq_op = select! {
+            Token::Eq => BinOp::Eq,
+            Token::Ne => BinOp::Ne,
+        };
+
+        let eq = cmp
+            .clone()
+            .foldl_with(eq_op.then(cmp).repeated(), |left, (op, right), e| {
+                Spanned::new(
+                    Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    e.span(),
+                )
+            });
+
+        // Logical AND: &&
+        let and_op = select! { Token::And => BinOp::And };
+
+        let and = eq
+            .clone()
+            .foldl_with(and_op.then(eq).repeated(), |left, (op, right), e| {
+                Spanned::new(
+                    Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    e.span(),
+                )
+            });
+
+        // Logical OR: ||
+        let or_op = select! { Token::Or => BinOp::Or };
+
+        and.clone()
+            .foldl_with(or_op.then(and).repeated(), |left, (op, right), e| {
+                Spanned::new(
+                    Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    e.span(),
+                )
+            })
+    })
+}
+
+/// Automation parser - parses `observer {} /filter/ {}` or `mutator {} /filter/ {}`
+///
+/// Currently only the filter expression is fully parsed; pattern and body are stubbed.
+fn automation_parser<'tokens, 'src: 'tokens, I>()
+-> impl Parser<'tokens, I, Spanned<Automation>, extra::Err<Rich<'tokens, Token>>>
+where
+    I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
+{
+    let kind = select! {
+        Token::Observer => AutomationKind::Observer,
+        Token::Mutator => AutomationKind::Mutator,
+    };
+
+    // Stub pattern - just match empty braces for now
+    let pattern = just(Token::LBrace)
+        .ignore_then(just(Token::RBrace))
+        .map_with(|_, e| Spanned::new(Pattern::Ident("_".to_string()), e.span()));
+
+    // Filter uses expr_parser
+    let filter = just(Token::Slash)
+        .ignore_then(expr_parser())
+        .then_ignore(just(Token::Slash));
+
+    // Stub body - just match empty braces for now
+    let body = just(Token::LBrace)
+        .ignore_then(just(Token::RBrace))
+        .map(|_| Vec::new());
+
+    kind.then(pattern)
+        .then(filter)
+        .then(body)
+        .map_with(|(((kind, pattern), filter), body), e| {
+            Spanned::new(
+                Automation {
+                    kind,
+                    pattern,
+                    filter,
+                    body,
+                },
+                e.span(),
+            )
+        })
+}

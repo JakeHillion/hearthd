@@ -61,6 +61,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Debug print config at debug level
     debug!("Configuration loaded: {:#?}", cfg);
 
+    // Load and parse automations
+    for (name, entry) in &cfg.automations.automations {
+        match std::fs::read_to_string(&entry.file) {
+            Ok(source) => match hearthd::automations::parse(&source) {
+                Ok(ast) => info!(?ast, "Parsed automation '{}': {}", name, entry.file),
+                Err(errs) => warn!(?errs, "Failed to parse '{}': {}", name, entry.file),
+            },
+            Err(e) => warn!("Failed to read '{}' ({}): {}", name, entry.file, e),
+        }
+    }
+
     info!("hearthd starting");
 
     // Set up signal handlers
