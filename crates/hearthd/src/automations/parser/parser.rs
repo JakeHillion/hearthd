@@ -250,9 +250,29 @@ where
     })
 }
 
-/// Automation parser - parses `observer {} /filter/ {}` or `mutator {} /filter/ {}`
+/// Parser for statements.
+fn stmt_parser<'tokens, 'src: 'tokens, I>()
+-> impl Parser<'tokens, I, Spanned<Stmt>, extra::Err<Rich<'tokens, Token>>> + Clone
+where
+    I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
+{
+    let let_stmt = just(Token::Let)
+        .ignore_then(select! { Token::Ident(s) => s })
+        .then_ignore(just(Token::Assign))
+        .then(expr_parser())
+        .then_ignore(just(Token::Semicolon))
+        .map_with(|(name, value), e| Spanned::new(Stmt::Let { name, value }, e.span()));
+
+    let expr_stmt = expr_parser()
+        .then(just(Token::Semicolon).or_not())
+        .map_with(|(expr, _), e| Spanned::new(Stmt::Expr(expr), e.span()));
+
+    choice((let_stmt, expr_stmt))
+}
+
+/// Automation parser - parses `observer {} /filter/ { stmts }`
 ///
-/// Currently only the filter expression is fully parsed; pattern and body are stubbed.
+/// Pattern is currently stubbed to empty braces; filter and body are fully parsed.
 fn automation_parser<'tokens, 'src: 'tokens, I>()
 -> impl Parser<'tokens, I, Spanned<Automation>, extra::Err<Rich<'tokens, Token>>>
 where
@@ -273,10 +293,11 @@ where
         .ignore_then(expr_parser())
         .then_ignore(just(Token::Slash));
 
-    // Stub body - just match empty braces for now
-    let body = just(Token::LBrace)
-        .ignore_then(just(Token::RBrace))
-        .map(|_| Vec::new());
+    // Body - list of statements
+    let body = stmt_parser()
+        .repeated()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBrace), just(Token::RBrace));
 
     kind.then(pattern)
         .then(filter)
