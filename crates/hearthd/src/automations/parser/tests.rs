@@ -263,3 +263,55 @@ fn test_parse_chained_calls() {
         _ => panic!("Expected call"),
     }
 }
+
+#[test]
+fn test_parse_let_stmt() {
+    let input = "observer {} /true/ { let x = 42; }";
+    let result = crate::automations::parse(input).unwrap();
+    match result.node {
+        Program::Automation(auto) => {
+            assert_eq!(auto.body.len(), 1);
+            match &auto.body[0].node {
+                Stmt::Let { name, value } => {
+                    assert_eq!(name, "x");
+                    assert_eq!(value.node, Expr::Int(42));
+                }
+                _ => panic!("Expected let statement"),
+            }
+        }
+        _ => panic!("Expected automation"),
+    }
+}
+
+#[test]
+fn test_parse_expr_stmt() {
+    let input = "observer {} /true/ { foo(); }";
+    let result = crate::automations::parse(input).unwrap();
+    match result.node {
+        Program::Automation(auto) => {
+            assert_eq!(auto.body.len(), 1);
+            match &auto.body[0].node {
+                Stmt::Expr(expr) => match &expr.node {
+                    Expr::Call { func, .. } => {
+                        assert_eq!(func.node, Expr::Ident("foo".to_string()));
+                    }
+                    _ => panic!("Expected call"),
+                },
+                _ => panic!("Expected expr statement"),
+            }
+        }
+        _ => panic!("Expected automation"),
+    }
+}
+
+#[test]
+fn test_parse_multiple_stmts() {
+    let input = "observer {} /true/ { let x = 1; let y = 2; x + y }";
+    let result = crate::automations::parse(input).unwrap();
+    match result.node {
+        Program::Automation(auto) => {
+            assert_eq!(auto.body.len(), 3);
+        }
+        _ => panic!("Expected automation"),
+    }
+}
