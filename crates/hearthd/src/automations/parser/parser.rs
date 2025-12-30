@@ -72,7 +72,26 @@ where
             .delimited_by(just(Token::LParen), just(Token::RParen))
             .map(|e| e.node);
 
-        let atom = choice((literal, ident, list, paren_expr))
+        // Block of statements (reusable for if branches)
+        // Uses stmt_parser_with to pass the recursive expr reference
+        let block = stmt_parser_with(expr.clone())
+            .repeated()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace));
+
+        // If expression
+        let if_expr = just(Token::If)
+            .ignore_then(expr.clone())
+            .then(block.clone())
+            .then_ignore(just(Token::Else))
+            .then(block)
+            .map(|((cond, then_block), else_block)| Expr::If {
+                cond: Box::new(cond),
+                then_block,
+                else_block,
+            });
+
+        let atom = choice((literal, ident, list, if_expr, paren_expr))
             .map_with(|node, e| Spanned::new(node, e.span()))
             .boxed();
 
@@ -250,24 +269,38 @@ where
     })
 }
 
-/// Parser for statements.
+/// Parser for statements, parameterized by an expression parser.
+///
+/// This allows breaking mutual recursion between expr_parser and stmt_parser
+/// by passing the recursive expression reference from within expr_parser.
+fn stmt_parser_with<'tokens, 'src: 'tokens, I, E>(
+    expr: E,
+) -> impl Parser<'tokens, I, Spanned<Stmt>, extra::Err<Rich<'tokens, Token>>> + Clone
+where
+    I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
+    E: Parser<'tokens, I, Spanned<Expr>, extra::Err<Rich<'tokens, Token>>> + Clone,
+{
+    let let_stmt = just(Token::Let)
+        .ignore_then(select! { Token::Ident(s) => s })
+        .then_ignore(just(Token::Assign))
+        .then(expr.clone())
+        .then_ignore(just(Token::Semicolon))
+        .map_with(|(name, value), e| Spanned::new(Stmt::Let { name, value }, e.span()));
+
+    let expr_stmt = expr
+        .then(just(Token::Semicolon).or_not())
+        .map_with(|(expr, _), e| Spanned::new(Stmt::Expr(expr), e.span()));
+
+    choice((let_stmt, expr_stmt))
+}
+
+/// Parser for statements using the top-level expression parser.
 fn stmt_parser<'tokens, 'src: 'tokens, I>()
 -> impl Parser<'tokens, I, Spanned<Stmt>, extra::Err<Rich<'tokens, Token>>> + Clone
 where
     I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
 {
-    let let_stmt = just(Token::Let)
-        .ignore_then(select! { Token::Ident(s) => s })
-        .then_ignore(just(Token::Assign))
-        .then(expr_parser())
-        .then_ignore(just(Token::Semicolon))
-        .map_with(|(name, value), e| Spanned::new(Stmt::Let { name, value }, e.span()));
-
-    let expr_stmt = expr_parser()
-        .then(just(Token::Semicolon).or_not())
-        .map_with(|(expr, _), e| Spanned::new(Stmt::Expr(expr), e.span()));
-
-    choice((let_stmt, expr_stmt))
+    stmt_parser_with(expr_parser())
 }
 
 /// Automation parser - parses `observer {} /filter/ { stmts }`
