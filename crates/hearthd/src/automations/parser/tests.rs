@@ -189,3 +189,77 @@ fn test_parse_list() {
         _ => panic!("Expected list"),
     }
 }
+
+#[test]
+fn test_parse_function_call() {
+    // Simple call with no args
+    let result = parse_expr("foo()").unwrap();
+    match result.node {
+        Expr::Call { func, args } => {
+            assert_eq!(func.node, Expr::Ident("foo".to_string()));
+            assert!(args.is_empty());
+        }
+        _ => panic!("Expected function call"),
+    }
+}
+
+#[test]
+fn test_parse_function_call_with_args() {
+    let result = parse_expr("add(1, 2)").unwrap();
+    match result.node {
+        Expr::Call { func, args } => {
+            assert_eq!(func.node, Expr::Ident("add".to_string()));
+            assert_eq!(args.len(), 2);
+            match &args[0].node {
+                Arg::Positional(e) => assert_eq!(e.node, Expr::Int(1)),
+                _ => panic!("Expected positional arg"),
+            }
+        }
+        _ => panic!("Expected function call"),
+    }
+}
+
+#[test]
+fn test_parse_method_call() {
+    // Method-style: expr.method(args)
+    let result = parse_expr("list.filter(x)").unwrap();
+    match result.node {
+        Expr::Call { func, args } => {
+            match func.node {
+                Expr::Field { expr, field } => {
+                    assert_eq!(expr.node, Expr::Ident("list".to_string()));
+                    assert_eq!(field, "filter");
+                }
+                _ => panic!("Expected field access"),
+            }
+            assert_eq!(args.len(), 1);
+        }
+        _ => panic!("Expected function call"),
+    }
+}
+
+#[test]
+fn test_parse_chained_calls() {
+    // a.b().c()
+    let result = parse_expr("a.b().c()").unwrap();
+    // Should parse as ((a.b)()).c()
+    match result.node {
+        Expr::Call { func, .. } => match func.node {
+            Expr::Field { expr, field } => {
+                assert_eq!(field, "c");
+                match expr.node {
+                    Expr::Call { func: inner, .. } => match inner.node {
+                        Expr::Field { expr: base, field } => {
+                            assert_eq!(base.node, Expr::Ident("a".to_string()));
+                            assert_eq!(field, "b");
+                        }
+                        _ => panic!("Expected field access"),
+                    },
+                    _ => panic!("Expected call"),
+                }
+            }
+            _ => panic!("Expected field access"),
+        },
+        _ => panic!("Expected call"),
+    }
+}

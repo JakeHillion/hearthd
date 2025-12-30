@@ -35,6 +35,13 @@ pub(crate) fn expr_parser<'tokens, 'src: 'tokens, I>()
 where
     I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
 {
+    // Helper enum for postfix operations
+    enum PostfixOp {
+        Call(Vec<Spanned<Expr>>),
+        Field(String),
+        OptionalField(String),
+    }
+
     recursive(|expr| {
         // Primary expressions
         let literal = select! {
@@ -72,28 +79,41 @@ where
         // Field access and function calls
         let call = atom.clone().foldl_with(
             choice((
+                // Function call: (args)
+                expr.clone()
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LParen), just(Token::RParen))
+                    .map(PostfixOp::Call),
                 // Field access: .field
                 just(Token::Dot)
                     .ignore_then(select! { Token::Ident(s) => s })
-                    .map(|field| (field, false)),
+                    .map(PostfixOp::Field),
                 // Optional chaining: ?.field
                 just(Token::Question)
                     .then(just(Token::Dot))
                     .ignore_then(select! { Token::Ident(s) => s })
-                    .map(|field| (field, true)),
+                    .map(PostfixOp::OptionalField),
             ))
             .repeated(),
-            |expr, (field, is_optional), e| {
-                let node = if is_optional {
-                    Expr::OptionalField {
+            |expr, op, e| {
+                let node = match op {
+                    PostfixOp::Call(args) => Expr::Call {
+                        func: Box::new(expr),
+                        args: args
+                            .into_iter()
+                            .map(|a| Spanned::new(Arg::Positional(a.clone()), a.span))
+                            .collect(),
+                    },
+                    PostfixOp::Field(field) => Expr::Field {
                         expr: Box::new(expr),
                         field,
-                    }
-                } else {
-                    Expr::Field {
+                    },
+                    PostfixOp::OptionalField(field) => Expr::OptionalField {
                         expr: Box::new(expr),
                         field,
-                    }
+                    },
                 };
                 Spanned::new(node, e.span())
             },
