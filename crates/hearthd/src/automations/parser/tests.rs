@@ -315,3 +315,66 @@ fn test_parse_multiple_stmts() {
         _ => panic!("Expected automation"),
     }
 }
+
+#[test]
+fn test_parse_if_expr() {
+    let result = parse_expr("if true { 1 } else { 2 }").unwrap();
+    match result.node {
+        Expr::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            assert_eq!(cond.node, Expr::Bool(true));
+            assert_eq!(then_block.len(), 1);
+            assert_eq!(else_block.len(), 1);
+        }
+        _ => panic!("Expected if expression"),
+    }
+}
+
+#[test]
+fn test_parse_if_with_complex_condition() {
+    let result = parse_expr("if x > 5 && y < 10 { foo() } else { bar() }").unwrap();
+    match result.node {
+        Expr::If { cond, .. } => match cond.node {
+            Expr::BinOp { op: BinOp::And, .. } => {}
+            _ => panic!("Expected && condition"),
+        },
+        _ => panic!("Expected if expression"),
+    }
+}
+
+#[test]
+fn test_parse_if_with_multiple_stmts() {
+    let result = parse_expr("if true { let x = 1; x } else { let y = 2; y }").unwrap();
+    match result.node {
+        Expr::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            assert_eq!(then_block.len(), 2);
+            assert_eq!(else_block.len(), 2);
+        }
+        _ => panic!("Expected if expression"),
+    }
+}
+
+#[test]
+fn test_parse_nested_if() {
+    let result = parse_expr("if a { if b { 1 } else { 2 } } else { 3 }").unwrap();
+    match result.node {
+        Expr::If { then_block, .. } => {
+            assert_eq!(then_block.len(), 1);
+            match &then_block[0].node {
+                Stmt::Expr(e) => match &e.node {
+                    Expr::If { .. } => {}
+                    _ => panic!("Expected nested if"),
+                },
+                _ => panic!("Expected expr stmt"),
+            }
+        }
+        _ => panic!("Expected if expression"),
+    }
+}
