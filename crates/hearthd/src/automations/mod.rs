@@ -5,6 +5,8 @@
 pub mod ast;
 pub mod lexer;
 pub mod parser;
+pub mod pretty_print;
 
 pub use ast::*;
 pub use parser::parse;
+pub use pretty_print::PrettyPrint;
