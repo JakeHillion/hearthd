@@ -42,6 +42,14 @@ impl PrettyPrint for Expr {
             Expr::Bool(b) => writeln!(f, "Bool: {}", b),
             Expr::UnitLiteral { value, unit } => writeln!(f, "UnitLiteral: {}{}", value, unit),
             Expr::Ident(s) => writeln!(f, "Ident: {}", s),
+            Expr::Path(segments) => {
+                writeln!(f, "Path:")?;
+                for seg in segments {
+                    write_indent(indent + 1, f)?;
+                    writeln!(f, "Segment: {}", seg)?;
+                }
+                Ok(())
+            }
             Expr::BinOp { op, left, right } => {
                 writeln!(f, "BinOp: {}", op)?;
                 left.pretty_print(indent + 1, f)?;

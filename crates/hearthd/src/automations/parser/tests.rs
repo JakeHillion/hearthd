@@ -640,7 +640,7 @@ fn test_parse_pattern_trailing_comma() {
 
 #[test]
 fn test_parse_pattern_nested() {
-    insta::assert_snapshot!(crate::automations::parse("observer { x: { inner } } /true/ { x }").unwrap().to_pretty_string(), @r"
+    insta::assert_snapshot!(crate::automations::parse("observer { x = { inner } } /true/ { x }").unwrap().to_pretty_string(), @r"
     Automation: observer
       Pattern:
         PatternStruct:
@@ -657,7 +657,7 @@ fn test_parse_pattern_nested() {
 
 #[test]
 fn test_parse_pattern_nested_with_rest() {
-    insta::assert_snapshot!(crate::automations::parse("observer { x: { a, b, ... }, y } /true/ { x }").unwrap().to_pretty_string(), @r"
+    insta::assert_snapshot!(crate::automations::parse("observer { x = { a, b, ... }, y } /true/ { x }").unwrap().to_pretty_string(), @r"
     Automation: observer
       Pattern:
         PatternStruct:
@@ -693,7 +693,7 @@ fn test_parse_struct_lit_single_field() {
 
 #[test]
 fn test_parse_struct_lit_multiple_fields() {
-    insta::assert_snapshot!(parse_expr("Point { x: 1, y: 2 }").unwrap().to_pretty_string(), @r"
+    insta::assert_snapshot!(parse_expr("Point { x: 1; y: 2 }").unwrap().to_pretty_string(), @r"
     StructLit: Point
       Field: x
         Int: 1
@@ -720,7 +720,7 @@ fn test_parse_struct_lit_spread() {
 
 #[test]
 fn test_parse_struct_lit_mixed() {
-    insta::assert_snapshot!(parse_expr("Config { x: 1, inherit y, ...defaults }").unwrap().to_pretty_string(), @r"
+    insta::assert_snapshot!(parse_expr("Config { x: 1; inherit y; ...defaults }").unwrap().to_pretty_string(), @r"
     StructLit: Config
       Field: x
         Int: 1
@@ -737,5 +737,197 @@ fn test_parse_struct_lit_nested() {
         StructLit: Inner
           Field: x
             Int: 1
+    ");
+}
+
+#[test]
+fn test_parse_path_basic() {
+    insta::assert_snapshot!(parse_expr("Event::ZoneChange").unwrap().to_pretty_string(), @r"
+    Path:
+      Segment: Event
+      Segment: ZoneChange
+    ");
+}
+
+#[test]
+fn test_parse_path_three_segments() {
+    insta::assert_snapshot!(parse_expr("Foo::Bar::Baz").unwrap().to_pretty_string(), @r"
+    Path:
+      Segment: Foo
+      Segment: Bar
+      Segment: Baz
+    ");
+}
+
+#[test]
+fn test_parse_path_call() {
+    // Path used as function call
+    insta::assert_snapshot!(parse_expr("Event::LightOff(l)").unwrap().to_pretty_string(), @r"
+    Call:
+      Path:
+        Segment: Event
+        Segment: LightOff
+      Args:
+        Ident: l
+    ");
+}
+
+#[test]
+fn test_parse_path_in_comparison() {
+    insta::assert_snapshot!(parse_expr("event.type == Event::ZoneChange").unwrap().to_pretty_string(), @r"
+    BinOp: ==
+      Field: .type
+        Ident: event
+      Path:
+        Segment: Event
+        Segment: ZoneChange
+    ");
+}
+
+#[test]
+fn test_parse_design_doc_mutator() {
+    let src = r#"
+mutator {
+    event,
+    state = { sun = { azimuth, ... }, ... },
+    ...
+} /event.type == Event::LightOn/ {
+    let brightness = azimuth * 0.5;
+    let colour = azimuth * 1.2;
+
+    Event {
+        inherit brightness colour;
+        ...event
+    }
+}
+"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Automation: mutator
+      Pattern:
+        PatternStruct:
+          FieldPattern: event
+          FieldPattern: state
+            PatternStruct:
+              FieldPattern: sun
+                PatternStruct:
+                  FieldPattern: azimuth
+                  Rest: ...
+              Rest: ...
+          Rest: ...
+      Filter:
+        BinOp: ==
+          Field: .type
+            Ident: event
+          Path:
+            Segment: Event
+            Segment: LightOn
+      Body:
+        Let: brightness
+          BinOp: *
+            Ident: azimuth
+            Float: 0.5
+        Let: colour
+          BinOp: *
+            Ident: azimuth
+            Float: 1.2
+        ExprStmt:
+          StructLit: Event
+            Inherit: brightness
+            Inherit: colour
+            Spread: event
+    ");
+}
+
+#[test]
+fn test_parse_design_doc_observer() {
+    let src = r#"
+observer {
+    event,
+    state = {
+        lights,
+        person_tracker,
+        zone,
+        helpers = { guest_mode, ... },
+        ...
+    },
+    ...
+} /!guest_mode
+   && event.type == Event::ZoneChange
+   && event.device == person_tracker.jake
+   && event.from == zone.home/ {
+
+    if await sleep_unique(5min) {
+        [ Event::LightOff(l) for l in keys(lights) ]
+    } else {
+        []
+    }
+}
+"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: event
+          FieldPattern: state
+            PatternStruct:
+              FieldPattern: lights
+              FieldPattern: person_tracker
+              FieldPattern: zone
+              FieldPattern: helpers
+                PatternStruct:
+                  FieldPattern: guest_mode
+                  Rest: ...
+              Rest: ...
+          Rest: ...
+      Filter:
+        BinOp: &&
+          BinOp: &&
+            BinOp: &&
+              UnaryOp: !
+                Ident: guest_mode
+              BinOp: ==
+                Field: .type
+                  Ident: event
+                Path:
+                  Segment: Event
+                  Segment: ZoneChange
+            BinOp: ==
+              Field: .device
+                Ident: event
+              Field: .jake
+                Ident: person_tracker
+          BinOp: ==
+            Field: .from
+              Ident: event
+            Field: .home
+              Ident: zone
+      Body:
+        ExprStmt:
+          If:
+            Cond:
+              UnaryOp: await
+                Call:
+                  Ident: sleep_unique
+                  Args:
+                    UnitLiteral: 5min
+            Then:
+              ExprStmt:
+                ListComp:
+                  Expr:
+                    Call:
+                      Path:
+                        Segment: Event
+                        Segment: LightOff
+                      Args:
+                        Ident: l
+                  Var: l
+                  Iter:
+                    Call:
+                      Ident: keys
+                      Args:
+                        Ident: lights
+            Else:
+              ExprStmt:
+                List: (empty)
     ");
 }

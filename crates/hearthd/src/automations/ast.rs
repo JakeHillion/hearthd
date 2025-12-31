@@ -97,8 +97,9 @@ pub enum Expr {
         unit: UnitType,
     },
 
-    // Identifiers
+    // Identifiers and paths
     Ident(String),
+    Path(Vec<String>),
 
     // Binary operations
     BinOp {
