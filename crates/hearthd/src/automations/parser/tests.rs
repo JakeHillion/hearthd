@@ -234,6 +234,46 @@ fn test_parse_method_call() {
 }
 
 #[test]
+fn test_parse_named_args() {
+    // Single named argument
+    insta::assert_snapshot!(parse_expr("func(x = 1)").unwrap().to_pretty_string(), @r"
+    Call:
+      Ident: func
+      Args:
+        Named: x
+          Int: 1
+    ");
+    // Multiple named arguments
+    insta::assert_snapshot!(parse_expr("func(x = 1, y = 2)").unwrap().to_pretty_string(), @r"
+    Call:
+      Ident: func
+      Args:
+        Named: x
+          Int: 1
+        Named: y
+          Int: 2
+    ");
+    // Mixed positional and named
+    insta::assert_snapshot!(parse_expr("func(a, x = 1)").unwrap().to_pretty_string(), @r"
+    Call:
+      Ident: func
+      Args:
+        Ident: a
+        Named: x
+          Int: 1
+    ");
+    // Named with complex expression
+    insta::assert_snapshot!(parse_expr("wait(5min, retry = cancel)").unwrap().to_pretty_string(), @r"
+    Call:
+      Ident: wait
+      Args:
+        UnitLiteral: 5min
+        Named: retry
+          Ident: cancel
+    ");
+}
+
+#[test]
 fn test_parse_chained_calls() {
     insta::assert_snapshot!(parse_expr("a.b().c()").unwrap().to_pretty_string(), @r"
     Call:

@@ -37,7 +37,7 @@ where
 {
     // Helper enum for postfix operations
     enum PostfixOp {
-        Call(Vec<Spanned<Expr>>),
+        Call(Vec<Spanned<Arg>>),
         Field(String),
         OptionalField(String),
     }
@@ -124,12 +124,23 @@ where
             .map_with(|node, e| Spanned::new(node, e.span()))
             .boxed();
 
+        // Function argument: either `name = expr` (named) or `expr` (positional)
+        let arg = choice((
+            // Named: ident = expr (per design doc: `wait(5 minutes, retry = cancel)`)
+            select! { Token::Ident(s) => s }
+                .then_ignore(just(Token::Assign))
+                .then(expr.clone())
+                .map_with(|(name, value), e| Spanned::new(Arg::Named { name, value }, e.span())),
+            // Positional: expr
+            expr.clone()
+                .map_with(|value, e| Spanned::new(Arg::Positional(value), e.span())),
+        ));
+
         // Field access and function calls
         let call = atom.clone().foldl_with(
             choice((
                 // Function call: (args)
-                expr.clone()
-                    .separated_by(just(Token::Comma))
+                arg.separated_by(just(Token::Comma))
                     .allow_trailing()
                     .collect::<Vec<_>>()
                     .delimited_by(just(Token::LParen), just(Token::RParen))
@@ -149,10 +160,7 @@ where
                 let node = match op {
                     PostfixOp::Call(args) => Expr::Call {
                         func: Box::new(expr),
-                        args: args
-                            .into_iter()
-                            .map(|a| Spanned::new(Arg::Positional(a.clone()), a.span))
-                            .collect(),
+                        args,
                     },
                     PostfixOp::Field(field) => Expr::Field {
                         expr: Box::new(expr),
