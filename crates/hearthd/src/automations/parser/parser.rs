@@ -58,6 +58,35 @@ where
         }
         .labelled("identifier");
 
+        // Struct literal: Name { fields }
+        let struct_field = choice((
+            // Field: field: value
+            select! { Token::Ident(s) => s }
+                .then_ignore(just(Token::Colon))
+                .then(expr.clone())
+                .map_with(|(name, value), e| {
+                    Spanned::new(StructField::Field { name, value }, e.span())
+                }),
+            // Inherit: inherit field
+            just(Token::Inherit)
+                .ignore_then(select! { Token::Ident(s) => s })
+                .map_with(|name, e| Spanned::new(StructField::Inherit(name), e.span())),
+            // Spread: ...name
+            just(Token::DotDotDot)
+                .ignore_then(select! { Token::Ident(s) => s })
+                .map_with(|name, e| Spanned::new(StructField::Spread(name), e.span())),
+        ));
+
+        let struct_lit = select! { Token::Ident(s) => s }
+            .then(
+                struct_field
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map(|(name, fields)| Expr::StructLit { name, fields });
+
         let list = expr
             .clone()
             .separated_by(just(Token::Comma))
@@ -91,7 +120,7 @@ where
                 else_block,
             });
 
-        let atom = choice((literal, ident, list, if_expr, paren_expr))
+        let atom = choice((literal, struct_lit, ident, list, if_expr, paren_expr))
             .map_with(|node, e| Spanned::new(node, e.span()))
             .boxed();
 
