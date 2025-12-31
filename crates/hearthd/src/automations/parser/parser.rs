@@ -87,13 +87,65 @@ where
             )
             .map(|(name, fields)| Expr::StructLit { name, fields });
 
-        let list = expr
-            .clone()
-            .separated_by(just(Token::Comma))
-            .allow_trailing()
-            .collect::<Vec<_>>()
-            .delimited_by(just(Token::LBracket), just(Token::RBracket))
-            .map(Expr::List)
+        // Helper enum for list vs comprehension continuation
+        #[derive(Clone)]
+        enum ListCont {
+            List(Vec<Spanned<Expr>>),
+            Comp {
+                var: String,
+                iter: Spanned<Expr>,
+                filter: Option<Spanned<Expr>>,
+            },
+        }
+
+        // List literal or list comprehension
+        let list = just(Token::LBracket)
+            .ignore_then(choice((
+                // Empty list: []
+                just(Token::RBracket).to((None, ListCont::List(vec![]))),
+                // Non-empty: starts with an expression
+                expr.clone()
+                    .then(choice((
+                        // List comprehension: for var in iter [if cond]
+                        just(Token::For)
+                            .ignore_then(select! { Token::Ident(s) => s })
+                            .then_ignore(just(Token::In))
+                            .then(expr.clone())
+                            .then(just(Token::If).ignore_then(expr.clone()).or_not())
+                            .then_ignore(just(Token::RBracket))
+                            .map(|((var, iter), filter)| ListCont::Comp { var, iter, filter }),
+                        // More list elements: , expr, expr, ...
+                        just(Token::Comma)
+                            .ignore_then(
+                                expr.clone()
+                                    .separated_by(just(Token::Comma))
+                                    .allow_trailing()
+                                    .collect(),
+                            )
+                            .then_ignore(just(Token::RBracket))
+                            .map(ListCont::List),
+                        // Single element list (with optional trailing comma)
+                        just(Token::Comma)
+                            .or_not()
+                            .ignore_then(just(Token::RBracket))
+                            .to(ListCont::List(vec![])),
+                    )))
+                    .map(|(first, cont)| (Some(first), cont)),
+            )))
+            .map(|(first, cont)| match cont {
+                ListCont::List(mut rest) => {
+                    if let Some(f) = first {
+                        rest.insert(0, f);
+                    }
+                    Expr::List(rest)
+                }
+                ListCont::Comp { var, iter, filter } => Expr::ListComp {
+                    expr: Box::new(first.unwrap()),
+                    var,
+                    iter: Box::new(iter),
+                    filter: filter.map(Box::new),
+                },
+            })
             .labelled("list");
 
         let paren_expr = expr

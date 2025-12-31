@@ -206,6 +206,85 @@ fn test_parse_list() {
 }
 
 #[test]
+fn test_parse_list_comp_basic() {
+    insta::assert_snapshot!(parse_expr("[x for x in list]").unwrap().to_pretty_string(), @r"
+    ListComp:
+      Expr:
+        Ident: x
+      Var: x
+      Iter:
+        Ident: list
+    ");
+}
+
+#[test]
+fn test_parse_list_comp_with_expr() {
+    insta::assert_snapshot!(parse_expr("[x * 2 for x in items]").unwrap().to_pretty_string(), @r"
+    ListComp:
+      Expr:
+        BinOp: *
+          Ident: x
+          Int: 2
+      Var: x
+      Iter:
+        Ident: items
+    ");
+}
+
+#[test]
+fn test_parse_list_comp_with_filter() {
+    insta::assert_snapshot!(parse_expr("[x for x in list if x > 0]").unwrap().to_pretty_string(), @r"
+    ListComp:
+      Expr:
+        Ident: x
+      Var: x
+      Iter:
+        Ident: list
+      Filter:
+        BinOp: >
+          Ident: x
+          Int: 0
+    ");
+}
+
+#[test]
+fn test_parse_list_comp_complex() {
+    // Function call in expression and filter
+    insta::assert_snapshot!(parse_expr("[f(x) for x in items if pred(x)]").unwrap().to_pretty_string(), @r"
+    ListComp:
+      Expr:
+        Call:
+          Ident: f
+          Args:
+            Ident: x
+      Var: x
+      Iter:
+        Ident: items
+      Filter:
+        Call:
+          Ident: pred
+          Args:
+            Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_list_comp_field_access() {
+    // Field access in iterator expression
+    insta::assert_snapshot!(parse_expr("[l for l in keys(lights)]").unwrap().to_pretty_string(), @r"
+    ListComp:
+      Expr:
+        Ident: l
+      Var: l
+      Iter:
+        Call:
+          Ident: keys
+          Args:
+            Ident: lights
+    ");
+}
+
+#[test]
 fn test_parse_function_call() {
     insta::assert_snapshot!(parse_expr("foo()").unwrap().to_pretty_string(), @r"
     Call:
