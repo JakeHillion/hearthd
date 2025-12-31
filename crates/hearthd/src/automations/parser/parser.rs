@@ -40,6 +40,7 @@ where
         Call(Vec<Spanned<Arg>>),
         Field(String),
         OptionalField(String),
+        PathSegment(String),
     }
 
     recursive(|expr| {
@@ -59,30 +60,42 @@ where
         .labelled("identifier");
 
         // Struct literal: Name { fields }
+        // Each struct_field returns a Vec to handle `inherit a b c` producing multiple entries
         let struct_field = choice((
             // Field: field: value
             select! { Token::Ident(s) => s }
                 .then_ignore(just(Token::Colon))
                 .then(expr.clone())
                 .map_with(|(name, value), e| {
-                    Spanned::new(StructField::Field { name, value }, e.span())
+                    vec![Spanned::new(StructField::Field { name, value }, e.span())]
                 }),
-            // Inherit: inherit field
+            // Inherit: inherit field1 field2 ... (multiple space-separated identifiers)
             just(Token::Inherit)
-                .ignore_then(select! { Token::Ident(s) => s })
-                .map_with(|name, e| Spanned::new(StructField::Inherit(name), e.span())),
+                .ignore_then(
+                    select! { Token::Ident(s) => s }
+                        .repeated()
+                        .at_least(1)
+                        .collect::<Vec<_>>(),
+                )
+                .map_with(|names, e| {
+                    names
+                        .into_iter()
+                        .map(|name| Spanned::new(StructField::Inherit(name), e.span()))
+                        .collect()
+                }),
             // Spread: ...name
             just(Token::DotDotDot)
                 .ignore_then(select! { Token::Ident(s) => s })
-                .map_with(|name, e| Spanned::new(StructField::Spread(name), e.span())),
+                .map_with(|name, e| vec![Spanned::new(StructField::Spread(name), e.span())]),
         ));
 
         let struct_lit = select! { Token::Ident(s) => s }
             .then(
                 struct_field
-                    .separated_by(just(Token::Comma))
+                    .separated_by(just(Token::Semicolon))
                     .allow_trailing()
                     .collect::<Vec<_>>()
+                    .map(|vecs| vecs.into_iter().flatten().collect::<Vec<_>>())
                     .delimited_by(just(Token::LBrace), just(Token::RBrace)),
             )
             .map(|(name, fields)| Expr::StructLit { name, fields });
@@ -206,6 +219,10 @@ where
                     .then(just(Token::Dot))
                     .ignore_then(select! { Token::Ident(s) => s })
                     .map(PostfixOp::OptionalField),
+                // Path segment: ::Ident
+                just(Token::ColonColon)
+                    .ignore_then(select! { Token::Ident(s) => s })
+                    .map(PostfixOp::PathSegment),
             ))
             .repeated(),
             |expr, op, e| {
@@ -222,6 +239,17 @@ where
                         expr: Box::new(expr),
                         field,
                     },
+                    PostfixOp::PathSegment(segment) => {
+                        // Build path from Ident or extend existing Path
+                        match expr.node {
+                            Expr::Ident(first) => Expr::Path(vec![first, segment]),
+                            Expr::Path(mut segments) => {
+                                segments.push(segment);
+                                Expr::Path(segments)
+                            }
+                            _ => Expr::Path(vec![segment]), // Fallback, shouldn't happen
+                        }
+                    }
                 };
                 Spanned::new(node, e.span())
             },
@@ -409,7 +437,7 @@ where
     // Pattern parser for struct destructuring (recursive for nested patterns)
     let pattern = recursive(|pattern| {
         let field_pattern = select! { Token::Ident(s) => s }
-            .then(just(Token::Colon).ignore_then(pattern).or_not())
+            .then(just(Token::Assign).ignore_then(pattern).or_not())
             .map_with(|(name, nested), e| {
                 Spanned::new(
                     FieldPattern {

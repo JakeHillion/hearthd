@@ -63,6 +63,7 @@ pub enum Token {
     RBracket,    // ]
     Comma,       // ,
     Colon,       // :
+    ColonColon,  // ::
     Semicolon,   // ;
     FilterStart, // /
     FilterEnd,   // /
@@ -114,6 +115,7 @@ impl std::fmt::Display for Token {
             Token::RBracket => write!(f, "]"),
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
+            Token::ColonColon => write!(f, "::"),
             Token::Semicolon => write!(f, ";"),
             Token::FilterStart => write!(f, "/"),
             Token::FilterEnd => write!(f, "/"),
@@ -230,7 +232,7 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token, SimpleSpan)>, extra::
         just("=").to(Token::Assign),
     ));
 
-    // Delimiters
+    // Delimiters (order matters: :: before :)
     let delim = choice((
         just("(").to(Token::LParen),
         just(")").to(Token::RParen),
@@ -239,6 +241,7 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token, SimpleSpan)>, extra::
         just("[").to(Token::LBracket),
         just("]").to(Token::RBracket),
         just(",").to(Token::Comma),
+        just("::").to(Token::ColonColon),
         just(":").to(Token::Colon),
         just(";").to(Token::Semicolon),
     ));
