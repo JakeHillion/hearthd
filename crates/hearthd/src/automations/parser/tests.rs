@@ -542,3 +542,68 @@ fn test_parse_pattern_nested_with_rest() {
           Ident: x
     ");
 }
+
+#[test]
+fn test_parse_struct_lit_empty() {
+    insta::assert_snapshot!(parse_expr("Name {}").unwrap().to_pretty_string(), @r"
+    StructLit: Name
+    ");
+}
+
+#[test]
+fn test_parse_struct_lit_single_field() {
+    insta::assert_snapshot!(parse_expr("Point { x: 1 }").unwrap().to_pretty_string(), @r"
+    StructLit: Point
+      Field: x
+        Int: 1
+    ");
+}
+
+#[test]
+fn test_parse_struct_lit_multiple_fields() {
+    insta::assert_snapshot!(parse_expr("Point { x: 1, y: 2 }").unwrap().to_pretty_string(), @r"
+    StructLit: Point
+      Field: x
+        Int: 1
+      Field: y
+        Int: 2
+    ");
+}
+
+#[test]
+fn test_parse_struct_lit_inherit() {
+    insta::assert_snapshot!(parse_expr("Point { inherit x }").unwrap().to_pretty_string(), @r"
+    StructLit: Point
+      Inherit: x
+    ");
+}
+
+#[test]
+fn test_parse_struct_lit_spread() {
+    insta::assert_snapshot!(parse_expr("Point { ...other }").unwrap().to_pretty_string(), @r"
+    StructLit: Point
+      Spread: other
+    ");
+}
+
+#[test]
+fn test_parse_struct_lit_mixed() {
+    insta::assert_snapshot!(parse_expr("Config { x: 1, inherit y, ...defaults }").unwrap().to_pretty_string(), @r"
+    StructLit: Config
+      Field: x
+        Int: 1
+      Inherit: y
+      Spread: defaults
+    ");
+}
+
+#[test]
+fn test_parse_struct_lit_nested() {
+    insta::assert_snapshot!(parse_expr("Outer { inner: Inner { x: 1 } }").unwrap().to_pretty_string(), @r"
+    StructLit: Outer
+      Field: inner
+        StructLit: Inner
+          Field: x
+            Int: 1
+    ");
+}
