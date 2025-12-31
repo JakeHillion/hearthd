@@ -160,3 +160,42 @@ fn test_lex_unit_literals() {
         ]
     );
 }
+
+#[test]
+fn test_lex_line_comments() {
+    let input = "foo // this is a comment\nbar";
+    let result = lexer().parse(input).into_result().unwrap();
+    assert_eq!(
+        result,
+        vec![
+            (Token::Ident("foo".to_string()), (0..3).into()),
+            (Token::Ident("bar".to_string()), (25..28).into()),
+        ]
+    );
+}
+
+#[test]
+fn test_lex_block_comments() {
+    let input = "foo /* block comment */ bar";
+    let result = lexer().parse(input).into_result().unwrap();
+    assert_eq!(
+        result,
+        vec![
+            (Token::Ident("foo".to_string()), (0..3).into()),
+            (Token::Ident("bar".to_string()), (24..27).into()),
+        ]
+    );
+}
+
+#[test]
+fn test_lex_multiline_block_comment() {
+    let input = "foo /*\n  multi\n  line\n*/ bar";
+    let result = lexer().parse(input).into_result().unwrap();
+    assert_eq!(
+        result,
+        vec![
+            (Token::Ident("foo".to_string()), (0..3).into()),
+            (Token::Ident("bar".to_string()), (25..28).into()),
+        ]
+    );
+}
