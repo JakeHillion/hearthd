@@ -104,6 +104,19 @@ fn test_parse_comparison() {
       Ident: a
       Ident: b
     ");
+    insta::assert_snapshot!(parse_expr("x in collection").unwrap().to_pretty_string(), @r"
+    BinOp: in
+      Ident: x
+      Ident: collection
+    ");
+    // in binds tighter than &&
+    insta::assert_snapshot!(parse_expr("x in list && y").unwrap().to_pretty_string(), @r"
+    BinOp: &&
+      BinOp: in
+        Ident: x
+        Ident: list
+      Ident: y
+    ");
 }
 
 #[test]
