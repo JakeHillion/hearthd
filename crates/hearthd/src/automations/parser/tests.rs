@@ -354,7 +354,7 @@ fn test_parse_automation() {
     insta::assert_snapshot!(crate::automations::parse("observer {} /true/ { let x = 42; }").unwrap().to_pretty_string(), @r"
     Automation: observer
       Pattern:
-        PatternIdent: _
+        PatternStruct:
       Filter:
         Bool: true
       Body:
@@ -364,7 +364,7 @@ fn test_parse_automation() {
     insta::assert_snapshot!(crate::automations::parse("mutator {} /a == b/ { foo() }").unwrap().to_pretty_string(), @r"
     Automation: mutator
       Pattern:
-        PatternIdent: _
+        PatternStruct:
       Filter:
         BinOp: ==
           Ident: a
@@ -382,7 +382,7 @@ fn test_parse_automation_multiple_stmts() {
     insta::assert_snapshot!(crate::automations::parse("observer {} /true/ { let x = 1; let y = 2; x + y }").unwrap().to_pretty_string(), @r"
     Automation: observer
       Pattern:
-        PatternIdent: _
+        PatternStruct:
       Filter:
         Bool: true
       Body:
@@ -424,5 +424,121 @@ fn test_parse_complex_expr() {
       BinOp: <
         Ident: e
         Ident: f
+    ");
+}
+
+#[test]
+fn test_parse_pattern_empty() {
+    insta::assert_snapshot!(crate::automations::parse("observer {} /true/ { x }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Filter:
+        Bool: true
+      Body:
+        ExprStmt:
+          Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_pattern_single_field() {
+    insta::assert_snapshot!(crate::automations::parse("observer { x } /true/ { x }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: x
+      Filter:
+        Bool: true
+      Body:
+        ExprStmt:
+          Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_pattern_multiple_fields() {
+    insta::assert_snapshot!(crate::automations::parse("observer { x, y, z } /true/ { x }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: x
+          FieldPattern: y
+          FieldPattern: z
+      Filter:
+        Bool: true
+      Body:
+        ExprStmt:
+          Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_pattern_with_rest() {
+    insta::assert_snapshot!(crate::automations::parse("observer { x, y, ... } /true/ { x }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: x
+          FieldPattern: y
+          Rest: ...
+      Filter:
+        Bool: true
+      Body:
+        ExprStmt:
+          Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_pattern_trailing_comma() {
+    insta::assert_snapshot!(crate::automations::parse("observer { x, y, } /true/ { x }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: x
+          FieldPattern: y
+      Filter:
+        Bool: true
+      Body:
+        ExprStmt:
+          Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_pattern_nested() {
+    insta::assert_snapshot!(crate::automations::parse("observer { x: { inner } } /true/ { x }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: x
+            PatternStruct:
+              FieldPattern: inner
+      Filter:
+        Bool: true
+      Body:
+        ExprStmt:
+          Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_pattern_nested_with_rest() {
+    insta::assert_snapshot!(crate::automations::parse("observer { x: { a, b, ... }, y } /true/ { x }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: x
+            PatternStruct:
+              FieldPattern: a
+              FieldPattern: b
+              Rest: ...
+          FieldPattern: y
+      Filter:
+        Bool: true
+      Body:
+        ExprStmt:
+          Ident: x
     ");
 }

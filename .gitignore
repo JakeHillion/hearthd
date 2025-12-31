@@ -3,3 +3,4 @@
 /.cargo
 /vendor
 *.local.toml
+*.pending-snap

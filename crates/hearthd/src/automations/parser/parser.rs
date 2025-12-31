@@ -316,10 +316,41 @@ where
         Token::Mutator => AutomationKind::Mutator,
     };
 
-    // Stub pattern - just match empty braces for now
-    let pattern = just(Token::LBrace)
-        .ignore_then(just(Token::RBrace))
-        .map_with(|_, e| Spanned::new(Pattern::Ident("_".to_string()), e.span()));
+    // Pattern parser for struct destructuring (recursive for nested patterns)
+    let pattern = recursive(|pattern| {
+        let field_pattern = select! { Token::Ident(s) => s }
+            .then(just(Token::Colon).ignore_then(pattern).or_not())
+            .map_with(|(name, nested), e| {
+                Spanned::new(
+                    FieldPattern {
+                        name,
+                        pattern: nested,
+                    },
+                    e.span(),
+                )
+            });
+
+        let rest = just(Token::DotDotDot).to(true);
+
+        just(Token::LBrace)
+            .ignore_then(
+                field_pattern
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>()
+                    .then(rest.or_not()),
+            )
+            .then_ignore(just(Token::RBrace))
+            .map_with(|(fields, has_rest), e| {
+                Spanned::new(
+                    Pattern::Struct {
+                        fields,
+                        has_rest: has_rest.unwrap_or(false),
+                    },
+                    e.span(),
+                )
+            })
+    });
 
     // Filter uses expr_parser
     let filter = just(Token::Slash)
