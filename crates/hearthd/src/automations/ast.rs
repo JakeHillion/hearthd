@@ -184,6 +184,8 @@ pub enum BinOp {
     Gt,
     #[strum(serialize = ">=")]
     Ge,
+    #[strum(serialize = "in")]
+    In,
 
     // Logical
     #[strum(serialize = "&&")]

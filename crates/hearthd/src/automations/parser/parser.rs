@@ -233,12 +233,13 @@ where
                 )
             });
 
-        // Comparison: <, >, <=, >=
+        // Comparison: <, >, <=, >=, in
         let cmp_op = select! {
             Token::Lt => BinOp::Lt,
             Token::Le => BinOp::Le,
             Token::Gt => BinOp::Gt,
             Token::Ge => BinOp::Ge,
+            Token::In => BinOp::In,
         };
 
         let cmp = add
