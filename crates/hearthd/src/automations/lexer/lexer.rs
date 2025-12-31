@@ -243,12 +243,29 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<(Token, SimpleSpan)>, extra::
         just(";").to(Token::Semicolon),
     ));
 
+    // Comments (skipped like whitespace)
+    let line_comment = just("//")
+        .then(any().and_is(just('\n').not()).repeated())
+        .ignored();
+
+    let block_comment = just("/*")
+        .then(any().and_is(just("*/").not()).repeated())
+        .then(just("*/"))
+        .ignored();
+
+    let comment = line_comment.or(block_comment);
+
+    // Whitespace and comments to skip between tokens
+    let ws = choice((text::whitespace().at_least(1).ignored(), comment))
+        .repeated()
+        .ignored();
+
     // Token: try unit literal first, then float, then int, to avoid ambiguity
     let token = choice((unit_literal, float, int, string, ident, op, delim));
 
     token
         .map_with(|tok, e: &mut MapExtra<'a, '_, &'a str, _>| (tok, e.span()))
-        .padded()
+        .padded_by(ws)
         .repeated()
         .collect()
 }
