@@ -44,7 +44,7 @@ pub struct TemplateParam {
 pub struct Automation {
     pub kind: AutomationKind,
     pub pattern: Spanned<Pattern>,
-    pub filter: Spanned<Expr>,
+    pub filter: Option<Spanned<Expr>>,
     pub body: Vec<Spanned<Stmt>>,
 }
 
