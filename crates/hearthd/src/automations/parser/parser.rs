@@ -6,7 +6,7 @@ use chumsky::span::SimpleSpan;
 use crate::automations::ast::*;
 use crate::automations::lexer::Token;
 
-/// Parse a complete automation program.
+/// Parse a complete automation program (either a single automation or a template).
 pub fn parse(input: &str) -> Result<Spanned<Program>, Vec<Rich<'static, Token>>> {
     let tokens = crate::automations::lexer::lexer()
         .parse(input)
@@ -17,14 +17,13 @@ pub fn parse(input: &str) -> Result<Spanned<Program>, Vec<Rich<'static, Token>>>
                 .collect::<Vec<_>>()
         })?;
     let input_len = input.len();
-    let result = automation_parser()
+    let result = program_parser()
         .parse(
             tokens
                 .as_slice()
                 .map((input_len..input_len).into(), |(t, s)| (t, s)),
         )
         .into_result()
-        .map(|auto| Spanned::new(Program::Automation(auto.node), auto.span))
         .map_err(|errs| errs.into_iter().map(|e| e.into_owned()).collect());
     result
 }
@@ -500,4 +499,100 @@ where
                 e.span(),
             )
         })
+}
+
+/// Parser for type annotations.
+fn type_parser<'tokens, 'src: 'tokens, I>()
+-> impl Parser<'tokens, I, Type, extra::Err<Rich<'tokens, Token>>> + Clone
+where
+    I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
+{
+    recursive(|ty| {
+        // List type: [T]
+        let list = ty
+            .clone()
+            .delimited_by(just(Token::LBracket), just(Token::RBracket))
+            .map(|t| Type::List(Box::new(t)));
+
+        // Set<T>
+        let set = select! { Token::Ident(s) if s == "Set" => () }
+            .ignore_then(ty.clone().delimited_by(just(Token::Lt), just(Token::Gt)))
+            .map(|t| Type::Set(Box::new(t)));
+
+        // Map<K, V>
+        let map = select! { Token::Ident(s) if s == "Map" => () }
+            .ignore_then(
+                ty.clone()
+                    .then_ignore(just(Token::Comma))
+                    .then(ty.clone())
+                    .delimited_by(just(Token::Lt), just(Token::Gt)),
+            )
+            .map(|(k, v)| Type::Map {
+                key: Box::new(k),
+                value: Box::new(v),
+            });
+
+        // Option<T>
+        let option = select! { Token::Ident(s) if s == "Option" => () }
+            .ignore_then(ty.delimited_by(just(Token::Lt), just(Token::Gt)))
+            .map(|t| Type::Option(Box::new(t)));
+
+        // Named type (must come last as fallback)
+        let named = select! { Token::Ident(s) => Type::Named(s) };
+
+        choice((list, set, map, option, named))
+    })
+}
+
+/// Parser for templates.
+fn template_parser<'tokens, 'src: 'tokens, I>()
+-> impl Parser<'tokens, I, Spanned<Template>, extra::Err<Rich<'tokens, Token>>>
+where
+    I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
+{
+    // Template parameter: name: Type
+    let param = select! { Token::Ident(s) => s }
+        .then_ignore(just(Token::Colon))
+        .then(type_parser())
+        .map_with(|(name, ty), e| Spanned::new(TemplateParam { name, ty }, e.span()));
+
+    // Parameter list: { param, param, ... }
+    let params = param
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBrace), just(Token::RBrace));
+
+    // Automation list: [ automation, automation, ... ]
+    let automations = automation_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBracket), just(Token::RBracket));
+
+    // Template: { params }: [ automations ]
+    params
+        .then_ignore(just(Token::Colon))
+        .then(automations)
+        .map_with(|(params, automations), e| {
+            Spanned::new(
+                Template {
+                    params,
+                    automations,
+                },
+                e.span(),
+            )
+        })
+}
+
+/// Parser for a complete program (either a template or a single automation).
+fn program_parser<'tokens, 'src: 'tokens, I>()
+-> impl Parser<'tokens, I, Spanned<Program>, extra::Err<Rich<'tokens, Token>>>
+where
+    I: chumsky::input::ValueInput<'tokens, Token = Token, Span = SimpleSpan>,
+{
+    choice((
+        template_parser().map(|t| Spanned::new(Program::Template(t.node), t.span)),
+        automation_parser().map(|a| Spanned::new(Program::Automation(a.node), a.span)),
+    ))
 }

@@ -1073,3 +1073,253 @@ observer {
                   Ident: lights
     ");
 }
+
+#[test]
+fn test_parse_template_single_param() {
+    let src = r#"{ lights: Light }: [ observer {} { x } ]"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Template:
+      Params:
+        Param: lights
+          Type::Named: Light
+      Automations:
+        Automation: observer
+          Pattern:
+            PatternStruct:
+          Body:
+            ExprStmt:
+              Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_template_multiple_params() {
+    let src = r#"{ lights: Set<Light>, timeout: Duration }: [ observer {} { x } ]"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Template:
+      Params:
+        Param: lights
+          Type::Set:
+            Type::Named: Light
+        Param: timeout
+          Type::Named: Duration
+      Automations:
+        Automation: observer
+          Pattern:
+            PatternStruct:
+          Body:
+            ExprStmt:
+              Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_template_complex_types() {
+    let src = r#"{ items: [Event], mapping: Map<String, Light>, maybe: Option<Zone> }: [ observer {} { x } ]"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Template:
+      Params:
+        Param: items
+          Type::List:
+            Type::Named: Event
+        Param: mapping
+          Type::Map:
+            Key:
+              Type::Named: String
+            Value:
+              Type::Named: Light
+        Param: maybe
+          Type::Option:
+            Type::Named: Zone
+      Automations:
+        Automation: observer
+          Pattern:
+            PatternStruct:
+          Body:
+            ExprStmt:
+              Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_template_nested_types() {
+    let src = r#"{ nested: Set<Option<Light>> }: [ observer {} { x } ]"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Template:
+      Params:
+        Param: nested
+          Type::Set:
+            Type::Option:
+              Type::Named: Light
+      Automations:
+        Automation: observer
+          Pattern:
+            PatternStruct:
+          Body:
+            ExprStmt:
+              Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_template_multiple_automations() {
+    let src = r#"
+{ lights: Set<Light> }:
+[
+    observer {} { [] },
+    mutator {} { x }
+]
+"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Template:
+      Params:
+        Param: lights
+          Type::Set:
+            Type::Named: Light
+      Automations:
+        Automation: observer
+          Pattern:
+            PatternStruct:
+          Body:
+            ExprStmt:
+              List: (empty)
+        Automation: mutator
+          Pattern:
+            PatternStruct:
+          Body:
+            ExprStmt:
+              Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_template_with_filter() {
+    let src = r#"{ sensor: Sensor }: [ observer {} /event.type == Event::Motion/ { [] } ]"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Template:
+      Params:
+        Param: sensor
+          Type::Named: Sensor
+      Automations:
+        Automation: observer
+          Pattern:
+            PatternStruct:
+          Filter:
+            BinOp: ==
+              Field: .type
+                Ident: event
+              Path:
+                Segment: Event
+                Segment: Motion
+          Body:
+            ExprStmt:
+              List: (empty)
+    ");
+}
+
+#[test]
+fn test_parse_template_design_doc_example() {
+    // Example from docs/design/automations-language.md
+    let src = r#"
+{ target_lights: Set<Light> }:
+
+[
+  mutator {
+    event,
+    state = { sun = { azimuth, ... }, ... },
+    ...
+  } /event.type == Event::LightOn && event.device in target_lights/ {
+    let brightness = azimuth * 0.5;
+    let colour = azimuth * 1.2;
+
+    Event {
+      inherit brightness colour;
+      ...event
+    }
+  },
+
+  observer {
+    event,
+    state = { ... },
+    ...
+  } /event.type == Event::Tick/ {
+    // Update lights on time tick
+    [ Event::LightUpdate(l) for l in target_lights ]
+  }
+]
+"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Template:
+      Params:
+        Param: target_lights
+          Type::Set:
+            Type::Named: Light
+      Automations:
+        Automation: mutator
+          Pattern:
+            PatternStruct:
+              FieldPattern: event
+              FieldPattern: state
+                PatternStruct:
+                  FieldPattern: sun
+                    PatternStruct:
+                      FieldPattern: azimuth
+                      Rest: ...
+                  Rest: ...
+              Rest: ...
+          Filter:
+            BinOp: &&
+              BinOp: ==
+                Field: .type
+                  Ident: event
+                Path:
+                  Segment: Event
+                  Segment: LightOn
+              BinOp: in
+                Field: .device
+                  Ident: event
+                Ident: target_lights
+          Body:
+            Let: brightness
+              BinOp: *
+                Ident: azimuth
+                Float: 0.5
+            Let: colour
+              BinOp: *
+                Ident: azimuth
+                Float: 1.2
+            ExprStmt:
+              StructLit: Event
+                Inherit: brightness
+                Inherit: colour
+                Spread: event
+        Automation: observer
+          Pattern:
+            PatternStruct:
+              FieldPattern: event
+              FieldPattern: state
+                PatternStruct:
+                  Rest: ...
+              Rest: ...
+          Filter:
+            BinOp: ==
+              Field: .type
+                Ident: event
+              Path:
+                Segment: Event
+                Segment: Tick
+          Body:
+            ExprStmt:
+              ListComp:
+                Expr:
+                  Call:
+                    Path:
+                      Segment: Event
+                      Segment: LightUpdate
+                    Args:
+                      Ident: l
+                Var: l
+                Iter:
+                  Ident: target_lights
+    ");
+}

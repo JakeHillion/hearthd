@@ -282,36 +282,37 @@ impl PrettyPrint for Template {
 impl PrettyPrint for TemplateParam {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write_indent(indent, f)?;
-        write!(f, "Param: {}: ", self.name)?;
-        write_type_inline(&self.ty, f)?;
-        writeln!(f)
+        writeln!(f, "Param: {}", self.name)?;
+        self.ty.pretty_print(indent + 1, f)
     }
 }
 
-fn write_type_inline(ty: &Type, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match ty {
-        Type::Named(s) => write!(f, "{}", s),
-        Type::List(t) => {
-            write!(f, "[")?;
-            write_type_inline(t, f)?;
-            write!(f, "]")
-        }
-        Type::Set(t) => {
-            write!(f, "Set<")?;
-            write_type_inline(t, f)?;
-            write!(f, ">")
-        }
-        Type::Map { key, value } => {
-            write!(f, "Map<")?;
-            write_type_inline(key, f)?;
-            write!(f, ", ")?;
-            write_type_inline(value, f)?;
-            write!(f, ">")
-        }
-        Type::Option(t) => {
-            write!(f, "Option<")?;
-            write_type_inline(t, f)?;
-            write!(f, ">")
+impl PrettyPrint for Type {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_indent(indent, f)?;
+        match self {
+            Type::Named(s) => writeln!(f, "Type::Named: {}", s),
+            Type::List(t) => {
+                writeln!(f, "Type::List:")?;
+                t.pretty_print(indent + 1, f)
+            }
+            Type::Set(t) => {
+                writeln!(f, "Type::Set:")?;
+                t.pretty_print(indent + 1, f)
+            }
+            Type::Map { key, value } => {
+                writeln!(f, "Type::Map:")?;
+                write_indent(indent + 1, f)?;
+                writeln!(f, "Key:")?;
+                key.pretty_print(indent + 2, f)?;
+                write_indent(indent + 1, f)?;
+                writeln!(f, "Value:")?;
+                value.pretty_print(indent + 2, f)
+            }
+            Type::Option(t) => {
+                writeln!(f, "Type::Option:")?;
+                t.pretty_print(indent + 1, f)
+            }
         }
     }
 }
