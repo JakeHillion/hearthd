@@ -931,3 +931,132 @@ observer {
                 List: (empty)
     ");
 }
+
+#[test]
+fn test_parse_return_basic() {
+    insta::assert_snapshot!(crate::automations::parse("observer {} /true/ { return x; }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Filter:
+        Bool: true
+      Body:
+        Return:
+          Ident: x
+    ");
+}
+
+#[test]
+fn test_parse_return_with_expression() {
+    insta::assert_snapshot!(crate::automations::parse("observer {} /true/ { return Event::LightOff(l); }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Filter:
+        Bool: true
+      Body:
+        Return:
+          Call:
+            Path:
+              Segment: Event
+              Segment: LightOff
+            Args:
+              Ident: l
+    ");
+}
+
+#[test]
+fn test_parse_return_empty_list() {
+    insta::assert_snapshot!(crate::automations::parse("observer {} /true/ { return []; }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Filter:
+        Bool: true
+      Body:
+        Return:
+          List: (empty)
+    ");
+}
+
+#[test]
+fn test_parse_if_without_else() {
+    // One-sided if statement (no else branch)
+    insta::assert_snapshot!(crate::automations::parse("observer {} /true/ { if x { return []; } }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Filter:
+        Bool: true
+      Body:
+        ExprStmt:
+          If:
+            Cond:
+              Ident: x
+            Then:
+              Return:
+                List: (empty)
+    ");
+}
+
+#[test]
+fn test_parse_early_exit_pattern() {
+    // Early exit pattern: if guard returns early, then implicit return of expression
+    let src = r#"
+observer {
+    event,
+    state = { lights, person_tracker, ... },
+    ...
+} /event.type == Event::Motion/ {
+    if !person_tracker.anyone_home {
+        return [];
+    }
+
+    [ Event::LightOn(l) for l in keys(lights) ]
+}
+"#;
+    insta::assert_snapshot!(crate::automations::parse(src).unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: event
+          FieldPattern: state
+            PatternStruct:
+              FieldPattern: lights
+              FieldPattern: person_tracker
+              Rest: ...
+          Rest: ...
+      Filter:
+        BinOp: ==
+          Field: .type
+            Ident: event
+          Path:
+            Segment: Event
+            Segment: Motion
+      Body:
+        ExprStmt:
+          If:
+            Cond:
+              UnaryOp: !
+                Field: .anyone_home
+                  Ident: person_tracker
+            Then:
+              Return:
+                List: (empty)
+        ExprStmt:
+          ListComp:
+            Expr:
+              Call:
+                Path:
+                  Segment: Event
+                  Segment: LightOn
+                Args:
+                  Ident: l
+            Var: l
+            Iter:
+              Call:
+                Ident: keys
+                Args:
+                  Ident: lights
+    ");
+}

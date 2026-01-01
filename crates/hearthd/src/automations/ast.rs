@@ -80,6 +80,7 @@ pub struct FieldPattern {
 pub enum Stmt {
     Let { name: String, value: Spanned<Expr> },
     Expr(Spanned<Expr>),
+    Return(Spanned<Expr>),
 }
 
 /// An expression.
@@ -132,11 +133,11 @@ pub enum Expr {
         args: Vec<Spanned<Arg>>,
     },
 
-    // If expression
+    // If expression/statement
     If {
         cond: Box<Spanned<Expr>>,
         then_block: Vec<Spanned<Stmt>>,
-        else_block: Vec<Spanned<Stmt>>,
+        else_block: Option<Vec<Spanned<Stmt>>>,
     },
 
     // List literal

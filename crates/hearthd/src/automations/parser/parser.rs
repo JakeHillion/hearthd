@@ -173,12 +173,11 @@ where
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LBrace), just(Token::RBrace));
 
-        // If expression
+        // If expression/statement (else is optional)
         let if_expr = just(Token::If)
             .ignore_then(expr.clone())
             .then(block.clone())
-            .then_ignore(just(Token::Else))
-            .then(block)
+            .then(just(Token::Else).ignore_then(block).or_not())
             .map(|((cond, then_block), else_block)| Expr::If {
                 cond: Box::new(cond),
                 then_block,
@@ -405,11 +404,16 @@ where
         .then_ignore(just(Token::Semicolon))
         .map_with(|(name, value), e| Spanned::new(Stmt::Let { name, value }, e.span()));
 
+    let return_stmt = just(Token::Return)
+        .ignore_then(expr.clone())
+        .then_ignore(just(Token::Semicolon))
+        .map_with(|value, e| Spanned::new(Stmt::Return(value), e.span()));
+
     let expr_stmt = expr
         .then(just(Token::Semicolon).or_not())
         .map_with(|(expr, _), e| Spanned::new(Stmt::Expr(expr), e.span()));
 
-    choice((let_stmt, expr_stmt))
+    choice((let_stmt, return_stmt, expr_stmt))
 }
 
 /// Parser for statements using the top-level expression parser.
