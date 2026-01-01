@@ -474,10 +474,11 @@ where
             })
     });
 
-    // Filter uses expr_parser
+    // Filter uses expr_parser (optional)
     let filter = just(Token::Slash)
         .ignore_then(expr_parser())
-        .then_ignore(just(Token::Slash));
+        .then_ignore(just(Token::Slash))
+        .or_not();
 
     // Body - list of statements
     let body = stmt_parser()

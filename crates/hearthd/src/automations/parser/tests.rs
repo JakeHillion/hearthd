@@ -530,6 +530,19 @@ fn test_parse_automation_multiple_stmts() {
 }
 
 #[test]
+fn test_parse_automation_no_filter() {
+    // Filter is optional
+    insta::assert_snapshot!(crate::automations::parse("observer {} { x }").unwrap().to_pretty_string(), @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Body:
+        ExprStmt:
+          Ident: x
+    ");
+}
+
+#[test]
 fn test_parse_complex_expr() {
     // Operator precedence
     insta::assert_snapshot!(parse_expr("a + b * c - d / e").unwrap().to_pretty_string(), @r"

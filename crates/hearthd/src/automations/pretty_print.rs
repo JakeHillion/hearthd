@@ -234,9 +234,11 @@ impl PrettyPrint for Automation {
         write_indent(indent + 1, f)?;
         writeln!(f, "Pattern:")?;
         self.pattern.pretty_print(indent + 2, f)?;
-        write_indent(indent + 1, f)?;
-        writeln!(f, "Filter:")?;
-        self.filter.pretty_print(indent + 2, f)?;
+        if let Some(filter) = &self.filter {
+            write_indent(indent + 1, f)?;
+            writeln!(f, "Filter:")?;
+            filter.pretty_print(indent + 2, f)?;
+        }
         write_indent(indent + 1, f)?;
         if self.body.is_empty() {
             writeln!(f, "Body: (empty)")
