@@ -95,10 +95,12 @@ impl PrettyPrint for Expr {
                 for stmt in then_block {
                     stmt.pretty_print(indent + 2, f)?;
                 }
-                write_indent(indent + 1, f)?;
-                writeln!(f, "Else:")?;
-                for stmt in else_block {
-                    stmt.pretty_print(indent + 2, f)?;
+                if let Some(else_stmts) = else_block {
+                    write_indent(indent + 1, f)?;
+                    writeln!(f, "Else:")?;
+                    for stmt in else_stmts {
+                        stmt.pretty_print(indent + 2, f)?;
+                    }
                 }
                 Ok(())
             }
@@ -156,6 +158,10 @@ impl PrettyPrint for Stmt {
             }
             Stmt::Expr(expr) => {
                 writeln!(f, "ExprStmt:")?;
+                expr.pretty_print(indent + 1, f)
+            }
+            Stmt::Return(expr) => {
+                writeln!(f, "Return:")?;
                 expr.pretty_print(indent + 1, f)
             }
         }
