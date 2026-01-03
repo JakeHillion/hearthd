@@ -1,9 +1,6 @@
+#[allow(clippy::module_inception)]
 mod config;
-mod diagnostics;
-mod partial;
 
 pub use config::*;
-pub use diagnostics::{Diagnostic, Diagnostics, format_diagnostics};
-
-// Re-export specific types for clarity
-pub use config::LogLevel;
+// Re-export diagnostics from hearthd_config (the proc-macro based implementation)
+pub use hearthd_config::{Diagnostic, Diagnostics, format_diagnostics};

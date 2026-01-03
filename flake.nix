@@ -42,6 +42,8 @@
             "clippy"
             "rust-src"
             "rustc"
+          ];
+          fmt-toolchain = fenix.packages.${system}.default.withComponents [
             "rustfmt"
           ];
           craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
@@ -51,22 +53,26 @@
             programs = {
               rustfmt = {
                 enable = true;
-                package = toolchain;
+                package = fmt-toolchain;
               };
               nixpkgs-fmt.enable = true;
             };
+            settings.formatter.rustfmt.options = [
+              "--config-path"
+              "${./rustfmt.toml}"
+            ];
           };
 
           src = craneLib.cleanCargoSource (craneLib.path ./.);
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
 
-          fileSetForCrate = crate:
+          fileSetForCrate = cratePath:
             lib.fileset.toSource {
               root = ./.;
               fileset = lib.fileset.unions [
                 ./Cargo.toml
                 ./Cargo.lock
-                (craneLib.fileset.commonCargoSources ./crates/hearthd)
+                (craneLib.fileset.commonCargoSources cratePath)
               ];
             };
 
@@ -77,21 +83,30 @@
             nativeBuildInputs = [ ];
           };
 
-          individualCrateArgs = commonArgs // {
-            inherit cargoArtifacts;
-            inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
-            doCheck = false;
-          };
-
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
             pname = "hearthd-deps";
             version = "git";
           });
 
-          hearthd = craneLib.buildPackage (individualCrateArgs // {
+          hearthd_config_derive = craneLib.buildPackage (commonArgs // {
+            pname = "hearthd_config_derive";
+            cargoExtraArgs = "-p hearthd_config_derive";
+            cargoArtifacts = cargoArtifacts;
+            doCheck = false;
+          });
+
+          hearthd_config = craneLib.buildPackage (commonArgs // {
+            pname = "hearthd_config";
+            cargoExtraArgs = "-p hearthd_config";
+            cargoArtifacts = hearthd_config_derive;
+            doCheck = false;
+          });
+
+          hearthd = craneLib.buildPackage (commonArgs // {
             pname = "hearthd";
             cargoExtraArgs = "-p hearthd";
-            src = fileSetForCrate ./crates/hearthd;
+            cargoArtifacts = hearthd_config;
+            doCheck = false;
           });
 
           # Python environment configuration
@@ -107,9 +122,9 @@
             checks = self.checks.${system};
             packages = with pkgs; [
               rust-analyzer
-              treefmtEval.config.build.wrapper
-              python313
               cargo-insta
+              fmt-toolchain
+              python313
             ];
 
             HA_PYTHON_INTERPRETER = "${haPythonEnv}/bin/python";

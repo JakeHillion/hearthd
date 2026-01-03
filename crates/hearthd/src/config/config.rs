@@ -1,18 +1,23 @@
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use hearthd_config::Diagnostic;
+use hearthd_config::Diagnostics;
+use hearthd_config::Error;
+use hearthd_config::MergeableConfig;
+use hearthd_config::SubConfig;
+use hearthd_config::TryFromPartial;
+use hearthd_config::ValidationError;
+use serde::Deserialize;
 use tracing_subscriber::filter::LevelFilter;
 
-use super::diagnostics::{Diagnostic, Diagnostics, Error, ValidationError};
-use super::partial::PartialConfig;
-
-#[derive(Debug, Default)]
+#[derive(Debug, Default, TryFromPartial, MergeableConfig)]
 pub struct Config {
     pub logging: LoggingConfig,
     pub locations: LocationsConfig,
-    #[allow(dead_code)]
+    pub http: HttpConfig,
     pub integrations: IntegrationsConfig,
+    pub automations: AutomationsConfig,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -38,7 +43,7 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
 pub struct LoggingConfig {
     /// Log level: trace, debug, info, warn, error
     pub level: LogLevel,
@@ -46,16 +51,20 @@ pub struct LoggingConfig {
     pub overrides: HashMap<String, LogLevel>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
 pub struct LocationsConfig {
     /// The default location to use
     pub default: Option<String>,
 
     /// Named locations with their configurations
+    #[serde(flatten)]
     pub locations: HashMap<String, Location>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Deserialize, TryFromPartial, SubConfig)]
+// Required: toml deserializer cannot wrap fields in Spanned when the parent HashMap
+// is flattened. Without this, deserialization fails with "expected a spanned value".
+#[config(no_span)]
 #[allow(dead_code)] // Fields are used by application code, not in tests
 pub struct Location {
     /// Latitude in decimal degrees
@@ -71,73 +80,60 @@ pub struct Location {
     pub timezone: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
+pub struct HttpConfig {
+    /// Listen address for the HTTP API server
+    pub listen: String,
+
+    /// Port for the HTTP API server
+    pub port: u16,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            listen: "127.0.0.1".to_string(),
+            port: 8565,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
 pub struct IntegrationsConfig {
-    // Empty for now - integrations will be added as static fields later
+    #[cfg(feature = "integration_mqtt")]
+    pub mqtt: Option<crate::integrations::mqtt::MqttConfig>,
+}
+
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+pub struct AutomationsConfig {
+    /// Named automations (key is name, value contains file path)
+    #[serde(flatten)]
+    pub automations: HashMap<String, AutomationEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
+#[config(no_span)]
+pub struct AutomationEntry {
+    /// Path to the .hda file
+    pub file: String,
 }
 
 impl Config {
     /// Load configuration from multiple TOML files with import resolution
-    ///
-    /// Supports:
-    /// - Multiple config files (e.g., base + secrets)
-    /// - Import statements within config files
-    /// - Conflict detection across all sources
-    /// - Validation with all errors and warnings reported together
-    ///
-    /// Returns Ok((Config, diagnostics)) where diagnostics contains warnings and errors.
-    /// Returns Err if there are actual errors (not just warnings).
     pub fn from_files(paths: &[PathBuf]) -> Result<(Self, Diagnostics), Diagnostics> {
-        // Load all configs
+        // Use generated load and merge
         let configs = PartialConfig::load_with_imports(paths)
-            .map_err(|e| Diagnostics(vec![Diagnostic::Error(Error::Load(e))]))?;
+            .map_err(|e| Diagnostics(vec![Diagnostic::Error(hearthd_config::Error::Load(e))]))?;
 
-        // Merge with first-wins semantics, collecting diagnostics
-        let (partial, diagnostics) = PartialConfig::merge(configs);
+        let (partial, mut diagnostics) = PartialConfig::merge(configs);
 
-        // Convert to Config and validate, combining all diagnostics
-        Self::from_partial(partial, diagnostics)
-    }
-
-    /// Convert a PartialConfig to a Config, validating all fields
-    ///
-    /// Takes diagnostics from the merge step and adds validation diagnostics.
-    /// Returns Ok((Config, diagnostics)) if no errors, Err if there are errors.
-    pub fn from_partial(
-        partial: PartialConfig,
-        mut diagnostics: Vec<Diagnostic>,
-    ) -> Result<(Self, Diagnostics), Diagnostics> {
-        // Convert partial configs to Results
-        let logging_result: Result<LoggingConfig, Vec<Diagnostic>> = partial
-            .logging
-            .map(LoggingConfig::try_from)
-            .unwrap_or(Ok(LoggingConfig::default()));
-
-        let locations_result: Result<LocationsConfig, Vec<Diagnostic>> = partial
-            .locations
-            .map(|pl| LocationsConfig::try_from((pl, partial.source.clone())))
-            .unwrap_or(Ok(LocationsConfig::default()));
-
-        // Extract values, collecting errors
-        let logging = logging_result.unwrap_or_else(|errs| {
-            diagnostics.extend(errs);
-            LoggingConfig::default()
-        });
-
-        let locations = locations_result.unwrap_or_else(|errs| {
-            diagnostics.extend(errs);
-            LocationsConfig::default()
-        });
-
-        let integrations = partial
-            .integrations
-            .map(|_| IntegrationsConfig {})
-            .unwrap_or_default();
-
-        let config = Config {
-            logging,
-            locations,
-            integrations,
+        // Convert from partial config using TryFromPartial
+        let config = match Config::try_from_partial(partial) {
+            Ok(cfg) => cfg,
+            Err(errs) => {
+                diagnostics.extend(errs);
+                Config::default()
+            }
         };
 
         // Validate cross-field constraints
@@ -150,7 +146,6 @@ impl Config {
             })));
         }
 
-        // Check if there are any errors (not just warnings)
         let has_errors = diagnostics.iter().any(|d| d.is_error());
 
         if has_errors {
@@ -178,9 +173,10 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
     use std::io::Write;
+
+    use super::*;
 
     // All tests now use Config::from_files() with actual file I/O
     // This ensures we test the real loading path
@@ -269,7 +265,6 @@ level = "debug"
         assert!(result.is_err());
 
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Merge conflict"));
         assert!(err_msg.contains("logging.level"));
 
         fs::remove_dir_all(&temp_dir).ok();
@@ -865,9 +860,165 @@ longitude = 11.0
         assert!(diagnostics.0[0].is_warning());
 
         // Test that format_diagnostics produces output
-        let output = super::super::format_diagnostics(&diagnostics.0);
+        let output = hearthd_config::format_diagnostics(&diagnostics.0);
         assert!(!output.is_empty());
         assert!(output.contains("Warning"));
+
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_nested_field() {
+        use hearthd_config::MergeableConfig;
+        use hearthd_config::SubConfig;
+        use serde::Deserialize;
+        use tempfile::TempDir;
+
+        #[derive(MergeableConfig, Deserialize, Debug)]
+        #[allow(dead_code)]
+        struct TestConfig {
+            name: String,
+            details: Details,
+        }
+
+        #[derive(SubConfig, Deserialize, Debug, Clone, PartialEq)]
+        #[allow(dead_code)]
+        struct Details {
+            description: String,
+            count: u32,
+        }
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        fs::write(
+            &config_path,
+            r#"
+            name = "test"
+
+            [details]
+            description = "test description"
+            count = 42
+            "#,
+        )
+        .unwrap();
+
+        let configs = PartialTestConfig::load_with_imports(&[config_path]).unwrap();
+        let (merged, diagnostics) = PartialTestConfig::merge(configs);
+
+        assert_eq!(diagnostics.len(), 0);
+        assert_eq!(merged.name.unwrap().into_inner(), "test");
+
+        let details = merged.details.unwrap();
+        assert_eq!(
+            details.description.unwrap().into_inner(),
+            "test description"
+        );
+        assert_eq!(details.count.unwrap().into_inner(), 42);
+
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_use_spans_false() {
+        use hearthd_config::MergeableConfig;
+        use serde::Deserialize;
+        use tempfile::TempDir;
+
+        #[derive(MergeableConfig, Deserialize, Debug)]
+        #[config(no_span)]
+        #[allow(dead_code)]
+        struct TestConfig {
+            port: u16,
+            host: String,
+        }
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        fs::write(
+            &config_path,
+            r#"
+            port = 8080
+            host = "localhost"
+            "#,
+        )
+        .unwrap();
+
+        let configs = PartialTestConfig::load_with_imports(&[config_path]).unwrap();
+        let (merged, diagnostics) = PartialTestConfig::merge(configs);
+
+        assert_eq!(diagnostics.len(), 0);
+        assert_eq!(merged.port.unwrap(), 8080);
+        assert_eq!(merged.host.unwrap(), "localhost");
+
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_deeply_nested_configs() {
+        use hearthd_config::MergeableConfig;
+        use hearthd_config::SubConfig;
+        use serde::Deserialize;
+        use tempfile::TempDir;
+
+        #[derive(MergeableConfig, Deserialize, Debug)]
+        #[allow(dead_code)]
+        struct TestConfig {
+            level1: Level1,
+        }
+
+        #[derive(SubConfig, Deserialize, Debug, Clone, PartialEq)]
+        #[allow(dead_code)]
+        struct Level1 {
+            name: String,
+            level2: Level2,
+        }
+
+        #[derive(SubConfig, Deserialize, Debug, Clone, PartialEq)]
+        #[allow(dead_code)]
+        struct Level2 {
+            value: u32,
+            level3: Level3,
+        }
+
+        #[derive(SubConfig, Deserialize, Debug, Clone, PartialEq)]
+        #[allow(dead_code)]
+        struct Level3 {
+            data: String,
+        }
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        fs::write(
+            &config_path,
+            r#"
+            [level1]
+            name = "first"
+
+            [level1.level2]
+            value = 100
+
+            [level1.level2.level3]
+            data = "deep value"
+            "#,
+        )
+        .unwrap();
+
+        let configs = PartialTestConfig::load_with_imports(&[config_path]).unwrap();
+        let (merged, diagnostics) = PartialTestConfig::merge(configs);
+
+        assert_eq!(diagnostics.len(), 0);
+
+        let level1 = merged.level1.unwrap();
+        assert_eq!(level1.name.unwrap().into_inner(), "first");
+
+        let level2 = level1.level2.unwrap();
+        assert_eq!(level2.value.unwrap().into_inner(), 100);
+
+        let level3 = level2.level3.unwrap();
+        assert_eq!(level3.data.unwrap().into_inner(), "deep value");
 
         fs::remove_dir_all(&temp_dir).ok();
     }

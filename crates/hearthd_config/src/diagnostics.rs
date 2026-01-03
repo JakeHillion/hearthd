@@ -134,11 +134,45 @@ impl Diagnostic {
     pub fn is_warning(&self) -> bool {
         matches!(self, Diagnostic::Warning(_))
     }
+
+    /// Prepend a path prefix to the field_path in this diagnostic
+    ///
+    /// This is used when bubbling diagnostics up through nested configs.
+    /// For example, if a nested config reports an error on field "latitude",
+    /// the parent can prepend "locations.home" to get "locations.home.latitude".
+    pub fn prepend_path(self, prefix: &str) -> Self {
+        match self {
+            Diagnostic::Error(error) => Diagnostic::Error(match error {
+                Error::Merge(mut merge_error) => {
+                    merge_error.field_path = if merge_error.field_path.is_empty() {
+                        prefix.to_string()
+                    } else {
+                        format!("{}.{}", prefix, merge_error.field_path)
+                    };
+                    Error::Merge(merge_error)
+                }
+                Error::Validation(mut validation_error) => {
+                    validation_error.field_path = if validation_error.field_path.is_empty() {
+                        prefix.to_string()
+                    } else {
+                        format!("{}.{}", prefix, validation_error.field_path)
+                    };
+                    Error::Validation(validation_error)
+                }
+                Error::Load(load_error) => Error::Load(load_error), // Load errors don't have field paths
+            }),
+            Diagnostic::Warning(warning) => Diagnostic::Warning(warning), // Warnings don't have field paths
+        }
+    }
 }
 
 /// Format all diagnostics for display using Ariadne
 pub fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
-    use ariadne::{Color, Label, Report, ReportKind, Source};
+    use ariadne::Color;
+    use ariadne::Label;
+    use ariadne::Report;
+    use ariadne::ReportKind;
+    use ariadne::Source;
 
     let mut output = Vec::new();
 

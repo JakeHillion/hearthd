@@ -4,14 +4,34 @@ version.workspace = true
 edition = "2021"
 license.workspace = true
 
+[features]
+default = ["integration_mqtt", "integration_ha"]
+integration_mqtt = ["dep:rumqttc"]
+integration_ha = ["dep:libc"]
+
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-toml = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
 clap = { workspace = true }
+hearthd_config = { path = "../hearthd_config" }
+hostname = { workspace = true }
+linkme = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-ariadne = { workspace = true }
-tokio = { workspace = true }
+chumsky = { workspace = true }
+strum = { workspace = true }
+thiserror = { workspace = true }
+
+# Optional integration dependencies
+rumqttc = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }
