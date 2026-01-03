@@ -1,6 +1,8 @@
 pub mod api;
 pub mod automations;
-mod config;
+pub mod config;
+mod engine;
+mod integrations;
 
 #[cfg(doc)]
 pub mod examples;
@@ -10,3 +12,4 @@ pub use config::Diagnostic;
 pub use config::Diagnostics;
 pub use config::LogLevel;
 pub use config::format_diagnostics;
+pub use engine::Engine;
