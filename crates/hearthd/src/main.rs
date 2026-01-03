@@ -1,7 +1,7 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::Parser;
-use hearthd::Config;
 use tokio::signal::unix::SignalKind;
 use tokio::signal::unix::signal;
 use tracing::debug;
@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Load and parse the configuration files
-    let (cfg, diagnostics) = match Config::from_files(&cli.config) {
+    let (cfg, diagnostics) = match hearthd::Config::from_files(&cli.config) {
         Ok(result) => result,
         Err(e) => {
             eprintln!("{}", e);
@@ -73,6 +73,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("hearthd starting");
+    let mut engine = hearthd::Engine::new();
+
+    // Register integrations from config
+    engine.register_integrations_from_config(&cfg)?;
+
+    // Wrap engine in Arc for thread-safe sharing
+    let engine: Arc<hearthd::Engine> = Arc::new(engine);
+    let engine_for_http = engine.clone();
+
+    info!("hearthd started");
 
     // Set up signal handlers
     let mut sigterm = signal(SignalKind::terminate())?;
@@ -85,20 +95,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_listen = cfg.http.listen.clone();
     let http_port = cfg.http.port;
     let http_server = tokio::spawn(async move {
-        if let Err(e) = hearthd::api::serve(http_listen, http_port, shutdown_rx).await {
+        if let Err(e) =
+            hearthd::api::serve(http_listen, http_port, engine_for_http, shutdown_rx).await
+        {
             warn!("HTTP API server error: {}", e);
         }
     });
 
     info!("hearthd ready, waiting for exit signal (SIGINT or SIGTERM)");
 
-    // Wait for shutdown signal
-    tokio::select! {
-        _ = sigterm.recv() => {
-            info!("Received SIGTERM, shutting down gracefully");
+    // Run engine in background
+    let engine_for_run = engine.clone();
+    let mut engine_handle = tokio::spawn(async move {
+        if let Err(e) = engine_for_run.run().await {
+            warn!("Engine error: {}", e);
         }
-        _ = sigint.recv() => {
-            info!("Received SIGINT, shutting down gracefully");
+    });
+
+    // Main event loop - wait for shutdown signal or engine completion
+    #[allow(clippy::never_loop)]
+    loop {
+        tokio::select! {
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, shutting down gracefully");
+                break;
+            }
+            _ = sigint.recv() => {
+                info!("Received SIGINT, shutting down gracefully");
+                break;
+            }
+            result = &mut engine_handle => {
+                match result {
+                    Ok(()) => {
+                        warn!("Engine task completed unexpectedly");
+                    }
+                    Err(e) if e.is_panic() => {
+                        warn!("Engine task panicked: {:?}", e);
+                    }
+                    Err(e) => {
+                        warn!("Engine task failed: {}", e);
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    // Stop the engine if it's still running
+    engine_handle.abort();
+    match engine_handle.await {
+        Ok(()) => {
+            info!("Engine shutdown complete");
+        }
+        Err(e) if e.is_cancelled() => {
+            info!("Engine task cancelled");
+        }
+        Err(e) if e.is_panic() => {
+            warn!("Engine task panicked during shutdown: {:?}", e);
+        }
+        Err(e) => {
+            warn!("Engine task failed during shutdown: {}", e);
         }
     }
 

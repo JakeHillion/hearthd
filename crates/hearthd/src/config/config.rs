@@ -16,7 +16,6 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub locations: LocationsConfig,
     pub http: HttpConfig,
-    #[allow(dead_code)]
     pub integrations: IntegrationsConfig,
     pub automations: AutomationsConfig,
 }
@@ -99,9 +98,10 @@ impl Default for HttpConfig {
     }
 }
 
-#[derive(Debug, Default, TryFromPartial, SubConfig)]
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
 pub struct IntegrationsConfig {
-    // Empty for now - integrations will be added as static fields later
+    #[cfg(feature = "integration_mqtt")]
+    pub mqtt: Option<crate::integrations::mqtt::MqttConfig>,
 }
 
 #[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
