@@ -258,13 +258,6 @@ class IntegrationRunner:
             logging.info("Received shutdown signal")
             self.running = False
 
-        elif msg_type == "http_response":
-            # Route HTTP response to the pending request in ClientSession
-            if self.hass:
-                from homeassistant.helpers.aiohttp_client import async_get_clientsession
-                session = async_get_clientsession(self.hass)
-                session.handle_http_response(response)
-
         elif msg_type == "ack":
             # Acknowledgment, no action needed
             pass
@@ -361,19 +354,13 @@ async def main():
     shim_path = os.path.join(os.path.dirname(__file__), "homeassistant-shim")
     if shim_path not in sys.path:
         sys.path.insert(0, shim_path)
-        print(f"Added shim path {shim_path} to sys.path", file=sys.stderr)
 
     # 2. HA source goes second (for homeassistant.components.*)
     # Convert to absolute path if it's relative
-    print(f"ha_source_path before conversion: '{ha_source_path}'", file=sys.stderr)
     if not os.path.isabs(ha_source_path):
         ha_source_path = os.path.abspath(ha_source_path)
-    print(f"ha_source_path after conversion: '{ha_source_path}'", file=sys.stderr)
-    print(f"ha_source_path in sys.path? {ha_source_path in sys.path}", file=sys.stderr)
     if ha_source_path not in sys.path:
-        print(f"About to append '{ha_source_path}' to sys.path", file=sys.stderr)
         sys.path.append(ha_source_path)
-        print(f"sys.path after append (len={len(sys.path)}): {sys.path}", file=sys.stderr)
 
     # Setup logging
     setup_logging(name)

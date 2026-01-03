@@ -40,17 +40,6 @@ pub enum Message {
         last_updated: String, // ISO 8601 timestamp
     },
 
-    /// Request to make an HTTP call (Rust proxies for security)
-    HttpRequest {
-        request_id: String,
-        method: HttpMethod,
-        url: String,
-        headers: HashMap<String, String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        body: Option<Vec<u8>>,
-        timeout_ms: u64,
-    },
-
     /// Log message from Python
     Log {
         level: LogLevel,
@@ -112,16 +101,6 @@ pub enum LogLevel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum HttpMethod {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Patch,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub identifiers: Vec<Vec<String>>,
     pub name: String,
@@ -155,17 +134,6 @@ pub enum Response {
 
     /// Timer fired, trigger coordinator update
     TriggerUpdate { timer_id: String, name: String },
-
-    /// HTTP request result
-    #[allow(clippy::enum_variant_names)] // Response suffix is appropriate here
-    HttpResponse {
-        request_id: String,
-        status: u16,
-        headers: HashMap<String, String>,
-        body: Vec<u8>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
 
     /// Configuration query result
     #[allow(clippy::enum_variant_names)] // Response suffix is appropriate here
