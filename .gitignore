@@ -2,5 +2,6 @@
 /result
 /.cargo
 /vendor
+!/vendor/ha-core
 *.local.toml
 *.pending-snap

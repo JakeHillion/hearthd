@@ -29,6 +29,14 @@ pub enum Error {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Integration setup failed: {name}: {error}")]
+    SetupFailed {
+        name: String,
+        error: String,
+        error_type: Option<String>,
+        missing_package: Option<String>,
+    },
 }
 
 pub type Result<T> = ::core::result::Result<T, Error>;

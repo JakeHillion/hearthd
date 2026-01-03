@@ -68,6 +68,7 @@ class IntegrationRunner:
         self.name = name
         self.transport = transport
         self.running = True
+        self.hass = None  # Will be set during setup
 
     async def send_ready(self):
         """Send Ready message to indicate we're initialized."""
@@ -83,6 +84,14 @@ class IntegrationRunner:
             # Import the integration module
             module_name = f"homeassistant.components.{domain}"
             logging.info(f"[{name}] Importing {module_name}")
+            logging.debug(f"[{name}] sys.path: {sys.path[:3]}")
+
+            # Check if the module file exists
+            import os.path
+            for path in sys.path:
+                module_path = os.path.join(path, 'homeassistant', 'components', domain, '__init__.py')
+                if os.path.exists(module_path):
+                    logging.debug(f"[{name}] Found {domain} at: {module_path}")
 
             try:
                 integration_module = importlib.import_module(module_name)
@@ -143,12 +152,13 @@ class IntegrationRunner:
             from homeassistant.core import HomeAssistant, ConfigEntry
             from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-            # TODO: Get socket FD from self to pass to HomeAssistant
+            # Create and configure HomeAssistant instance
             hass = HomeAssistant()
             hass._reader = self.transport.reader
             hass._writer = self.transport.writer
             hass._send_message = self.transport.send_message
             hass._recv_message = self.transport.recv_response
+            self.hass = hass  # Store for TriggerUpdate handling
 
             # Create ConfigEntry
             config_entry = ConfigEntry(
@@ -216,16 +226,44 @@ class IntegrationRunner:
             timer_id = response["timer_id"]
             name = response["name"]
             logging.debug(f"[{name}] Timer {timer_id} triggered")
-            # TODO: Trigger coordinator update
-            await self.transport.send_message({
-                "type": "update_complete",
-                "timer_id": timer_id,
-                "success": True
-            })
+
+            # Look up coordinator and trigger refresh
+            if self.hass and timer_id in self.hass._coordinators:
+                coordinator = self.hass._coordinators[timer_id]
+                try:
+                    await coordinator.async_refresh()
+                    await self.transport.send_message({
+                        "type": "update_complete",
+                        "timer_id": timer_id,
+                        "success": True
+                    })
+                except Exception as e:
+                    logging.error(f"[{name}] Coordinator refresh failed: {e}", exc_info=True)
+                    await self.transport.send_message({
+                        "type": "update_complete",
+                        "timer_id": timer_id,
+                        "success": False,
+                        "error": str(e)
+                    })
+            else:
+                logging.warning(f"[{name}] No coordinator found for timer {timer_id}")
+                await self.transport.send_message({
+                    "type": "update_complete",
+                    "timer_id": timer_id,
+                    "success": False,
+                    "error": f"No coordinator found for timer {timer_id}"
+                })
 
         elif msg_type == "shutdown":
             logging.info("Received shutdown signal")
             self.running = False
+
+        elif msg_type == "http_response":
+            # Route HTTP response to the pending request in ClientSession
+            if self.hass:
+                from homeassistant.helpers.aiohttp_client import async_get_clientsession
+                session = async_get_clientsession(self.hass)
+                session.handle_http_response(response)
 
         elif msg_type == "ack":
             # Acknowledgment, no action needed
@@ -244,19 +282,40 @@ class IntegrationRunner:
         # Send Ready message
         await self.send_ready()
 
-        # Message loop
-        try:
-            while self.running:
-                response = await self.transport.recv_response()
-                await self.handle_response(response)
+        # Start background message receiver
+        receiver_task = asyncio.create_task(self._message_receiver())
 
-        except EOFError:
-            logging.info("Socket closed by peer")
+        # Wait for receiver to complete
+        try:
+            await receiver_task
+        except asyncio.CancelledError:
+            logging.info("Receiver task cancelled")
         except Exception as e:
             logging.error(f"Runner error: {e}", exc_info=True)
         finally:
             await self.transport.close()
             logging.info(f"[{self.name}] Integration runner stopped")
+
+    async def _message_receiver(self):
+        """Background task to receive and dispatch messages."""
+        try:
+            while self.running:
+                response = await self.transport.recv_response()
+                # Dispatch message without blocking
+                asyncio.create_task(self._dispatch_message(response))
+
+        except EOFError:
+            logging.info("Socket closed by peer")
+        except Exception as e:
+            logging.error(f"Receiver error: {e}", exc_info=True)
+            raise
+
+    async def _dispatch_message(self, response: Dict[str, Any]):
+        """Dispatch a message to the appropriate handler."""
+        try:
+            await self.handle_response(response)
+        except Exception as e:
+            logging.error(f"Error handling message: {e}", exc_info=True)
 
 
 def setup_logging(name: str):
@@ -305,9 +364,16 @@ async def main():
         print(f"Added shim path {shim_path} to sys.path", file=sys.stderr)
 
     # 2. HA source goes second (for homeassistant.components.*)
+    # Convert to absolute path if it's relative
+    print(f"ha_source_path before conversion: '{ha_source_path}'", file=sys.stderr)
+    if not os.path.isabs(ha_source_path):
+        ha_source_path = os.path.abspath(ha_source_path)
+    print(f"ha_source_path after conversion: '{ha_source_path}'", file=sys.stderr)
+    print(f"ha_source_path in sys.path? {ha_source_path in sys.path}", file=sys.stderr)
     if ha_source_path not in sys.path:
+        print(f"About to append '{ha_source_path}' to sys.path", file=sys.stderr)
         sys.path.append(ha_source_path)
-        print(f"Added HA source {ha_source_path} to sys.path", file=sys.stderr)
+        print(f"sys.path after append (len={len(sys.path)}): {sys.path}", file=sys.stderr)
 
     # Setup logging
     setup_logging(name)

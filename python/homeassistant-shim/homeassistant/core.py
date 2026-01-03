@@ -59,6 +59,24 @@ class ConfigEntries:
             return list(self._entries.values())
         return [e for e in self._entries.values() if e.domain == domain]
 
+    async def async_forward_entry_setups(
+        self,
+        entry: "ConfigEntry",
+        platforms: list[str],
+    ) -> bool:
+        """Forward setup of platforms for a config entry."""
+        from homeassistant.config_entries import async_forward_entry_setups
+        return await async_forward_entry_setups(self.hass, entry, platforms)
+
+    async def async_unload_platforms(
+        self,
+        entry: "ConfigEntry",
+        platforms: list[str],
+    ) -> bool:
+        """Unload platforms for a config entry."""
+        from homeassistant.config_entries import async_unload_platforms
+        return await async_unload_platforms(self.hass, entry, platforms)
+
 
 class ConfigEntry:
     """Config entry stub."""
@@ -98,6 +116,9 @@ class HomeAssistant:
 
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
+
+        # Registry of coordinators by timer_id (for TriggerUpdate handling)
+        self._coordinators: dict[str, Any] = {}
 
     async def async_start(self):
         """Start the Home Assistant instance and connect to Rust."""

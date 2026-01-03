@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import uuid
 from datetime import timedelta
 from typing import Any, Callable, Generic, TypeVar
 
@@ -16,7 +17,19 @@ T = TypeVar("T")
 class UpdateFailed(HomeAssistantError):
     """Update failed exception."""
 
-    pass
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        translation_domain: str | None = None,
+        translation_key: str | None = None,
+        translation_placeholders: dict | None = None,
+    ):
+        """Initialize update failed exception."""
+        super().__init__(message)
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders or {}
 
 
 class DataUpdateCoordinator(Generic[T]):
@@ -44,9 +57,32 @@ class DataUpdateCoordinator(Generic[T]):
         self._listeners: list[Callable] = []
         self._update_task: asyncio.Task | None = None
 
+        # Generate a unique timer ID for this coordinator
+        self._timer_id = f"{name}_{uuid.uuid4().hex[:8]}"
+
     async def async_config_entry_first_refresh(self) -> None:
         """Refresh data for the first time when a config entry is setup."""
+        # First do the initial refresh
         await self.async_refresh()
+
+        # Then register timer with Rust for periodic updates
+        if self.update_interval and hasattr(self.hass, '_send_message'):
+            interval_seconds = int(self.update_interval.total_seconds())
+            _LOGGER.info(
+                "Registering timer %s for %s with interval %ds",
+                self._timer_id, self.name, interval_seconds
+            )
+
+            # Register this coordinator in hass for TriggerUpdate lookup
+            self.hass._coordinators[self._timer_id] = self
+
+            # Send ScheduleUpdate message to Rust
+            await self.hass._send_message({
+                "type": "schedule_update",
+                "timer_id": self._timer_id,
+                "name": self.name,
+                "interval_seconds": interval_seconds,
+            })
 
     async def async_refresh(self) -> None:
         """Refresh data."""
