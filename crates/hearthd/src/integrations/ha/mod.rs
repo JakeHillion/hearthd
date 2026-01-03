@@ -61,8 +61,12 @@ impl engine::Integration for HaIntegration {
         info!("[{}] Setting up Home Assistant integration", self.name);
 
         // Determine paths
-        // For now, use relative paths from the working directory
-        let python_path = PathBuf::from("python3");
+        // Use HA_PYTHON_INTERPRETER if set (should have pymetno installed), otherwise python3
+        let python_path = std::env::var("HA_PYTHON_INTERPRETER")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("python3"));
+
+        info!("[{}] Using Python interpreter: {}", self.name, python_path.display());
 
         // Use vendor/ha-core as the HA source path
         let ha_source_path = PathBuf::from("vendor/ha-core");

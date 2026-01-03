@@ -151,37 +151,74 @@ impl Integration {
     }
 
     async fn handle_awaiting_setup_status(&mut self) -> Result<()> {
-        match self.sandbox.recv().await? {
-            Message::SetupComplete { name, platforms } => {
-                info!(
-                    "[{}] SetupComplete with platforms: {:?}",
-                    name, platforms
-                );
-                self.platforms = platforms;
-                self.state = State::Running;
-                Ok(())
-            }
-            Message::SetupFailed {
-                name,
-                error,
-                error_type,
-                missing_package,
-            } => {
-                error!(
-                    "[{}] SetupFailed: {} (type: {:?}, missing: {:?})",
-                    name, error, error_type, missing_package
-                );
-                Err(Error::SetupFailed {
+        loop {
+            match self.sandbox.recv().await? {
+                Message::SetupComplete { name, platforms } => {
+                    info!(
+                        "[{}] SetupComplete with platforms: {:?}",
+                        name, platforms
+                    );
+                    self.platforms = platforms;
+                    self.state = State::Running;
+                    return Ok(());
+                }
+                Message::SetupFailed {
                     name,
                     error,
                     error_type,
                     missing_package,
-                })
+                } => {
+                    error!(
+                        "[{}] SetupFailed: {} (type: {:?}, missing: {:?})",
+                        name, error, error_type, missing_package
+                    );
+                    return Err(Error::SetupFailed {
+                        name,
+                        error,
+                        error_type,
+                        missing_package,
+                    });
+                }
+                // Handle messages that can occur during setup (e.g., initial data fetch)
+                Message::HttpRequest {
+                    request_id,
+                    method,
+                    url,
+                    headers,
+                    body,
+                    timeout_ms,
+                } => {
+                    // Proxy HTTP request even during setup
+                    debug!(
+                        "[{}] HttpRequest during setup: {:?} {} (timeout={}ms)",
+                        self.config.name, method, url, timeout_ms
+                    );
+
+                    let response = self
+                        .proxy_http_request(method, &url, headers, body, timeout_ms)
+                        .await;
+
+                    self.sandbox.send(response.with_request_id(request_id)).await?;
+                }
+                Message::ScheduleUpdate {
+                    timer_id,
+                    name,
+                    interval_seconds,
+                } => {
+                    // Schedule coordinator updates even during setup
+                    info!(
+                        "[{}] ScheduleUpdate during setup: timer_id={} name={} interval={}s",
+                        self.config.name, timer_id, name, interval_seconds
+                    );
+                    self.schedule_timer(timer_id, name, interval_seconds);
+                }
+                m => {
+                    warn!(
+                        "[{}] Unexpected message during setup (ignoring): {:?}",
+                        self.config.name, m
+                    );
+                }
             }
-            m => Err(Error::InvalidMessage {
-                expected: "SetupComplete or SetupFailed".into(),
-                received: m,
-            }),
         }
     }
 
