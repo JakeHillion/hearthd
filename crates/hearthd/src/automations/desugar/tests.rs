@@ -4,8 +4,7 @@ use super::desugar;
 use crate::automations::lexer::Token;
 use crate::automations::repr::ast::Expr;
 use crate::automations::repr::ast::Spanned;
-use crate::automations::repr::lowered_pretty_print::PrettyPrint as LoweredPrettyPrint;
-use crate::automations::repr::pretty_print::PrettyPrint as AstPrettyPrint;
+use crate::automations::repr::pretty_print::PrettyPrint;
 
 fn parse_expr(input: &str) -> Result<Spanned<Expr>, Vec<Rich<'static, Token>>> {
     let tokens = crate::automations::lexer::lexer()
