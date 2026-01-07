@@ -4,7 +4,7 @@ use chumsky::input::MapExtra;
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
 
-use crate::automations::ast::UnitType;
+use crate::automations::repr::ast::UnitType;
 
 /// A token in the automations language.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

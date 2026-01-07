@@ -5,17 +5,17 @@
 
 use std::rc::Rc;
 
-use super::ast::Arg;
-use super::ast::Expr;
-use super::ast::Stmt;
-use super::ast::StructField;
-use super::ast::{self};
-use super::lowered_ast::LoweredArg;
-use super::lowered_ast::LoweredExpr;
-use super::lowered_ast::LoweredStmt;
-use super::lowered_ast::LoweredStructField;
-use super::lowered_ast::Origin;
-use super::lowered_ast::Spanned;
+use super::repr::ast;
+use super::repr::ast::Arg;
+use super::repr::ast::Expr;
+use super::repr::ast::Stmt;
+use super::repr::ast::StructField;
+use super::repr::lowered::LoweredArg;
+use super::repr::lowered::LoweredExpr;
+use super::repr::lowered::LoweredStmt;
+use super::repr::lowered::LoweredStructField;
+use super::repr::lowered::Origin;
+use super::repr::lowered::Spanned;
 
 #[cfg(test)]
 mod tests;

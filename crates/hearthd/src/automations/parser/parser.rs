@@ -3,8 +3,8 @@
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
 
-use crate::automations::ast::*;
 use crate::automations::lexer::Token;
+use crate::automations::repr::ast::*;
 
 /// Parse a complete automation program (either a single automation or a template).
 pub fn parse(input: &str) -> Result<Spanned<Program>, Vec<Rich<'static, Token>>> {
