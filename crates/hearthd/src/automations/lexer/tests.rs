@@ -2,7 +2,7 @@ use chumsky::Parser;
 
 use super::Token;
 use super::lexer;
-use crate::automations::ast::UnitType;
+use crate::automations::repr::ast::UnitType;
 
 #[test]
 fn test_lex_integers() {
