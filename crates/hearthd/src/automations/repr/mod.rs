@@ -5,8 +5,10 @@
 
 pub mod ast;
 pub mod lowered;
-pub mod lowered_pretty_print;
 pub mod pretty_print;
+
+// Lowered pretty print impls (uses the same PrettyPrint trait)
+mod lowered_pretty_print;
 
 // Re-export AST types at the repr level
 pub use ast::*;
@@ -14,6 +16,5 @@ pub use ast::*;
 pub use lowered::{
     LoweredArg, LoweredExpr, LoweredStmt, LoweredStructField, Origin, Spanned as LoweredSpanned,
 };
-// Re-export pretty printing traits
-pub use lowered_pretty_print::PrettyPrint as LoweredPrettyPrint;
+// Re-export pretty printing
 pub use pretty_print::PrettyPrint;

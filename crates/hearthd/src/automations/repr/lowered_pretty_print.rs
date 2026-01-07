@@ -3,28 +3,8 @@
 //! Used by desugar tests to produce unambiguous snapshot output.
 
 use super::lowered::*;
-
-/// Trait for verbose, multi-line AST pretty-printing.
-pub trait PrettyPrint {
-    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
-
-    fn to_pretty_string(&self) -> String {
-        struct Wrapper<'a, T: PrettyPrint + ?Sized>(&'a T);
-        impl<T: PrettyPrint + ?Sized> std::fmt::Display for Wrapper<'_, T> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                self.0.pretty_print(0, f)
-            }
-        }
-        Wrapper(self).to_string()
-    }
-}
-
-fn write_indent(indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    for _ in 0..indent {
-        write!(f, "  ")?;
-    }
-    Ok(())
-}
+use super::pretty_print::PrettyPrint;
+use super::pretty_print::write_indent;
 
 impl PrettyPrint for Origin {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
