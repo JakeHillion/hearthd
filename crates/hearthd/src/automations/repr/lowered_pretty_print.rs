@@ -2,7 +2,7 @@
 //!
 //! Used by desugar tests to produce unambiguous snapshot output.
 
-use super::lowered_ast::*;
+use super::lowered::*;
 
 /// Trait for verbose, multi-line AST pretty-printing.
 pub trait PrettyPrint {
