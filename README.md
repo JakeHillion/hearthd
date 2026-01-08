@@ -1,4 +1,19 @@
-# hearthd
+<p align="center">
+  <img src="assets/logo.png" alt="hearthd Logo" width="200"/>
+</p>
+
+<h1 align="center">hearthd</h1>
+
+<p align="center">
+  <strong>Home Automation Made Declarative</strong>
+</p>
+
+<p align="center">
+  <a href="https://deepwiki.com/JakeHillion/hearthd"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
+
+---
 
 ## Installation
 

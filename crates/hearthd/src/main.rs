@@ -12,7 +12,7 @@ use tracing_subscriber::prelude::*;
 
 #[derive(Parser)]
 #[command(name = "hearthd")]
-#[command(about = "Home automation daemon for location-based services", long_about = None)]
+#[command(about = "Home automation made declarative", long_about = None)]
 struct Cli {
     /// Path to configuration file(s). Can be specified multiple times to merge configs.
     /// Example: --config base.toml --config secrets.toml
