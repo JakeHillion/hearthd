@@ -59,7 +59,7 @@ let
 in
 {
   options.services.hearthd = {
-    enable = mkEnableOption "hearthd, a home automation daemon for location-based services";
+    enable = mkEnableOption "hearthd, home automation made declarative";
 
     package = mkOption {
       type = types.package;
