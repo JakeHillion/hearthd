@@ -1,0 +1,8 @@
+# Core dependencies for Home Assistant shim
+aiohttp==3.11.10
+PyMetno==0.13.0
+voluptuous==0.15.2
+
+# Additional common HA dependencies
+python-dateutil==2.9.0
+pytz==2024.2
