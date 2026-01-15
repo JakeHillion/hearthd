@@ -151,6 +151,10 @@ impl Entity for Light {
     fn state_json(&self) -> serde_json::Value {
         serde_json::to_value(&self.state).unwrap()
     }
+
+    fn platform(&self) -> &'static str {
+        "light"
+    }
 }
 
 #[cfg(test)]

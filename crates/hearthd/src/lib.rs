@@ -4,6 +4,9 @@ pub mod config;
 mod engine;
 mod integrations;
 
+#[cfg(feature = "integration_ha")]
+pub mod ha;
+
 #[cfg(doc)]
 pub mod examples;
 

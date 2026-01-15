@@ -5,8 +5,9 @@ edition = "2021"
 license.workspace = true
 
 [features]
-default = ["integration_mqtt"]
+default = ["integration_mqtt", "integration_ha"]
 integration_mqtt = ["dep:rumqttc"]
+integration_ha = ["dep:libc", "dep:reqwest"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -26,9 +27,12 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chumsky = { workspace = true }
 strum = { workspace = true }
+thiserror = { workspace = true }
 
-# MQTT integration dependencies (optional, enabled by feature)
+# Optional integration dependencies
 rumqttc = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }

@@ -4,6 +4,16 @@
 //! - `FromIntegrationMessage`: Events from integrations to the engine
 //! - `ToIntegrationMessage`: Commands from the engine to integrations
 
+/// Device info forwarded from HA integrations.
+#[derive(Debug, Clone)]
+pub struct HaDeviceInfo {
+    pub identifiers: Vec<Vec<String>>,
+    pub name: String,
+    pub manufacturer: Option<String>,
+    pub model: Option<String>,
+    pub sw_version: Option<String>,
+}
+
 /// Messages FROM integrations TO the engine (events/state updates)
 pub enum FromIntegrationMessage {
     /// An entity was discovered and registered
@@ -21,6 +31,25 @@ pub enum FromIntegrationMessage {
         entity_id: String,
         on: bool,
         brightness: Option<u8>,
+    },
+
+    /// HA entity registered with metadata
+    HaEntityRegistered {
+        entity_id: String,
+        name: String,
+        platform: String,
+        device_class: Option<String>,
+        capabilities: Option<serde_json::Value>,
+        device_info: Option<HaDeviceInfo>,
+        integration_name: String,
+    },
+
+    /// HA state update with generic JSON attributes
+    HaStateUpdated {
+        entity_id: String,
+        state: String,
+        attributes: serde_json::Value,
+        last_updated: String,
     },
 }
 
@@ -50,6 +79,30 @@ impl std::fmt::Debug for FromIntegrationMessage {
                 .field("entity_id", entity_id)
                 .field("on", on)
                 .field("brightness", brightness)
+                .finish(),
+            FromIntegrationMessage::HaEntityRegistered {
+                entity_id,
+                name,
+                platform,
+                integration_name,
+                ..
+            } => f
+                .debug_struct("HaEntityRegistered")
+                .field("entity_id", entity_id)
+                .field("name", name)
+                .field("platform", platform)
+                .field("integration_name", integration_name)
+                .finish(),
+            FromIntegrationMessage::HaStateUpdated {
+                entity_id,
+                state,
+                last_updated,
+                ..
+            } => f
+                .debug_struct("HaStateUpdated")
+                .field("entity_id", entity_id)
+                .field("state", state)
+                .field("last_updated", last_updated)
                 .finish(),
         }
     }

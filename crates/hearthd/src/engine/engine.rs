@@ -261,6 +261,32 @@ impl Engine {
                 // Engine just maintains the journal of state changes
                 // TODO: Trigger automations based on state change
             }
+            FromIntegrationMessage::HaEntityRegistered {
+                entity_id,
+                name,
+                platform,
+                integration_name,
+                ..
+            } => {
+                info!(
+                    "HA entity registered: {} ({}) platform={} from={}",
+                    entity_id, name, platform, integration_name
+                );
+            }
+            FromIntegrationMessage::HaStateUpdated {
+                entity_id,
+                state,
+                attributes,
+                ..
+            } => {
+                info!("HA state update: {} = {}", entity_id, state);
+
+                let entities = self.entities.lock().await;
+                if let Some(entity_arc) = entities.get(&entity_id) {
+                    let mut entity = entity_arc.lock().await;
+                    entity.update_from_ha_state(&state, &attributes);
+                }
+            }
         }
         Ok(())
     }

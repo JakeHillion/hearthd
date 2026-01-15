@@ -124,6 +124,7 @@
               rust-analyzer
               cargo-insta
               fmt-toolchain
+              python313
             ];
 
             HA_PYTHON_INTERPRETER = "${haPythonEnv}/bin/python";

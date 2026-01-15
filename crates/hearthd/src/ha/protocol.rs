@@ -1,0 +1,150 @@
+//! Protocol definitions for Home Assistant integration communication.
+//!
+//! Defines message types exchanged between Rust and Python over Unix sockets.
+//!
+//! Design principles:
+//! - Rust-heavy: Most logic lives in Rust, Python is a thin wrapper
+//! - Async lifecycle: Rust manages integration lifecycle
+//! - State flows to Rust: Python sends state updates, Rust persists
+//! - JSON over Unix socket: Newline-delimited JSON messages
+//! - Request-response: Some operations need correlation via IDs
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// Messages sent from Python to Rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Message {
+    /// Python sandbox initialized and ready
+    Ready,
+
+    /// Register a new entity
+    EntityRegister {
+        name: String,
+        entity_id: String,
+        platform: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        device_class: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        capabilities: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        device_info: Option<DeviceInfo>,
+    },
+
+    /// Update entity state
+    StateUpdate {
+        entity_id: String,
+        state: String,
+        attributes: serde_json::Value,
+        last_updated: String, // ISO 8601 timestamp
+    },
+
+    /// Log message from Python
+    Log {
+        level: LogLevel,
+        logger: String,
+        message: String,
+    },
+
+    /// Schedule a periodic update timer
+    ScheduleUpdate {
+        timer_id: String,
+        name: String,
+        interval_seconds: u64,
+    },
+
+    /// Cancel a scheduled timer
+    CancelTimer { timer_id: String },
+
+    /// Request configuration values
+    GetConfig {
+        request_id: String,
+        keys: Vec<String>,
+    },
+
+    /// Integration setup completed successfully
+    SetupComplete {
+        name: String,
+        platforms: Vec<String>,
+    },
+
+    /// Integration setup failed
+    SetupFailed {
+        name: String,
+        error: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        missing_package: Option<String>,
+    },
+
+    /// Integration unload completed
+    UnloadComplete { name: String },
+
+    /// Coordinator update completed
+    UpdateComplete {
+        timer_id: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub identifiers: Vec<Vec<String>>,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sw_version: Option<String>,
+}
+
+/// Responses sent from Rust to Python
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Response {
+    /// Acknowledge message received (optional)
+    Ack {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+    },
+
+    /// Request to set up an integration
+    SetupIntegration {
+        domain: String,
+        name: String,
+        config: serde_json::Value,
+    },
+
+    /// Request to unload an integration
+    UnloadIntegration { name: String },
+
+    /// Timer fired, trigger coordinator update
+    TriggerUpdate { timer_id: String, name: String },
+
+    /// Configuration query result
+    #[allow(clippy::enum_variant_names)] // Response suffix is appropriate here
+    ConfigResponse {
+        request_id: String,
+        config: HashMap<String, serde_json::Value>,
+    },
+
+    /// Graceful shutdown signal
+    Shutdown,
+
+    /// Error response
+    Error { message: String },
+}

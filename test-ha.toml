@@ -1,0 +1,18 @@
+[logging]
+level = "debug"
+
+[logging.overrides]
+"hearthd::ha" = "trace"
+"hearthd::integrations::ha" = "trace"
+
+[http]
+listen = "127.0.0.1"
+port = 8565
+
+[locations.oslo]
+latitude = 59.9139
+longitude = 10.7522
+elevation_m = 23.0
+
+[integrations.ha]
+enabled = true
