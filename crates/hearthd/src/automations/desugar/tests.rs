@@ -1,6 +1,7 @@
 use chumsky::prelude::*;
 
 use super::desugar;
+use super::desugar_program;
 use crate::automations::lexer::Token;
 use crate::automations::repr::ast::Expr;
 use crate::automations::repr::ast::Spanned;
@@ -526,5 +527,166 @@ fn test_desugar_list_comp_with_field_access() {
       Result:
         Origin: ListComp @ 0..29
         Ident: __result0
+    ");
+}
+
+// =============================================================================
+// Program-level Desugaring Tests
+// =============================================================================
+
+fn parse_and_desugar_program(input: &str) -> String {
+    let program = crate::automations::parse(input).expect("parsing should succeed");
+    let lowered = desugar_program(program);
+    lowered.to_pretty_string()
+}
+
+#[test]
+fn test_desugar_program_observer_with_filter_and_body() {
+    let lowered = parse_and_desugar_program("observer { x } /x > 0/ { x + 1 }");
+    insta::assert_snapshot!(lowered, @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: x
+      Filter:
+        Origin: Direct @ 16..21
+        BinOp: >
+          Origin: Direct @ 16..17
+          Ident: x
+          Origin: Direct @ 20..21
+          Int: 0
+      Body:
+        Origin: Direct @ 25..30
+        ExprStmt:
+          Origin: Direct @ 25..30
+          BinOp: +
+            Origin: Direct @ 25..26
+            Ident: x
+            Origin: Direct @ 29..30
+            Int: 1
+    ");
+}
+
+#[test]
+fn test_desugar_program_simple_mutator() {
+    let lowered = parse_and_desugar_program("mutator { x } /true/ { x }");
+    insta::assert_snapshot!(lowered, @r"
+    Automation: mutator
+      Pattern:
+        PatternStruct:
+          FieldPattern: x
+      Filter:
+        Origin: Direct @ 15..19
+        Bool: true
+      Body:
+        Origin: Direct @ 23..24
+        ExprStmt:
+          Origin: Direct @ 23..24
+          Ident: x
+    ");
+}
+
+#[test]
+fn test_desugar_program_observer_with_list_comp_in_body() {
+    let lowered = parse_and_desugar_program("observer { items } /true/ { [x * 2 for x in items] }");
+    insta::assert_snapshot!(lowered, @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+          FieldPattern: items
+      Filter:
+        Origin: Direct @ 20..24
+        Bool: true
+      Body:
+        Origin: ListComp @ 28..50
+        ExprStmt:
+          Origin: ListComp @ 28..50
+          Block:
+            Stmts:
+              Origin: ListComp @ 28..50
+              LetMut: __result0
+                Origin: ListComp @ 28..50
+                MutableList
+              Origin: ListComp @ 28..50
+              For:
+                Var: x
+                Iter:
+                  Origin: Direct @ 44..49
+                  Ident: items
+                Body:
+                  Origin: ListComp @ 28..50
+                  Push: __result0
+                    Origin: Direct @ 29..34
+                    BinOp: *
+                      Origin: Direct @ 29..30
+                      Ident: x
+                      Origin: Direct @ 33..34
+                      Int: 2
+            Result:
+              Origin: ListComp @ 28..50
+              Ident: __result0
+    ");
+}
+
+#[test]
+fn test_desugar_program_automation_no_filter() {
+    let lowered = parse_and_desugar_program("observer {} { 42 }");
+    insta::assert_snapshot!(lowered, @r"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Body:
+        Origin: Direct @ 14..16
+        ExprStmt:
+          Origin: Direct @ 14..16
+          Int: 42
+    ");
+}
+
+#[test]
+fn test_desugar_program_template_with_multiple_automations() {
+    let src = r#"{ room: String }: [
+        observer { x } /x > 0/ { x },
+        mutator { y } /true/ { y + 1 }
+    ]"#;
+    let lowered = parse_and_desugar_program(src);
+    insta::assert_snapshot!(lowered, @r"
+    Template:
+      Params:
+        Param: room
+          Type::Named: String
+      Automations:
+        Automation: observer
+          Pattern:
+            PatternStruct:
+              FieldPattern: x
+          Filter:
+            Origin: Direct @ 44..49
+            BinOp: >
+              Origin: Direct @ 44..45
+              Ident: x
+              Origin: Direct @ 48..49
+              Int: 0
+          Body:
+            Origin: Direct @ 53..54
+            ExprStmt:
+              Origin: Direct @ 53..54
+              Ident: x
+        Automation: mutator
+          Pattern:
+            PatternStruct:
+              FieldPattern: y
+          Filter:
+            Origin: Direct @ 81..85
+            Bool: true
+          Body:
+            Origin: Direct @ 89..94
+            ExprStmt:
+              Origin: Direct @ 89..94
+              BinOp: +
+                Origin: Direct @ 89..90
+                Ident: y
+                Origin: Direct @ 93..94
+                Int: 1
     ");
 }

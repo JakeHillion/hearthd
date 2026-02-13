@@ -8,5 +8,6 @@ pub mod parser;
 pub mod repr;
 
 pub use desugar::desugar;
+pub use desugar::desugar_program;
 pub use parser::parse;
 pub use repr::*;

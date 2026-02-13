@@ -192,6 +192,57 @@ impl PrettyPrint for LoweredArg {
     }
 }
 
+impl PrettyPrint for LoweredAutomation {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_indent(indent, f)?;
+        writeln!(f, "Automation: {}", self.kind)?;
+        write_indent(indent + 1, f)?;
+        writeln!(f, "Pattern:")?;
+        self.pattern.pretty_print(indent + 2, f)?;
+        if let Some(filter) = &self.filter {
+            write_indent(indent + 1, f)?;
+            writeln!(f, "Filter:")?;
+            filter.pretty_print(indent + 2, f)?;
+        }
+        write_indent(indent + 1, f)?;
+        if self.body.is_empty() {
+            writeln!(f, "Body: (empty)")
+        } else {
+            writeln!(f, "Body:")?;
+            for stmt in &self.body {
+                stmt.pretty_print(indent + 2, f)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+impl PrettyPrint for LoweredProgram {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoweredProgram::Automation(auto) => auto.pretty_print(indent, f),
+            LoweredProgram::Template {
+                params,
+                automations,
+            } => {
+                write_indent(indent, f)?;
+                writeln!(f, "Template:")?;
+                write_indent(indent + 1, f)?;
+                writeln!(f, "Params:")?;
+                for param in params {
+                    param.pretty_print(indent + 2, f)?;
+                }
+                write_indent(indent + 1, f)?;
+                writeln!(f, "Automations:")?;
+                for auto in automations {
+                    auto.pretty_print(indent + 2, f)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 impl PrettyPrint for LoweredStructField {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write_indent(indent, f)?;
