@@ -178,6 +178,25 @@ pub enum LoweredStmt {
     },
 }
 
+/// A lowered automation definition.
+#[derive(Debug, Clone)]
+pub struct LoweredAutomation {
+    pub kind: ast::AutomationKind,
+    pub pattern: ast::Spanned<ast::Pattern>,
+    pub filter: Option<Spanned<LoweredExpr>>,
+    pub body: Vec<Spanned<LoweredStmt>>,
+}
+
+/// A lowered top-level program.
+#[derive(Debug, Clone)]
+pub enum LoweredProgram {
+    Automation(LoweredAutomation),
+    Template {
+        params: Vec<ast::Spanned<ast::TemplateParam>>,
+        automations: Vec<LoweredAutomation>,
+    },
+}
+
 /// Lowered function argument.
 #[derive(Debug, Clone)]
 pub enum LoweredArg {

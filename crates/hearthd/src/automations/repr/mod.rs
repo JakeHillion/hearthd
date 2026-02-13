@@ -14,7 +14,8 @@ mod lowered_pretty_print;
 pub use ast::*;
 // Re-export lowered AST types with a Lowered prefix already in their names
 pub use lowered::{
-    LoweredArg, LoweredExpr, LoweredStmt, LoweredStructField, Origin, Spanned as LoweredSpanned,
+    LoweredArg, LoweredAutomation, LoweredExpr, LoweredProgram, LoweredStmt, LoweredStructField,
+    Origin, Spanned as LoweredSpanned,
 };
 // Re-export pretty printing
 pub use pretty_print::PrettyPrint;
