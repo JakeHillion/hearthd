@@ -6,9 +6,11 @@
 pub mod ast;
 pub mod lowered;
 pub mod pretty_print;
+pub mod typed;
 
-// Lowered pretty print impls (uses the same PrettyPrint trait)
+// Pretty print impls (use the same PrettyPrint trait)
 mod lowered_pretty_print;
+mod typed_pretty_print;
 
 // Re-export AST types at the repr level
 pub use ast::*;
@@ -19,3 +21,8 @@ pub use lowered::{
 };
 // Re-export pretty printing
 pub use pretty_print::PrettyPrint;
+// Re-export typed AST types
+pub use typed::{
+    CheckResult, EntityConstraint, Ty, TypedArg, TypedAutomation, TypedExpr, TypedExprKind,
+    TypedProgram, TypedStmt, TypedStructField,
+};
