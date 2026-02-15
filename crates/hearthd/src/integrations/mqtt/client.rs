@@ -126,6 +126,9 @@ impl RumqttcClient {
         // Set keep-alive interval
         mqtt_options.set_keep_alive(Duration::from_secs(30));
 
+        // Allow large MQTT packets (2 MiB) for discovery payloads
+        mqtt_options.set_max_packet_size(2 * 1024 * 1024, 2 * 1024 * 1024);
+
         // Set credentials if provided
         if let (Some(username), Some(password)) = (&config.username, &config.password) {
             mqtt_options.set_credentials(username, password);
