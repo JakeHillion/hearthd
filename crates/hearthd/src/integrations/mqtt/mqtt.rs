@@ -11,18 +11,17 @@ use tracing::warn;
 
 use super::MqttConfig;
 use super::binary_sensor::BinarySensor;
-use super::binary_sensor::BinarySensorState;
 use super::client::MqttClient;
 use super::client::MqttMessage;
 use super::discovery::DiscoveryMessage;
 use super::discovery::parse_discovery_topic;
 use super::light::Light;
-use super::light::LightState;
-use crate::engine::Entity;
 use crate::engine::FromIntegrationMessage;
 use crate::engine::FromIntegrationSender;
 use crate::engine::Integration;
 use crate::engine::ToIntegrationMessage;
+use crate::engine::state::BinarySensorState;
+use crate::engine::state::LightState;
 
 /// Type alias for the shared lights map
 type LightsMap = Arc<Mutex<HashMap<String, Arc<Mutex<Light>>>>>;
@@ -191,11 +190,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                 ))
             })?;
 
-        {
-            let mut client_guard = client.lock().await;
-            client_guard.subscribe(&light.state_topic).await?;
-        }
-
+        let state_topic = light.state_topic.clone();
         info!("Discovered light entity: {} ({})", light.name, entity_id);
 
         let light_arc = Arc::new(Mutex::new(light));
@@ -205,7 +200,14 @@ impl<C: MqttClient> MqttIntegration<C> {
             lights_guard.insert(entity_id.clone(), light_arc.clone());
         }
 
-        Self::register_entity_static(&entity_id, light_arc, to_engine).await;
+        // Subscribe after map insert so the retained state message finds the
+        // entity already in the map, regardless of concurrency model.
+        {
+            let mut client_guard = client.lock().await;
+            client_guard.subscribe(&state_topic).await?;
+        }
+
+        Self::register_entity_static(&entity_id, to_engine).await;
 
         Ok(())
     }
@@ -241,11 +243,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     ))
                 })?;
 
-        {
-            let mut client_guard = client.lock().await;
-            client_guard.subscribe(&sensor.state_topic).await?;
-        }
-
+        let state_topic = sensor.state_topic.clone();
         info!(
             "Discovered binary sensor entity: {} ({})",
             sensor.name, entity_id
@@ -258,7 +256,14 @@ impl<C: MqttClient> MqttIntegration<C> {
             sensors_guard.insert(entity_id.clone(), sensor_arc.clone());
         }
 
-        Self::register_entity_static(&entity_id, sensor_arc, to_engine).await;
+        // Subscribe after map insert so the retained state message finds the
+        // entity already in the map, regardless of concurrency model.
+        {
+            let mut client_guard = client.lock().await;
+            client_guard.subscribe(&state_topic).await?;
+        }
+
+        Self::register_entity_static(&entity_id, to_engine).await;
 
         Ok(())
     }
@@ -329,14 +334,9 @@ impl<C: MqttClient> MqttIntegration<C> {
     }
 
     /// Register an entity with the engine (static version)
-    async fn register_entity_static(
-        entity_id: &str,
-        entity: Arc<Mutex<dyn Entity>>,
-        to_engine: &FromIntegrationSender,
-    ) {
+    async fn register_entity_static(entity_id: &str, to_engine: &FromIntegrationSender) {
         let msg = FromIntegrationMessage::EntityDiscovered {
             entity_id: entity_id.to_string(),
-            entity,
             integration_name: "mqtt".to_string(),
         };
         if let Err(e) = to_engine.send(msg).await {

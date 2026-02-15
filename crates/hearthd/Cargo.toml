@@ -10,6 +10,7 @@ integration_mqtt = ["dep:rumqttc"]
 
 [dependencies]
 anyhow = { workspace = true }
+arc-swap = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true }

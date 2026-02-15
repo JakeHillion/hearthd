@@ -9,7 +9,6 @@ pub enum FromIntegrationMessage {
     /// An entity was discovered and registered
     EntityDiscovered {
         entity_id: String,
-        entity: std::sync::Arc<tokio::sync::Mutex<dyn super::Entity>>,
         integration_name: String,
     },
 
@@ -33,12 +32,10 @@ impl std::fmt::Debug for FromIntegrationMessage {
             FromIntegrationMessage::EntityDiscovered {
                 entity_id,
                 integration_name,
-                ..
             } => f
                 .debug_struct("EntityDiscovered")
                 .field("entity_id", entity_id)
                 .field("integration_name", integration_name)
-                .field("entity", &"<entity>")
                 .finish(),
             FromIntegrationMessage::EntityRemoved { entity_id } => f
                 .debug_struct("EntityRemoved")

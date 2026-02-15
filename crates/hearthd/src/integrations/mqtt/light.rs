@@ -1,25 +1,8 @@
 use std::error::Error;
 
-use serde::Deserialize;
-use serde::Serialize;
-
-use crate::engine::Entity;
+use crate::engine::state::LightState;
 use crate::integrations::mqtt::discovery::DeviceInfo;
 use crate::integrations::mqtt::discovery::DiscoveryMessage;
-
-/// State of a light entity
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct LightState {
-    /// Whether the light is on or off
-    pub on: bool,
-
-    /// Brightness level (0-255), if supported
-    pub brightness: Option<u8>,
-    // MVP: Keeping it simple for now. Future additions:
-    // pub color_temp: Option<u16>,
-    // pub rgb: Option<(u8, u8, u8)>,
-    // pub xy: Option<(f32, f32)>,
-}
 
 /// Light entity
 #[derive(Debug, Clone)]
@@ -143,13 +126,6 @@ impl Light {
         }
 
         Ok(serde_json::to_vec(&payload)?)
-    }
-}
-
-// Implement Entity trait for Light
-impl Entity for Light {
-    fn state_json(&self) -> serde_json::Value {
-        serde_json::to_value(&self.state).unwrap()
     }
 }
 

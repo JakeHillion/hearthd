@@ -82,45 +82,14 @@ async fn info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     )
 }
 
-/// Handler for GET /v1/dump_state
+/// Handler for GET /v1/state
 #[tracing::instrument(skip(state))]
-async fn dump_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    tracing::debug!("Handling /v1/dump_state request");
+async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    tracing::debug!("Handling /v1/state request");
 
-    let entities = state.engine.get_all_entities_json().await;
+    let snapshot = state.engine.state_snapshot();
 
-    (StatusCode::OK, Json(entities))
-}
-
-/// Handler for GET /v1/entities
-#[tracing::instrument(skip(state))]
-async fn list_entities(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    tracing::debug!("Handling /v1/entities request");
-
-    let entities = state.engine.get_all_entities_json().await;
-
-    (StatusCode::OK, Json(entities))
-}
-
-/// Handler for GET /v1/entities/:id
-#[tracing::instrument(skip(state))]
-async fn get_entity(
-    State(state): State<Arc<AppState>>,
-    Path(entity_id): Path<String>,
-) -> impl IntoResponse {
-    tracing::debug!("Handling /v1/entities/{} request", entity_id);
-
-    match state.engine.get_entity_json(&entity_id).await {
-        Some(entity) => (StatusCode::OK, Json(entity)).into_response(),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "Entity not found",
-                "entity_id": entity_id
-            })),
-        )
-            .into_response(),
-    }
+    (StatusCode::OK, Json(snapshot))
 }
 
 /// Handler for POST /v1/entities/:id/command
@@ -169,9 +138,7 @@ fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/v1/ping", get(ping))
         .route("/v1/info", get(info))
-        .route("/v1/dump_state", get(dump_state))
-        .route("/v1/entities", get(list_entities))
-        .route("/v1/entities/:id", get(get_entity))
+        .route("/v1/state", get(get_state))
         .route("/v1/entities/:id/command", post(send_entity_command))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
