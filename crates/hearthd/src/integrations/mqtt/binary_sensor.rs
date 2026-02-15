@@ -4,7 +4,7 @@ use std::fmt;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::engine::Entity;
+use crate::engine::state::BinarySensorState;
 use crate::integrations::mqtt::discovery::DeviceInfo;
 use crate::integrations::mqtt::discovery::DiscoveryMessage;
 
@@ -91,14 +91,6 @@ impl From<String> for BinarySensorDeviceClass {
             _ => Self::Unknown(s),
         }
     }
-}
-
-/// State of a binary sensor entity
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct BinarySensorState {
-    /// Whether the sensor is active (meaning depends on device class:
-    /// motion detected, door open, tamper triggered, etc.)
-    pub on: bool,
 }
 
 /// Binary sensor entity (e.g., motion/occupancy sensor)
@@ -205,12 +197,6 @@ impl BinarySensor {
         }
 
         Ok(())
-    }
-}
-
-impl Entity for BinarySensor {
-    fn state_json(&self) -> serde_json::Value {
-        serde_json::to_value(&self.state).unwrap()
     }
 }
 
@@ -391,20 +377,9 @@ mod tests {
     }
 
     #[test]
-    fn test_state_json() {
+    fn test_state_serialize() {
         let state = BinarySensorState { on: true };
-        let sensor = BinarySensor {
-            id: "binary_sensor.test".to_string(),
-            name: "Test".to_string(),
-            unique_id: "test".to_string(),
-            device_class: Some(BinarySensorDeviceClass::Motion),
-            state,
-            device_info: None,
-            state_topic: "test".to_string(),
-            value_template: None,
-        };
-
-        let json = sensor.state_json();
+        let json = serde_json::to_value(&state).unwrap();
         assert_eq!(json["on"], true);
     }
 }

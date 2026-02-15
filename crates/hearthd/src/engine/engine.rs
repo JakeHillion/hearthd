@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::Arc;
 
-use serde_json::Value as JsonValue;
+use arc_swap::ArcSwap;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -9,13 +10,16 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-use super::entity::Entity;
+use super::event::Event;
 use super::integration::FromIntegrationReceiver;
 use super::integration::FromIntegrationSender;
 use super::integration::Integration;
 use super::integration::ToIntegrationSender;
 use super::message::FromIntegrationMessage;
 use super::message::ToIntegrationMessage;
+use super::state::BinarySensorState;
+use super::state::LightState;
+use super::state::State;
 use crate::engine::IntegrationContext;
 
 /// hearthd engine
@@ -23,8 +27,8 @@ use crate::engine::IntegrationContext;
 /// This structure handles the flow of events, applying automations to them, sending them to the
 /// correct integration, and maintaining a view of the world with State.
 pub struct Engine {
-    /// Registry of all known entities (shared with integrations via `Arc<Mutex>`)
-    entities: Mutex<HashMap<String, std::sync::Arc<Mutex<dyn Entity>>>>,
+    /// Centralized state snapshot (readers load the Arc, writer stores a new one)
+    state: ArcSwap<State>,
 
     /// Map of entity_id -> integration name for routing messages
     entity_integration_map: std::sync::Mutex<HashMap<String, String>>,
@@ -51,7 +55,7 @@ impl Engine {
     pub fn new() -> Self {
         let (message_tx, message_rx) = mpsc::channel(FROM_INTEGRATION_CHANNEL_SIZE);
         Self {
-            entities: Mutex::new(HashMap::new()),
+            state: ArcSwap::new(Arc::default()),
             entity_integration_map: std::sync::Mutex::new(HashMap::new()),
             integration_channels: HashMap::new(),
             message_rx: Mutex::new(message_rx),
@@ -176,31 +180,11 @@ impl Engine {
         Ok(())
     }
 
-    /// Get all entities as a JSON map
-    pub async fn get_all_entities_json(&self) -> JsonValue {
-        let entities = self.entities.lock().await;
-        let mut entities_map = serde_json::Map::new();
-        for (entity_id, entity_arc) in entities.iter() {
-            let entity = entity_arc.lock().await;
-            entities_map.insert(entity_id.clone(), entity.state_json());
-        }
-        JsonValue::Object(entities_map)
-    }
-
-    /// Get a specific entity's state as JSON
-    pub async fn get_entity_json(&self, entity_id: &str) -> Option<JsonValue> {
-        let entities = self.entities.lock().await;
-        if let Some(entity_arc) = entities.get(entity_id) {
-            let entity = entity_arc.lock().await;
-            Some(entity.state_json())
-        } else {
-            None
-        }
-    }
-
-    /// Get count of entities
-    pub async fn entity_count(&self) -> usize {
-        self.entities.lock().await.len()
+    /// Get a snapshot of the current engine state.
+    ///
+    /// Clones the `Arc` (atomic refcount bump), essentially free.
+    pub fn state_snapshot(&self) -> Arc<State> {
+        self.state.load_full()
     }
 
     /// Send a light command to control a light entity
@@ -223,25 +207,28 @@ impl Engine {
         match msg {
             FromIntegrationMessage::EntityDiscovered {
                 entity_id,
-                entity,
                 integration_name,
             } => {
                 info!(
                     "Entity discovered: {} (from {})",
                     entity_id, integration_name
                 );
-                let mut entities = self.entities.lock().await;
-                entities.insert(entity_id.clone(), entity);
 
-                // Record which integration owns this entity for routing
+                // Record which integration owns this entity for command routing.
+                // State is not populated until the first state-change message arrives.
                 if let Ok(mut map) = self.entity_integration_map.lock() {
                     map.insert(entity_id, integration_name);
                 }
             }
             FromIntegrationMessage::EntityRemoved { entity_id } => {
                 info!("Entity removed: {}", entity_id);
-                let mut entities = self.entities.lock().await;
-                entities.remove(&entity_id);
+
+                {
+                    let mut state = State::clone(&self.state.load());
+                    state.lights.remove(&entity_id);
+                    state.binary_sensors.remove(&entity_id);
+                    self.state.store(Arc::new(state));
+                }
 
                 // Remove from routing map
                 if let Ok(mut map) = self.entity_integration_map.lock() {
@@ -253,17 +240,40 @@ impl Engine {
                 on,
                 brightness,
             } => {
+                let light_state = LightState { on, brightness };
                 info!(
                     "Light state changed: {} -> on={}, brightness={:?}",
                     entity_id, on, brightness
                 );
-                // Entity state is already updated by the integration
-                // Engine just maintains the journal of state changes
+
+                {
+                    let mut state = State::clone(&self.state.load());
+                    state.lights.insert(entity_id.clone(), light_state.clone());
+                    self.state.store(Arc::new(state));
+                }
+
+                let _event = Event::LightStateChanged {
+                    entity_id,
+                    state: light_state,
+                };
                 // TODO: Trigger automations based on state change
             }
             FromIntegrationMessage::BinarySensorStateChanged { entity_id, on } => {
+                let sensor_state = BinarySensorState { on };
                 info!("Binary sensor state changed: {} -> on={}", entity_id, on);
-                // Entity state is already updated by the integration
+
+                {
+                    let mut state = State::clone(&self.state.load());
+                    state
+                        .binary_sensors
+                        .insert(entity_id.clone(), sensor_state.clone());
+                    self.state.store(Arc::new(state));
+                }
+
+                let _event = Event::BinarySensorStateChanged {
+                    entity_id,
+                    state: sensor_state,
+                };
                 // TODO: Trigger automations based on state change
             }
         }
