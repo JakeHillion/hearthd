@@ -22,6 +22,9 @@ pub enum FromIntegrationMessage {
         on: bool,
         brightness: Option<u8>,
     },
+
+    /// A binary sensor's state changed (e.g., motion sensor)
+    BinarySensorStateChanged { entity_id: String, on: bool },
 }
 
 impl std::fmt::Debug for FromIntegrationMessage {
@@ -50,6 +53,11 @@ impl std::fmt::Debug for FromIntegrationMessage {
                 .field("entity_id", entity_id)
                 .field("on", on)
                 .field("brightness", brightness)
+                .finish(),
+            FromIntegrationMessage::BinarySensorStateChanged { entity_id, on } => f
+                .debug_struct("BinarySensorStateChanged")
+                .field("entity_id", entity_id)
+                .field("on", on)
                 .finish(),
         }
     }

@@ -10,12 +10,15 @@ use tracing::info;
 use tracing::warn;
 
 use super::MqttConfig;
+use super::binary_sensor::BinarySensor;
+use super::binary_sensor::BinarySensorState;
 use super::client::MqttClient;
 use super::client::MqttMessage;
 use super::discovery::DiscoveryMessage;
 use super::discovery::parse_discovery_topic;
 use super::light::Light;
 use super::light::LightState;
+use crate::engine::Entity;
 use crate::engine::FromIntegrationMessage;
 use crate::engine::FromIntegrationSender;
 use crate::engine::Integration;
@@ -23,6 +26,9 @@ use crate::engine::ToIntegrationMessage;
 
 /// Type alias for the shared lights map
 type LightsMap = Arc<Mutex<HashMap<String, Arc<Mutex<Light>>>>>;
+
+/// Type alias for the shared binary sensors map
+type BinarySensorsMap = Arc<Mutex<HashMap<String, Arc<Mutex<BinarySensor>>>>>;
 
 /// MQTT Integration for hearthd
 ///
@@ -32,6 +38,7 @@ pub struct MqttIntegration<C: MqttClient> {
     client: Arc<Mutex<C>>,
     config: MqttConfig,
     lights: LightsMap,
+    binary_sensors: BinarySensorsMap,
     to_engine: Option<FromIntegrationSender>,
     /// Handle to the background message processing task
     _message_task: Option<JoinHandle<()>>,
@@ -44,6 +51,7 @@ impl<C: MqttClient> MqttIntegration<C> {
             client: Arc::new(Mutex::new(client)),
             config: config.clone(),
             lights: Arc::new(Mutex::new(HashMap::new())) as LightsMap,
+            binary_sensors: Arc::new(Mutex::new(HashMap::new())) as BinarySensorsMap,
             to_engine: None,
             _message_task: None,
         }
@@ -57,6 +65,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: Arc<Mutex<C>>,
         config: MqttConfig,
         lights: LightsMap,
+        binary_sensors: BinarySensorsMap,
         to_engine: FromIntegrationSender,
     ) {
         loop {
@@ -79,14 +88,20 @@ impl<C: MqttClient> MqttIntegration<C> {
 
                     if msg.topic.ends_with("/config") {
                         if let Err(e) = Self::handle_discovery_static(
-                            &msg, &config, &client, &lights, &to_engine,
+                            &msg,
+                            &config,
+                            &client,
+                            &lights,
+                            &binary_sensors,
+                            &to_engine,
                         )
                         .await
                         {
                             warn!("Error handling discovery message: {}", e);
                         }
                     } else if let Err(e) =
-                        Self::handle_state_update_static(&msg, &lights, &to_engine).await
+                        Self::handle_state_update_static(&msg, &lights, &binary_sensors, &to_engine)
+                            .await
                     {
                         warn!("Error handling state update: {}", e);
                     }
@@ -105,6 +120,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         config: &MqttConfig,
         client: &Arc<Mutex<C>>,
         lights: &LightsMap,
+        binary_sensors: &BinarySensorsMap,
         to_engine: &FromIntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
         // Parse the discovery topic
@@ -123,17 +139,39 @@ impl<C: MqttClient> MqttIntegration<C> {
             component, node_id, object_id
         );
 
-        // Only handle light components for MVP
-        if component != "light" {
-            debug!("Ignoring non-light component: {}", component);
-            return Ok(());
+        match component.as_str() {
+            "light" => Self::handle_light_discovery(msg, client, lights, to_engine, &node_id).await,
+            "binary_sensor" => {
+                // TODO: Zigbee2MQTT also publishes auxiliary data (battery,
+                // illuminance, linkquality) as separate `sensor` components.
+                // These should be discovered as numeric sensor entities.
+                Self::handle_binary_sensor_discovery(
+                    msg,
+                    client,
+                    binary_sensors,
+                    to_engine,
+                    &node_id,
+                )
+                .await
+            }
+            _ => {
+                debug!("Ignoring unsupported component: {}", component);
+                Ok(())
+            }
         }
+    }
 
-        // Parse discovery payload
+    /// Handle discovery of a light entity
+    async fn handle_light_discovery(
+        msg: &MqttMessage,
+        client: &Arc<Mutex<C>>,
+        lights: &LightsMap,
+        to_engine: &FromIntegrationSender,
+        node_id: &str,
+    ) -> Result<(), Box<dyn Error + Send>> {
         let entity_id = format!("light.{}", node_id);
 
         if msg.payload.is_empty() {
-            // Empty payload means the entity should be removed
             let mut lights_guard = lights.lock().await;
             if lights_guard.remove(&entity_id).is_some() {
                 info!("Removed light entity: {}", entity_id);
@@ -145,7 +183,6 @@ impl<C: MqttClient> MqttIntegration<C> {
         let discovery: DiscoveryMessage = serde_json::from_slice(&msg.payload)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
 
-        // Create the light entity
         let light = Light::from_discovery(discovery, entity_id.clone(), node_id.to_string())
             .map_err(|e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::new(
@@ -154,7 +191,6 @@ impl<C: MqttClient> MqttIntegration<C> {
                 ))
             })?;
 
-        // Subscribe to state topic
         {
             let mut client_guard = client.lock().await;
             client_guard.subscribe(&light.state_topic).await?;
@@ -162,17 +198,67 @@ impl<C: MqttClient> MqttIntegration<C> {
 
         info!("Discovered light entity: {} ({})", light.name, entity_id);
 
-        // Wrap in Arc<Mutex> for shared ownership with Engine
         let light_arc = Arc::new(Mutex::new(light));
 
-        // Store the light
         {
             let mut lights_guard = lights.lock().await;
             lights_guard.insert(entity_id.clone(), light_arc.clone());
         }
 
-        // Register entity with engine
         Self::register_entity_static(&entity_id, light_arc, to_engine).await;
+
+        Ok(())
+    }
+
+    /// Handle discovery of a binary sensor entity (e.g., motion sensor)
+    async fn handle_binary_sensor_discovery(
+        msg: &MqttMessage,
+        client: &Arc<Mutex<C>>,
+        binary_sensors: &BinarySensorsMap,
+        to_engine: &FromIntegrationSender,
+        node_id: &str,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        let entity_id = format!("binary_sensor.{}", node_id);
+
+        if msg.payload.is_empty() {
+            let mut sensors_guard = binary_sensors.lock().await;
+            if sensors_guard.remove(&entity_id).is_some() {
+                info!("Removed binary sensor entity: {}", entity_id);
+                Self::notify_entity_removed_static(&entity_id, to_engine).await;
+            }
+            return Ok(());
+        }
+
+        let discovery: DiscoveryMessage = serde_json::from_slice(&msg.payload)
+            .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
+
+        let sensor =
+            BinarySensor::from_discovery(discovery, entity_id.clone(), node_id.to_string())
+                .map_err(|e| -> Box<dyn Error + Send> {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e.to_string(),
+                    ))
+                })?;
+
+        {
+            let mut client_guard = client.lock().await;
+            client_guard.subscribe(&sensor.state_topic).await?;
+        }
+
+        info!(
+            "Discovered binary sensor entity: {} ({})",
+            sensor.name, entity_id
+        );
+
+        let sensor_arc = Arc::new(Mutex::new(sensor));
+
+        {
+            let mut sensors_guard = binary_sensors.lock().await;
+            sensors_guard.insert(entity_id.clone(), sensor_arc.clone());
+        }
+
+        Self::register_entity_static(&entity_id, sensor_arc, to_engine).await;
 
         Ok(())
     }
@@ -181,10 +267,11 @@ impl<C: MqttClient> MqttIntegration<C> {
     async fn handle_state_update_static(
         msg: &MqttMessage,
         lights: &LightsMap,
+        binary_sensors: &BinarySensorsMap,
         to_engine: &FromIntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
-        // Find which light this state update is for
-        let mut entity_to_update: Option<(String, LightState)> = None;
+        // Check lights first
+        let mut light_to_update: Option<(String, LightState)> = None;
 
         {
             let lights_guard = lights.lock().await;
@@ -200,15 +287,42 @@ impl<C: MqttClient> MqttIntegration<C> {
                                 e.to_string(),
                             ))
                         })?;
-                    entity_to_update = Some((entity_id.clone(), light.state.clone()));
+                    light_to_update = Some((entity_id.clone(), light.state.clone()));
                     break;
                 }
             }
         }
 
-        // Report state change after releasing the lock
-        if let Some((entity_id, state)) = entity_to_update {
+        if let Some((entity_id, state)) = light_to_update {
             Self::report_state_change_static(&entity_id, &state, to_engine).await;
+            return Ok(());
+        }
+
+        // Check binary sensors
+        let mut sensor_to_update: Option<(String, BinarySensorState)> = None;
+
+        {
+            let sensors_guard = binary_sensors.lock().await;
+            for (entity_id, sensor_arc) in sensors_guard.iter() {
+                let mut sensor = sensor_arc.lock().await;
+                if msg.topic == sensor.state_topic {
+                    debug!("State update for binary sensor: {}", entity_id);
+                    sensor
+                        .update_state(&msg.payload)
+                        .map_err(|e| -> Box<dyn Error + Send> {
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                e.to_string(),
+                            ))
+                        })?;
+                    sensor_to_update = Some((entity_id.clone(), sensor.state.clone()));
+                    break;
+                }
+            }
+        }
+
+        if let Some((entity_id, state)) = sensor_to_update {
+            Self::report_binary_sensor_state_change_static(&entity_id, &state, to_engine).await;
         }
 
         Ok(())
@@ -217,18 +331,18 @@ impl<C: MqttClient> MqttIntegration<C> {
     /// Register an entity with the engine (static version)
     async fn register_entity_static(
         entity_id: &str,
-        light: Arc<Mutex<Light>>,
+        entity: Arc<Mutex<dyn Entity>>,
         to_engine: &FromIntegrationSender,
     ) {
         let msg = FromIntegrationMessage::EntityDiscovered {
             entity_id: entity_id.to_string(),
-            entity: light,
+            entity,
             integration_name: "mqtt".to_string(),
         };
         if let Err(e) = to_engine.send(msg).await {
             warn!("Failed to send EntityDiscovered message: {}", e);
         } else {
-            info!("Registered light entity: {}", entity_id);
+            info!("Registered entity: {}", entity_id);
         }
     }
 
@@ -257,6 +371,21 @@ impl<C: MqttClient> MqttIntegration<C> {
         };
         if let Err(e) = to_engine.send(msg).await {
             warn!("Failed to send LightStateChanged message: {}", e);
+        }
+    }
+
+    /// Report a binary sensor state change to the engine (static version)
+    async fn report_binary_sensor_state_change_static(
+        sensor_id: &str,
+        state: &BinarySensorState,
+        to_engine: &FromIntegrationSender,
+    ) {
+        let msg = FromIntegrationMessage::BinarySensorStateChanged {
+            entity_id: sensor_id.to_string(),
+            on: state.on,
+        };
+        if let Err(e) = to_engine.send(msg).await {
+            warn!("Failed to send BinarySensorStateChanged message: {}", e);
         }
     }
 
@@ -323,12 +452,18 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
         }
         info!("Connected to MQTT broker");
 
-        // Subscribe to discovery topics for lights
-        let discovery_topic = format!("{}/light/+/+/config", self.config.discovery_prefix);
-        info!("Subscribing to discovery topic: {}", discovery_topic);
+        // Subscribe to discovery topics for lights and binary sensors
+        let light_discovery = format!("{}/light/+/+/config", self.config.discovery_prefix);
+        let binary_sensor_discovery =
+            format!("{}/binary_sensor/+/+/config", self.config.discovery_prefix);
+        info!(
+            "Subscribing to discovery topics: {}, {}",
+            light_discovery, binary_sensor_discovery
+        );
         {
             let mut client = self.client.lock().await;
-            client.subscribe(&discovery_topic).await?;
+            client.subscribe(&light_discovery).await?;
+            client.subscribe(&binary_sensor_discovery).await?;
         }
 
         info!("MQTT integration setup complete, spawning message processing task...");
@@ -337,10 +472,11 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
         let client = self.client.clone();
         let config = self.config.clone();
         let lights = self.lights.clone();
+        let binary_sensors = self.binary_sensors.clone();
 
         // Spawn background task to process incoming MQTT messages
         let task = tokio::spawn(async move {
-            Self::process_messages_task(client, config, lights, tx).await;
+            Self::process_messages_task(client, config, lights, binary_sensors, tx).await;
         });
         self._message_task = Some(task);
 
@@ -413,5 +549,8 @@ mod tests {
 
         let lights = integration.lights.lock().await;
         assert_eq!(lights.len(), 0);
+
+        let binary_sensors = integration.binary_sensors.lock().await;
+        assert_eq!(binary_sensors.len(), 0);
     }
 }
