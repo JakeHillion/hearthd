@@ -1,3 +1,4 @@
+mod binary_sensor;
 mod client;
 mod config;
 mod discovery;

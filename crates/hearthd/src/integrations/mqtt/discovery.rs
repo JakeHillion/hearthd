@@ -49,6 +49,58 @@ where
     deserializer.deserialize_any(StringOrInt)
 }
 
+/// Deserialize a field that can be a string, boolean, or integer.
+///
+/// Zigbee2MQTT sends `payload_on`/`payload_off` as `"ON"`/`"OFF"` for lights
+/// but `true`/`false` for binary sensors. This helper accepts any scalar type
+/// and converts to a string.
+fn deserialize_string_or_scalar<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrScalar;
+
+    impl<'de> de::Visitor<'de> for StringOrScalar {
+        type Value = Option<String>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("string, boolean, integer, or null")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+    }
+
+    deserializer.deserialize_any(StringOrScalar)
+}
+
 /// Discovery message for Zigbee2MQTT devices
 ///
 /// This struct represents the JSON payload sent by Zigbee2MQTT on discovery topics.
@@ -77,9 +129,11 @@ pub struct DiscoveryMessage {
     pub device: Option<DeviceInfo>,
 
     /// Payload to send when turning on
+    #[serde(default, deserialize_with = "deserialize_string_or_scalar")]
     pub payload_on: Option<String>,
 
     /// Payload to send when turning off
+    #[serde(default, deserialize_with = "deserialize_string_or_scalar")]
     pub payload_off: Option<String>,
 
     /// Whether brightness is supported
@@ -87,6 +141,13 @@ pub struct DiscoveryMessage {
 
     /// Schema type (default is "default")
     pub schema: Option<String>,
+
+    /// Device class (e.g., "motion", "door", "window") for binary sensors
+    pub device_class: Option<String>,
+
+    /// Value template for extracting state from JSON payload
+    /// e.g., "{{ value_json.occupancy }}"
+    pub value_template: Option<String>,
 }
 
 /// Device information from Zigbee2MQTT discovery
@@ -161,5 +222,19 @@ mod tests {
         let topic = "homeassistant/light/0x00124b001234abcd";
         let result = parse_discovery_topic(topic, "homeassistant");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_binary_sensor_discovery_topic() {
+        let topic = "homeassistant/binary_sensor/0x00124b001234abcd/occupancy/config";
+        let result = parse_discovery_topic(topic, "homeassistant");
+        assert_eq!(
+            result,
+            Some((
+                "binary_sensor".to_string(),
+                "0x00124b001234abcd".to_string(),
+                "occupancy".to_string()
+            ))
+        );
     }
 }

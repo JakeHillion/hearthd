@@ -261,6 +261,11 @@ impl Engine {
                 // Engine just maintains the journal of state changes
                 // TODO: Trigger automations based on state change
             }
+            FromIntegrationMessage::BinarySensorStateChanged { entity_id, on } => {
+                info!("Binary sensor state changed: {} -> on={}", entity_id, on);
+                // Entity state is already updated by the integration
+                // TODO: Trigger automations based on state change
+            }
         }
         Ok(())
     }

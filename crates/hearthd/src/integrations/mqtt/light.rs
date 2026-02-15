@@ -178,6 +178,8 @@ mod tests {
             payload_off: None,
             brightness: Some(true),
             schema: None,
+            device_class: None,
+            value_template: None,
         };
 
         let mut light =
