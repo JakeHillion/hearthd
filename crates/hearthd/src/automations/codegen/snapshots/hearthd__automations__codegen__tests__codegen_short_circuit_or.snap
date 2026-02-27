@@ -1,0 +1,51 @@
+---
+source: crates/hearthd/src/automations/codegen/tests.rs
+expression: result
+---
+Input:
+observer {} /true || false/ { [] }
+
+---
+HIR:
+Automation: observer
+  bb0:
+    %1 = const_bool true [Bool]
+    branch %1 -> bb3, bb4
+  bb1:
+    %4 = empty_list [[<error>]]
+    return %4
+  bb2:
+    %3 = empty_list [[Event]]
+    return %3
+  bb3:
+    %0 = const_bool true [Bool]
+    jump -> bb5
+  bb4:
+    %2 = const_bool false [Bool]
+    %0 = copy %2 [Bool]
+    jump -> bb5
+  bb5:
+    branch %0 -> bb1, bb2
+
+---
+LIR:
+Constants:
+  c0 = bool(true)
+  c1 = bool(false)
+Symbols:
+  (none)
+Automation: observer
+  Registers: 5
+  Instructions:
+    0000: r1 = load_const c0
+    0001: branch r1 -> 0006, 0008
+    0002: r4 = empty_list
+    0003: return r4
+    0004: r3 = empty_list
+    0005: return r3
+    0006: r0 = load_const c0
+    0007: jump -> 0011
+    0008: r2 = load_const c1
+    0009: r0 = copy r2
+    0010: jump -> 0011
+    0011: branch r0 -> 0002, 0004
