@@ -1,0 +1,40 @@
+---
+source: crates/hearthd/src/automations/codegen/tests.rs
+expression: result
+---
+Input:
+mutator {
+  event,
+  ...
+} /true/ {
+  event
+}
+
+---
+HIR:
+Automation: mutator
+  Params:
+    %0: event [Event]
+  bb0:
+    %1 = const_bool true [Bool]
+    branch %1 -> bb1, bb2
+  bb1:
+    return %0
+  bb2:
+    return %0
+
+---
+LIR:
+Constants:
+  c0 = bool(true)
+Symbols:
+  s0 = "event"
+Automation: mutator
+  Params:
+    r0: s0
+  Registers: 2
+  Instructions:
+    0000: r1 = load_const c0
+    0001: branch r1 -> 0002, 0003
+    0002: return r0
+    0003: return r0

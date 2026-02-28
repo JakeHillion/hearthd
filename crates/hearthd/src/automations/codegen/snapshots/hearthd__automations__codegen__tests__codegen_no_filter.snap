@@ -1,0 +1,25 @@
+---
+source: crates/hearthd/src/automations/codegen/tests.rs
+expression: result
+---
+Input:
+observer {} { [] }
+
+---
+HIR:
+Automation: observer
+  bb0:
+    %0 = empty_list [[<error>]]
+    return %0
+
+---
+LIR:
+Constants:
+  (none)
+Symbols:
+  (none)
+Automation: observer
+  Registers: 1
+  Instructions:
+    0000: r0 = empty_list
+    0001: return r0

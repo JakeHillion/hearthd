@@ -5,12 +5,14 @@
 
 pub mod ast;
 pub mod hir;
+pub mod lir;
 pub mod lowered;
 pub mod pretty_print;
 pub mod typed;
 
 // Pretty print impls (use the same PrettyPrint trait)
 mod hir_pretty_print;
+mod lir_pretty_print;
 mod lowered_pretty_print;
 mod typed_pretty_print;
 
@@ -32,4 +34,9 @@ pub use pretty_print::PrettyPrint;
 pub use typed::{
     CheckResult, EntityConstraint, Ty, TypedArg, TypedAutomation, TypedExpr, TypedExprKind,
     TypedProgram, TypedStmt, TypedStructField,
+};
+// Re-export LIR types
+pub use lir::{
+    ConstIdx, Constant, Label, LirAutomation, LirInstruction, LirParam, LirProgram, LirStructField,
+    Reg, SymIdx, Symbol,
 };
