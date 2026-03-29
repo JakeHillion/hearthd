@@ -1,0 +1,47 @@
+---
+source: crates/hearthd/src/automations/codegen/tests.rs
+expression: result
+---
+Input:
+observer {} /true/ { 5s; 30min; 25c; 90deg; [] }
+
+---
+HIR:
+Automation: observer
+  bb0:
+    %0 = const_bool true [Bool]
+    branch %0 -> bb1, bb2
+  bb1:
+    %2 = const_unit 5s [Duration]
+    %3 = const_unit 30min [Duration]
+    %4 = const_unit 25c [Temperature]
+    %5 = const_unit 90deg [Angle]
+    %6 = empty_list [[<error>]]
+    return %6
+  bb2:
+    %1 = empty_list [[Event]]
+    return %1
+
+---
+LIR:
+Constants:
+  c0 = bool(true)
+  c1 = unit(5s)
+  c2 = unit(30min)
+  c3 = unit(25c)
+  c4 = unit(90deg)
+Symbols:
+  (none)
+Automation: observer
+  Registers: 7
+  Instructions:
+    0000: r0 = load_const c0
+    0001: branch r0 -> 0002, 0008
+    0002: r2 = load_const c1
+    0003: r3 = load_const c2
+    0004: r4 = load_const c3
+    0005: r5 = load_const c4
+    0006: r6 = empty_list
+    0007: return r6
+    0008: r1 = empty_list
+    0009: return r1

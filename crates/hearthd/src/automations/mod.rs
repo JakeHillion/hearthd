@@ -3,6 +3,7 @@
 //! This module provides parsing and type checking for `.hda` automation files.
 
 pub mod check;
+pub mod codegen;
 pub mod desugar;
 pub mod lexer;
 pub mod lower;
@@ -10,6 +11,7 @@ pub mod parser;
 pub mod repr;
 
 pub use check::check_program;
+pub use codegen::codegen_program;
 pub use desugar::desugar;
 pub use desugar::desugar_program;
 pub use lower::lower_program;
