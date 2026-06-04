@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -16,28 +18,47 @@ use super::client::MqttMessage;
 use super::discovery::DiscoveryMessage;
 use super::discovery::parse_discovery_topic;
 use super::light::Light;
+use super::light::Z2M_ENDPOINT;
 use crate::engine::FromIntegrationMessage;
 use crate::engine::FromIntegrationSender;
 use crate::engine::Integration;
 use crate::engine::ToIntegrationMessage;
-use crate::engine::state::BinarySensorState;
-use crate::engine::state::LightState;
+use crate::matter::Cluster;
+use crate::matter::ClusterCommand;
+use crate::matter::EndpointId;
+use crate::matter::NodeId;
 
-/// Type alias for the shared lights map
-type LightsMap = Arc<Mutex<HashMap<String, Arc<Mutex<Light>>>>>;
+/// Integration name reported to the engine.
+const INTEGRATION_NAME: &str = "mqtt";
 
-/// Type alias for the shared binary sensors map
-type BinarySensorsMap = Arc<Mutex<HashMap<String, Arc<Mutex<BinarySensor>>>>>;
+/// MQTT-side entity. The integration owns one of these per discovered node;
+/// the engine sees only `Node`s built from these.
+enum MqttEntity {
+    Light(Arc<Mutex<Light>>),
+    BinarySensor(Arc<Mutex<BinarySensor>>),
+}
 
-/// MQTT Integration for hearthd
+/// Shared inner state for the integration. All maps are keyed by NodeId.
+#[derive(Default)]
+struct Inner {
+    entities: HashMap<NodeId, MqttEntity>,
+    /// Reverse index: state-update topic → NodeId
+    topic_to_node: HashMap<String, NodeId>,
+    /// Reverse index: entity_id alias → NodeId (for re-discovery / removal)
+    entity_to_node: HashMap<String, NodeId>,
+}
+
+type SharedInner = Arc<Mutex<Inner>>;
+
+/// MQTT Integration for hearthd.
 ///
-/// Handles MQTT communication with Zigbee2MQTT and other MQTT-based devices.
-/// Currently supports Light entities as MVP.
+/// Translates between Zigbee2MQTT and the Matter-shaped engine API. All
+/// state crossing the engine boundary uses `crate::matter` types.
 pub struct MqttIntegration<C: MqttClient> {
     client: Arc<Mutex<C>>,
     config: MqttConfig,
-    lights: LightsMap,
-    binary_sensors: BinarySensorsMap,
+    inner: SharedInner,
+    next_node_id: Arc<AtomicU64>,
     to_engine: Option<FromIntegrationSender>,
     /// Handle to the background message processing task
     _message_task: Option<JoinHandle<()>>,
@@ -49,30 +70,24 @@ impl<C: MqttClient> MqttIntegration<C> {
         Self {
             client: Arc::new(Mutex::new(client)),
             config: config.clone(),
-            lights: Arc::new(Mutex::new(HashMap::new())) as LightsMap,
-            binary_sensors: Arc::new(Mutex::new(HashMap::new())) as BinarySensorsMap,
+            inner: Arc::new(Mutex::new(Inner::default())),
+            next_node_id: Arc::new(AtomicU64::new(1)),
             to_engine: None,
             _message_task: None,
         }
     }
 
-    /// Process incoming MQTT messages in a background task
-    ///
-    /// This is spawned as a separate tokio task in setup() so that
-    /// handle_message() can process commands concurrently.
+    /// Process incoming MQTT messages in a background task.
     async fn process_messages_task(
         client: Arc<Mutex<C>>,
         config: MqttConfig,
-        lights: LightsMap,
-        binary_sensors: BinarySensorsMap,
+        inner: SharedInner,
+        next_node_id: Arc<AtomicU64>,
         to_engine: FromIntegrationSender,
     ) {
         loop {
-            // Poll for message with a short lock hold time
-            // Use tokio::select with a timeout to avoid holding the lock indefinitely
             let msg = {
                 let mut client_guard = client.lock().await;
-                // Use tokio timeout to avoid blocking forever while holding the lock
                 tokio::time::timeout(
                     std::time::Duration::from_millis(100),
                     client_guard.poll_message(),
@@ -86,44 +101,39 @@ impl<C: MqttClient> MqttIntegration<C> {
                     info!("Received message on topic: {}", msg.topic);
 
                     if msg.topic.ends_with("/config") {
-                        if let Err(e) = Self::handle_discovery_static(
+                        if let Err(e) = Self::handle_discovery(
                             &msg,
                             &config,
                             &client,
-                            &lights,
-                            &binary_sensors,
+                            &inner,
+                            &next_node_id,
                             &to_engine,
                         )
                         .await
                         {
                             warn!("Error handling discovery message: {}", e);
                         }
-                    } else if let Err(e) =
-                        Self::handle_state_update_static(&msg, &lights, &binary_sensors, &to_engine)
-                            .await
+                    } else if let Err(e) = Self::handle_state_update(&msg, &inner, &to_engine).await
                     {
                         warn!("Error handling state update: {}", e);
                     }
                 }
                 None => {
-                    // No message available, yield to allow other tasks (like command handling)
                     tokio::task::yield_now().await;
                 }
             }
         }
     }
 
-    /// Handle a discovery message (static version for background task)
-    async fn handle_discovery_static(
+    async fn handle_discovery(
         msg: &MqttMessage,
         config: &MqttConfig,
         client: &Arc<Mutex<C>>,
-        lights: &LightsMap,
-        binary_sensors: &BinarySensorsMap,
+        inner: &SharedInner,
+        next_node_id: &AtomicU64,
         to_engine: &FromIntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
-        // Parse the discovery topic
-        let (component, node_id, object_id) =
+        let (component, node_id_str, object_id) =
             parse_discovery_topic(&msg.topic, &config.discovery_prefix).ok_or_else(
                 || -> Box<dyn Error + Send> {
                     Box::new(std::io::Error::new(
@@ -135,21 +145,32 @@ impl<C: MqttClient> MqttIntegration<C> {
 
         debug!(
             "Discovery: component={}, node_id={}, object_id={}",
-            component, node_id, object_id
+            component, node_id_str, object_id
         );
 
         match component.as_str() {
-            "light" => Self::handle_light_discovery(msg, client, lights, to_engine, &node_id).await,
+            "light" => {
+                Self::handle_light_discovery(
+                    msg,
+                    client,
+                    inner,
+                    next_node_id,
+                    to_engine,
+                    &node_id_str,
+                )
+                .await
+            }
             "binary_sensor" => {
-                // TODO: Zigbee2MQTT also publishes auxiliary data (battery,
-                // illuminance, linkquality) as separate `sensor` components.
-                // These should be discovered as numeric sensor entities.
+                // TODO: Z2M also publishes auxiliary `sensor` components
+                // (battery, linkquality, illuminance) that should become
+                // their own Matter clusters.
                 Self::handle_binary_sensor_discovery(
                     msg,
                     client,
-                    binary_sensors,
+                    inner,
+                    next_node_id,
                     to_engine,
-                    &node_id,
+                    &node_id_str,
                 )
                 .await
             }
@@ -160,29 +181,35 @@ impl<C: MqttClient> MqttIntegration<C> {
         }
     }
 
-    /// Handle discovery of a light entity
     async fn handle_light_discovery(
         msg: &MqttMessage,
         client: &Arc<Mutex<C>>,
-        lights: &LightsMap,
+        inner: &SharedInner,
+        next_node_id: &AtomicU64,
         to_engine: &FromIntegrationSender,
-        node_id: &str,
+        z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
-        let entity_id = format!("light.{}", node_id);
+        let entity_id = format!("light.{}", z2m_node_id);
 
+        // Empty payload = retained discovery deletion
         if msg.payload.is_empty() {
-            let mut lights_guard = lights.lock().await;
-            if lights_guard.remove(&entity_id).is_some() {
-                info!("Removed light entity: {}", entity_id);
-                Self::notify_entity_removed_static(&entity_id, to_engine).await;
-            }
+            Self::remove_entity_by_alias(&entity_id, inner, to_engine).await;
             return Ok(());
+        }
+
+        // Already-known entity: ignore (Z2M can re-publish discovery)
+        {
+            let guard = inner.lock().await;
+            if guard.entity_to_node.contains_key(&entity_id) {
+                debug!("Ignoring re-discovery for {}", entity_id);
+                return Ok(());
+            }
         }
 
         let discovery: DiscoveryMessage = serde_json::from_slice(&msg.payload)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
 
-        let light = Light::from_discovery(discovery, entity_id.clone(), node_id.to_string())
+        let light = Light::from_discovery(discovery, entity_id.clone(), z2m_node_id.to_string())
             .map_err(|e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -191,51 +218,73 @@ impl<C: MqttClient> MqttIntegration<C> {
             })?;
 
         let state_topic = light.state_topic.clone();
+        let node = light.to_node(INTEGRATION_NAME);
         info!("Discovered light entity: {} ({})", light.name, entity_id);
 
+        let node_id = next_node_id.fetch_add(1, Ordering::Relaxed);
         let light_arc = Arc::new(Mutex::new(light));
 
         {
-            let mut lights_guard = lights.lock().await;
-            lights_guard.insert(entity_id.clone(), light_arc.clone());
+            let mut guard = inner.lock().await;
+            guard.entities.insert(node_id, MqttEntity::Light(light_arc));
+            guard.topic_to_node.insert(state_topic.clone(), node_id);
+            guard.entity_to_node.insert(entity_id, node_id);
         }
 
-        // Subscribe after map insert so the retained state message finds the
-        // entity already in the map, regardless of concurrency model.
+        // Subscribe after registering so the retained state message routes correctly.
         {
             let mut client_guard = client.lock().await;
             client_guard.subscribe(&state_topic).await?;
         }
 
-        Self::register_entity_static(&entity_id, to_engine).await;
+        Self::send_node_added(node_id, node, to_engine).await;
 
         Ok(())
     }
 
-    /// Handle discovery of a binary sensor entity (e.g., motion sensor)
     async fn handle_binary_sensor_discovery(
         msg: &MqttMessage,
         client: &Arc<Mutex<C>>,
-        binary_sensors: &BinarySensorsMap,
+        inner: &SharedInner,
+        next_node_id: &AtomicU64,
         to_engine: &FromIntegrationSender,
-        node_id: &str,
+        z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
-        let entity_id = format!("binary_sensor.{}", node_id);
+        let entity_id = format!("binary_sensor.{}", z2m_node_id);
 
         if msg.payload.is_empty() {
-            let mut sensors_guard = binary_sensors.lock().await;
-            if sensors_guard.remove(&entity_id).is_some() {
-                info!("Removed binary sensor entity: {}", entity_id);
-                Self::notify_entity_removed_static(&entity_id, to_engine).await;
-            }
+            Self::remove_entity_by_alias(&entity_id, inner, to_engine).await;
             return Ok(());
+        }
+
+        {
+            let guard = inner.lock().await;
+            if guard.entity_to_node.contains_key(&entity_id) {
+                debug!("Ignoring re-discovery for {}", entity_id);
+                return Ok(());
+            }
         }
 
         let discovery: DiscoveryMessage = serde_json::from_slice(&msg.payload)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
 
+        // Only motion-style sensors map to Matter's OccupancySensing cluster.
+        // Z2M reports many other binary-sensor device classes (door, vibration,
+        // battery, ...) on the same discovery topic; skip those until we model
+        // their clusters.
+        match discovery.device_class.as_deref() {
+            Some("motion") | Some("occupancy") | Some("presence") => {}
+            other => {
+                warn!(
+                    "Skipping binary sensor {} with unsupported device_class {:?}",
+                    entity_id, other
+                );
+                return Ok(());
+            }
+        }
+
         let sensor =
-            BinarySensor::from_discovery(discovery, entity_id.clone(), node_id.to_string())
+            BinarySensor::from_discovery(discovery, entity_id.clone(), z2m_node_id.to_string())
                 .map_err(|e| -> Box<dyn Error + Send> {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -244,188 +293,208 @@ impl<C: MqttClient> MqttIntegration<C> {
                 })?;
 
         let state_topic = sensor.state_topic.clone();
+        let node = sensor.to_node(INTEGRATION_NAME);
         info!(
             "Discovered binary sensor entity: {} ({})",
             sensor.name, entity_id
         );
 
+        let node_id = next_node_id.fetch_add(1, Ordering::Relaxed);
         let sensor_arc = Arc::new(Mutex::new(sensor));
 
         {
-            let mut sensors_guard = binary_sensors.lock().await;
-            sensors_guard.insert(entity_id.clone(), sensor_arc.clone());
+            let mut guard = inner.lock().await;
+            guard
+                .entities
+                .insert(node_id, MqttEntity::BinarySensor(sensor_arc));
+            guard.topic_to_node.insert(state_topic.clone(), node_id);
+            guard.entity_to_node.insert(entity_id, node_id);
         }
 
-        // Subscribe after map insert so the retained state message finds the
-        // entity already in the map, regardless of concurrency model.
         {
             let mut client_guard = client.lock().await;
             client_guard.subscribe(&state_topic).await?;
         }
 
-        Self::register_entity_static(&entity_id, to_engine).await;
+        Self::send_node_added(node_id, node, to_engine).await;
 
         Ok(())
     }
 
-    /// Handle a state update message (static version for background task)
-    async fn handle_state_update_static(
+    /// Remove an entity given its entity_id alias and notify the engine.
+    async fn remove_entity_by_alias(
+        entity_id: &str,
+        inner: &SharedInner,
+        to_engine: &FromIntegrationSender,
+    ) {
+        let removed = {
+            let mut guard = inner.lock().await;
+            if let Some(&node_id) = guard.entity_to_node.get(entity_id) {
+                guard.entity_to_node.remove(entity_id);
+                guard.entities.remove(&node_id);
+                guard.topic_to_node.retain(|_, &mut v| v != node_id);
+                Some(node_id)
+            } else {
+                None
+            }
+        };
+        if let Some(node_id) = removed {
+            info!("Removed entity: {} (node {})", entity_id, node_id);
+            if let Err(e) = to_engine
+                .send(FromIntegrationMessage::NodeRemoved { node_id })
+                .await
+            {
+                warn!("Failed to send NodeRemoved: {}", e);
+            }
+        }
+    }
+
+    async fn send_node_added(
+        node_id: NodeId,
+        node: crate::matter::Node,
+        to_engine: &FromIntegrationSender,
+    ) {
+        if let Err(e) = to_engine
+            .send(FromIntegrationMessage::NodeAdded { node_id, node })
+            .await
+        {
+            warn!("Failed to send NodeAdded message: {}", e);
+        }
+    }
+
+    async fn send_attribute_changed(
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        cluster: Cluster,
+        to_engine: &FromIntegrationSender,
+    ) {
+        if let Err(e) = to_engine
+            .send(FromIntegrationMessage::AttributeChanged {
+                node_id,
+                endpoint_id,
+                cluster,
+            })
+            .await
+        {
+            warn!("Failed to send AttributeChanged message: {}", e);
+        }
+    }
+
+    async fn handle_state_update(
         msg: &MqttMessage,
-        lights: &LightsMap,
-        binary_sensors: &BinarySensorsMap,
+        inner: &SharedInner,
         to_engine: &FromIntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
-        // Check lights first
-        let mut light_to_update: Option<(String, LightState)> = None;
+        // Resolve topic → (NodeId, entity handle) and release the outer lock
+        // before parsing the payload.
+        let (node_id, entity) = {
+            let guard = inner.lock().await;
+            let node_id = match guard.topic_to_node.get(&msg.topic) {
+                Some(id) => *id,
+                None => return Ok(()),
+            };
+            let entity = match guard.entities.get(&node_id) {
+                Some(MqttEntity::Light(l)) => MqttEntity::Light(l.clone()),
+                Some(MqttEntity::BinarySensor(b)) => MqttEntity::BinarySensor(b.clone()),
+                None => return Ok(()),
+            };
+            (node_id, entity)
+        };
 
-        {
-            let lights_guard = lights.lock().await;
-            for (entity_id, light_arc) in lights_guard.iter() {
-                let mut light = light_arc.lock().await;
-                if msg.topic == light.state_topic {
-                    debug!("State update for light: {}", entity_id);
-                    light
-                        .update_state(&msg.payload)
-                        .map_err(|e| -> Box<dyn Error + Send> {
+        match entity {
+            MqttEntity::Light(light_arc) => {
+                let clusters = {
+                    let mut light = light_arc.lock().await;
+                    light.apply_state_payload(&msg.payload).map_err(
+                        |e| -> Box<dyn Error + Send> {
                             Box::new(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 e.to_string(),
                             ))
-                        })?;
-                    light_to_update = Some((entity_id.clone(), light.state.clone()));
-                    break;
+                        },
+                    )?
+                };
+                for cluster in clusters {
+                    Self::send_attribute_changed(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
                 }
             }
-        }
-
-        if let Some((entity_id, state)) = light_to_update {
-            Self::report_state_change_static(&entity_id, &state, to_engine).await;
-            return Ok(());
-        }
-
-        // Check binary sensors
-        let mut sensor_to_update: Option<(String, BinarySensorState)> = None;
-
-        {
-            let sensors_guard = binary_sensors.lock().await;
-            for (entity_id, sensor_arc) in sensors_guard.iter() {
-                let mut sensor = sensor_arc.lock().await;
-                if msg.topic == sensor.state_topic {
-                    debug!("State update for binary sensor: {}", entity_id);
-                    sensor
-                        .update_state(&msg.payload)
-                        .map_err(|e| -> Box<dyn Error + Send> {
+            MqttEntity::BinarySensor(sensor_arc) => {
+                let cluster = {
+                    let mut sensor = sensor_arc.lock().await;
+                    sensor.apply_state_payload(&msg.payload).map_err(
+                        |e| -> Box<dyn Error + Send> {
                             Box::new(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 e.to_string(),
                             ))
-                        })?;
-                    sensor_to_update = Some((entity_id.clone(), sensor.state.clone()));
-                    break;
+                        },
+                    )?
+                };
+                if let Some(cluster) = cluster {
+                    Self::send_attribute_changed(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
                 }
             }
-        }
-
-        if let Some((entity_id, state)) = sensor_to_update {
-            Self::report_binary_sensor_state_change_static(&entity_id, &state, to_engine).await;
         }
 
         Ok(())
     }
 
-    /// Register an entity with the engine (static version)
-    async fn register_entity_static(entity_id: &str, to_engine: &FromIntegrationSender) {
-        let msg = FromIntegrationMessage::EntityDiscovered {
-            entity_id: entity_id.to_string(),
-            integration_name: "mqtt".to_string(),
-        };
-        if let Err(e) = to_engine.send(msg).await {
-            warn!("Failed to send EntityDiscovered message: {}", e);
-        } else {
-            info!("Registered entity: {}", entity_id);
-        }
-    }
-
-    /// Notify the engine that an entity has been removed (static version)
-    async fn notify_entity_removed_static(entity_id: &str, to_engine: &FromIntegrationSender) {
-        let msg = FromIntegrationMessage::EntityRemoved {
-            entity_id: entity_id.to_string(),
-        };
-        if let Err(e) = to_engine.send(msg).await {
-            warn!("Failed to send EntityRemoved message: {}", e);
-        } else {
-            info!("Notified engine of entity removal: {}", entity_id);
-        }
-    }
-
-    /// Report a state change to the engine (static version)
-    async fn report_state_change_static(
-        light_id: &str,
-        state: &LightState,
-        to_engine: &FromIntegrationSender,
-    ) {
-        let msg = FromIntegrationMessage::LightStateChanged {
-            entity_id: light_id.to_string(),
-            on: state.on,
-            brightness: state.brightness,
-        };
-        if let Err(e) = to_engine.send(msg).await {
-            warn!("Failed to send LightStateChanged message: {}", e);
-        }
-    }
-
-    /// Report a binary sensor state change to the engine (static version)
-    async fn report_binary_sensor_state_change_static(
-        sensor_id: &str,
-        state: &BinarySensorState,
-        to_engine: &FromIntegrationSender,
-    ) {
-        let msg = FromIntegrationMessage::BinarySensorStateChanged {
-            entity_id: sensor_id.to_string(),
-            on: state.on,
-        };
-        if let Err(e) = to_engine.send(msg).await {
-            warn!("Failed to send BinarySensorStateChanged message: {}", e);
-        }
-    }
-
-    /// Send a command to a light
-    pub async fn send_light_command(
+    /// Execute a cluster command against a discovered node.
+    async fn invoke_command(
         &self,
-        light_id: &str,
-        state: LightState,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        command: ClusterCommand,
     ) -> Result<(), Box<dyn Error + Send>> {
-        let lights_guard = self.lights.lock().await;
-        let light_arc = lights_guard
-            .get(light_id)
-            .ok_or_else(|| -> Box<dyn Error + Send> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Light not found: {}", light_id),
-                ))
-            })?
-            .clone();
-        drop(lights_guard);
+        if endpoint_id != Z2M_ENDPOINT {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Unknown endpoint {} on node {}", endpoint_id, node_id),
+            )));
+        }
 
-        let light = light_arc.lock().await;
-        let payload = light
-            .command_payload(&state)
-            .map_err(|e| -> Box<dyn Error + Send> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    e.to_string(),
-                ))
-            })?;
+        let light_arc = {
+            let guard = self.inner.lock().await;
+            match guard.entities.get(&node_id) {
+                Some(MqttEntity::Light(l)) => l.clone(),
+                Some(MqttEntity::BinarySensor(_)) => {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("Node {} is a read-only sensor", node_id),
+                    )));
+                }
+                None => {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Unknown node: {}", node_id),
+                    )));
+                }
+            }
+        };
 
-        let command_topic = light.command_topic.clone();
-        drop(light); // Release lock before async call
+        let (payload, command_topic) = {
+            let light = light_arc.lock().await;
+            let payload =
+                light
+                    .command_payload(&command)
+                    .map_err(|e| -> Box<dyn Error + Send> {
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            e.to_string(),
+                        ))
+                    })?;
+            (payload, light.command_topic.clone())
+        };
 
         {
             let mut client = self.client.lock().await;
             client.publish(&command_topic, &payload, false).await?;
         }
 
-        info!("Sent command to light {}: {:?}", light_id, state);
+        info!(
+            "Sent command to node {} (endpoint {}): {:?}",
+            node_id, endpoint_id, command
+        );
 
         Ok(())
     }
@@ -434,14 +503,12 @@ impl<C: MqttClient> MqttIntegration<C> {
 #[async_trait]
 impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
     fn name(&self) -> &str {
-        "mqtt"
+        INTEGRATION_NAME
     }
 
     async fn setup(&mut self, tx: FromIntegrationSender) -> Result<(), Box<dyn Error + Send>> {
-        // Store sender for sending events to engine
         self.to_engine = Some(tx.clone());
 
-        // Connect to the MQTT broker
         info!(
             "Connecting to MQTT broker at {}:{}",
             self.config.broker, self.config.port
@@ -452,7 +519,6 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
         }
         info!("Connected to MQTT broker");
 
-        // Subscribe to discovery topics for lights and binary sensors
         let light_discovery = format!("{}/light/+/+/config", self.config.discovery_prefix);
         let binary_sensor_discovery =
             format!("{}/binary_sensor/+/+/config", self.config.discovery_prefix);
@@ -468,15 +534,13 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
 
         info!("MQTT integration setup complete, spawning message processing task...");
 
-        // Clone shared state for the background task
         let client = self.client.clone();
         let config = self.config.clone();
-        let lights = self.lights.clone();
-        let binary_sensors = self.binary_sensors.clone();
+        let inner = self.inner.clone();
+        let next_node_id = self.next_node_id.clone();
 
-        // Spawn background task to process incoming MQTT messages
         let task = tokio::spawn(async move {
-            Self::process_messages_task(client, config, lights, binary_sensors, tx).await;
+            Self::process_messages_task(client, config, inner, next_node_id, tx).await;
         });
         self._message_task = Some(task);
 
@@ -489,17 +553,16 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
         msg: ToIntegrationMessage,
     ) -> Result<(), Box<dyn Error + Send>> {
         match msg {
-            ToIntegrationMessage::LightCommand {
-                entity_id,
-                on,
-                brightness,
+            ToIntegrationMessage::InvokeCommand {
+                node_id,
+                endpoint_id,
+                command,
             } => {
                 info!(
-                    "Handling light command for {}: on={}, brightness={:?}",
-                    entity_id, on, brightness
+                    "Handling InvokeCommand for node {} endpoint {}: {:?}",
+                    node_id, endpoint_id, command
                 );
-                let state = LightState { on, brightness };
-                self.send_light_command(&entity_id, state).await?;
+                self.invoke_command(node_id, endpoint_id, command).await?;
             }
         }
         Ok(())
@@ -535,7 +598,7 @@ mod tests {
     use crate::integrations::mqtt::client::MockMqttClient;
 
     #[tokio::test]
-    async fn test_mqtt_integration_creation() {
+    async fn integration_starts_empty() {
         let client = MockMqttClient::new();
         let config = MqttConfig {
             broker: "localhost".to_string(),
@@ -547,10 +610,9 @@ mod tests {
         };
         let integration = MqttIntegration::new(client, &config);
 
-        let lights = integration.lights.lock().await;
-        assert_eq!(lights.len(), 0);
-
-        let binary_sensors = integration.binary_sensors.lock().await;
-        assert_eq!(binary_sensors.len(), 0);
+        let guard = integration.inner.lock().await;
+        assert!(guard.entities.is_empty());
+        assert!(guard.topic_to_node.is_empty());
+        assert!(guard.entity_to_node.is_empty());
     }
 }

@@ -3,70 +3,44 @@
 //! Messages are split by direction to enforce correct usage at compile time:
 //! - `FromIntegrationMessage`: Events from integrations to the engine
 //! - `ToIntegrationMessage`: Commands from the engine to integrations
+//!
+//! Both directions speak the Matter data model defined in `crate::matter`.
+//! Integrations translate their native representation at their boundary.
+
+use crate::matter::Cluster;
+use crate::matter::ClusterCommand;
+use crate::matter::EndpointId;
+use crate::matter::Node;
+use crate::matter::NodeId;
 
 /// Messages FROM integrations TO the engine (events/state updates)
+#[derive(Debug, Clone)]
 pub enum FromIntegrationMessage {
-    /// An entity was discovered and registered
-    EntityDiscovered {
-        entity_id: String,
-        integration_name: String,
+    /// A node was discovered and is now known to the integration.
+    /// The full `Node` is included so the engine can populate its state
+    /// snapshot atomically.
+    NodeAdded { node_id: NodeId, node: Node },
+
+    /// A node was removed (device unpaired, integration lost track, etc.)
+    NodeRemoved { node_id: NodeId },
+
+    /// A cluster's attributes changed. The full new cluster snapshot is
+    /// sent (Matter would send per-attribute reports, but a cluster-level
+    /// snapshot is simpler and lossless for the clusters we model).
+    AttributeChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        cluster: Cluster,
     },
-
-    /// An entity was removed (device unplugged, etc.)
-    EntityRemoved { entity_id: String },
-
-    /// A light's state changed
-    LightStateChanged {
-        entity_id: String,
-        on: bool,
-        brightness: Option<u8>,
-    },
-
-    /// A binary sensor's state changed (e.g., motion sensor)
-    BinarySensorStateChanged { entity_id: String, on: bool },
-}
-
-impl std::fmt::Debug for FromIntegrationMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FromIntegrationMessage::EntityDiscovered {
-                entity_id,
-                integration_name,
-            } => f
-                .debug_struct("EntityDiscovered")
-                .field("entity_id", entity_id)
-                .field("integration_name", integration_name)
-                .finish(),
-            FromIntegrationMessage::EntityRemoved { entity_id } => f
-                .debug_struct("EntityRemoved")
-                .field("entity_id", entity_id)
-                .finish(),
-            FromIntegrationMessage::LightStateChanged {
-                entity_id,
-                on,
-                brightness,
-            } => f
-                .debug_struct("LightStateChanged")
-                .field("entity_id", entity_id)
-                .field("on", on)
-                .field("brightness", brightness)
-                .finish(),
-            FromIntegrationMessage::BinarySensorStateChanged { entity_id, on } => f
-                .debug_struct("BinarySensorStateChanged")
-                .field("entity_id", entity_id)
-                .field("on", on)
-                .finish(),
-        }
-    }
 }
 
 /// Messages FROM the engine TO integrations (commands)
 #[derive(Debug, Clone)]
 pub enum ToIntegrationMessage {
-    /// Command to change a light's state
-    LightCommand {
-        entity_id: String,
-        on: bool,
-        brightness: Option<u8>,
+    /// Invoke a Matter cluster command on the given endpoint.
+    InvokeCommand {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        command: ClusterCommand,
     },
 }

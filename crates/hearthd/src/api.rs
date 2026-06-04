@@ -15,6 +15,8 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use crate::Engine;
+use crate::matter::ClusterCommand;
+use crate::matter::EndpointId;
 
 /// Response for the /v1/ping endpoint
 #[derive(Serialize)]
@@ -30,11 +32,14 @@ struct InfoResponse {
 }
 
 /// Request body for POST /v1/entities/:id/command
+///
+/// The body addresses a Matter endpoint within the resolved node and carries
+/// the cluster command to invoke. Example:
+///   { "endpoint": 1, "command": { "command": "OnOffOn" } }
 #[derive(Debug, Deserialize)]
-#[serde(tag = "command")]
-enum EntityCommandRequest {
-    #[serde(rename = "light")]
-    Light { on: bool, brightness: Option<u8> },
+struct EntityCommandRequest {
+    endpoint: EndpointId,
+    command: ClusterCommand,
 }
 
 /// Response for POST /v1/entities/:id/command
@@ -99,37 +104,47 @@ async fn send_entity_command(
     Path(entity_id): Path<String>,
     Json(request): Json<EntityCommandRequest>,
 ) -> impl IntoResponse {
-    match request {
-        EntityCommandRequest::Light { on, brightness } => {
-            tracing::debug!(
-                "Handling POST /v1/entities/{}/command: light on={} brightness={:?}",
-                entity_id,
-                on,
-                brightness
-            );
+    tracing::debug!(
+        "Handling POST /v1/entities/{}/command: endpoint={} command={:?}",
+        entity_id,
+        request.endpoint,
+        request.command
+    );
 
-            match state
-                .engine
-                .send_light_command(entity_id.clone(), on, brightness)
-            {
-                Ok(()) => (
-                    StatusCode::OK,
-                    Json(EntityCommandResponse {
-                        success: true,
-                        message: format!("Command sent to entity {}", entity_id),
-                    }),
-                )
-                    .into_response(),
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(EntityCommandResponse {
-                        success: false,
-                        message: format!("Failed to send command: {}", e),
-                    }),
-                )
-                    .into_response(),
-            }
+    let node_id = match state.engine.resolve_entity_id(&entity_id) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(EntityCommandResponse {
+                    success: false,
+                    message: format!("Unknown entity: {}", entity_id),
+                }),
+            )
+                .into_response();
         }
+    };
+
+    match state
+        .engine
+        .invoke_command(node_id, request.endpoint, request.command)
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(EntityCommandResponse {
+                success: true,
+                message: format!("Command sent to entity {}", entity_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(EntityCommandResponse {
+                success: false,
+                message: format!("Failed to send command: {}", e),
+            }),
+        )
+            .into_response(),
     }
 }
 

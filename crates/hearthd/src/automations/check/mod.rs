@@ -94,16 +94,28 @@ impl TypeRegistry {
     /// Register enum types that can't be derived from facet reflection.
     fn register_enums(&mut self) {
         let mut variants = HashMap::new();
-        variants.insert("LightStateChanged".into(), {
+        variants.insert("OnOffChanged".into(), {
             let mut fields = HashMap::new();
-            fields.insert("entity_id".into(), Ty::String);
-            fields.insert("state".into(), Ty::Named("LightState".into()));
+            fields.insert("node_id".into(), Ty::Int);
+            fields.insert("endpoint_id".into(), Ty::Int);
+            fields.insert("attributes".into(), Ty::Named("OnOffCluster".into()));
             fields
         });
-        variants.insert("BinarySensorStateChanged".into(), {
+        variants.insert("LevelControlChanged".into(), {
             let mut fields = HashMap::new();
-            fields.insert("entity_id".into(), Ty::String);
-            fields.insert("state".into(), Ty::Named("BinarySensorState".into()));
+            fields.insert("node_id".into(), Ty::Int);
+            fields.insert("endpoint_id".into(), Ty::Int);
+            fields.insert("attributes".into(), Ty::Named("LevelControlCluster".into()));
+            fields
+        });
+        variants.insert("OccupancySensingChanged".into(), {
+            let mut fields = HashMap::new();
+            fields.insert("node_id".into(), Ty::Int);
+            fields.insert("endpoint_id".into(), Ty::Int);
+            fields.insert(
+                "attributes".into(),
+                Ty::Named("OccupancySensingCluster".into()),
+            );
             fields
         });
         self.enums.insert("Event".into(), EnumInfo { variants });
@@ -113,8 +125,11 @@ impl TypeRegistry {
     fn shape_for_type(name: &str) -> Option<&'static facet::Shape> {
         match name {
             "State" => Some(state::State::SHAPE),
-            "LightState" => Some(state::LightState::SHAPE),
-            "BinarySensorState" => Some(state::BinarySensorState::SHAPE),
+            "OnOffCluster" => Some(crate::matter::OnOffCluster::SHAPE),
+            "LevelControlCluster" => Some(crate::matter::LevelControlCluster::SHAPE),
+            "OccupancySensingCluster" => Some(crate::matter::OccupancySensingCluster::SHAPE),
+            "Endpoint" => Some(crate::matter::Endpoint::SHAPE),
+            "Node" => Some(crate::matter::Node::SHAPE),
             _ => None,
         }
     }

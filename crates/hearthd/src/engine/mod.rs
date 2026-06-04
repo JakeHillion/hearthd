@@ -13,6 +13,4 @@ pub use integration::IntegrationFactoryResult;
 pub use integration::REGISTRY as INTEGRATION_REGISTRY;
 pub use message::FromIntegrationMessage;
 pub use message::ToIntegrationMessage;
-pub use state::BinarySensorState;
-pub use state::LightState;
 pub use state::State;

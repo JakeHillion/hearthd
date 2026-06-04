@@ -17,10 +17,12 @@ use super::integration::Integration;
 use super::integration::ToIntegrationSender;
 use super::message::FromIntegrationMessage;
 use super::message::ToIntegrationMessage;
-use super::state::BinarySensorState;
-use super::state::LightState;
 use super::state::State;
 use crate::engine::IntegrationContext;
+use crate::matter::Cluster;
+use crate::matter::ClusterCommand;
+use crate::matter::EndpointId;
+use crate::matter::NodeId;
 
 /// hearthd engine
 ///
@@ -30,8 +32,8 @@ pub struct Engine {
     /// Centralized state snapshot (readers load the Arc, writer stores a new one)
     state: ArcSwap<State>,
 
-    /// Map of entity_id -> integration name for routing messages
-    entity_integration_map: std::sync::Mutex<HashMap<String, String>>,
+    /// Map of NodeId -> integration name for routing commands.
+    node_integration_map: std::sync::Mutex<HashMap<NodeId, String>>,
 
     /// Communication channels to integrations (for commands)
     integration_channels: HashMap<String, ToIntegrationSender>,
@@ -56,7 +58,7 @@ impl Engine {
         let (message_tx, message_rx) = mpsc::channel(FROM_INTEGRATION_CHANNEL_SIZE);
         Self {
             state: ArcSwap::new(Arc::default()),
-            entity_integration_map: std::sync::Mutex::new(HashMap::new()),
+            node_integration_map: std::sync::Mutex::new(HashMap::new()),
             integration_channels: HashMap::new(),
             message_rx: Mutex::new(message_rx),
             message_tx,
@@ -123,31 +125,27 @@ impl Engine {
         self.integration_handles.push(handle);
     }
 
-    /// Send a command to an integration
+    /// Send a command to an integration.
     ///
-    /// Routes the command to the appropriate integration based on entity_id.
+    /// Routes the command to the integration that owns the target node.
     pub fn send_command(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
-        // Extract entity_id from command for routing
-        let entity_id = match &msg {
-            ToIntegrationMessage::LightCommand { entity_id, .. } => entity_id.clone(),
+        let node_id = match &msg {
+            ToIntegrationMessage::InvokeCommand { node_id, .. } => *node_id,
         };
 
-        // Route to the integration that owns this entity
         let map = self
-            .entity_integration_map
+            .node_integration_map
             .lock()
             .map_err(|e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        let integration_name = map
-            .get(&entity_id)
-            .ok_or_else(|| -> Box<dyn Error + Send> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("No integration found for entity: {}", entity_id),
-                ))
-            })?;
+        let integration_name = map.get(&node_id).ok_or_else(|| -> Box<dyn Error + Send> {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("No integration found for node: {}", node_id),
+            ))
+        })?;
 
         let tx = self.integration_channels.get(integration_name).ok_or_else(
             || -> Box<dyn Error + Send> {
@@ -187,94 +185,101 @@ impl Engine {
         self.state.load_full()
     }
 
-    /// Send a light command to control a light entity
-    pub fn send_light_command(
+    /// Resolve an entity_id alias to a NodeId via the state's reverse index.
+    pub fn resolve_entity_id(&self, entity_id: &str) -> Option<NodeId> {
+        self.state.load().by_entity_id.get(entity_id).copied()
+    }
+
+    /// Invoke a Matter cluster command on a node's endpoint.
+    pub fn invoke_command(
         &self,
-        entity_id: String,
-        on: bool,
-        brightness: Option<u8>,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        command: ClusterCommand,
     ) -> Result<(), Box<dyn Error + Send>> {
-        let cmd = ToIntegrationMessage::LightCommand {
-            entity_id,
-            on,
-            brightness,
-        };
-        self.send_command(cmd)
+        self.send_command(ToIntegrationMessage::InvokeCommand {
+            node_id,
+            endpoint_id,
+            command,
+        })
     }
 
     /// Handle an event from an integration
     async fn handle_event(&self, msg: FromIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
         match msg {
-            FromIntegrationMessage::EntityDiscovered {
-                entity_id,
-                integration_name,
-            } => {
+            FromIntegrationMessage::NodeAdded { node_id, node } => {
                 info!(
-                    "Entity discovered: {} (from {})",
-                    entity_id, integration_name
+                    "Node added: {} ({}) from {}",
+                    node_id, node.entity_id, node.integration
                 );
 
-                // Record which integration owns this entity for command routing.
-                // State is not populated until the first state-change message arrives.
-                if let Ok(mut map) = self.entity_integration_map.lock() {
-                    map.insert(entity_id, integration_name);
+                if let Ok(mut map) = self.node_integration_map.lock() {
+                    map.insert(node_id, node.integration.clone());
                 }
-            }
-            FromIntegrationMessage::EntityRemoved { entity_id } => {
-                info!("Entity removed: {}", entity_id);
 
                 {
                     let mut state = State::clone(&self.state.load());
-                    state.lights.remove(&entity_id);
-                    state.binary_sensors.remove(&entity_id);
+                    state.by_entity_id.insert(node.entity_id.clone(), node_id);
+                    state.nodes.insert(node_id, node);
+                    self.state.store(Arc::new(state));
+                }
+            }
+            FromIntegrationMessage::NodeRemoved { node_id } => {
+                info!("Node removed: {}", node_id);
+
+                {
+                    let mut state = State::clone(&self.state.load());
+                    if let Some(node) = state.nodes.remove(&node_id) {
+                        state.by_entity_id.remove(&node.entity_id);
+                    }
                     self.state.store(Arc::new(state));
                 }
 
-                // Remove from routing map
-                if let Ok(mut map) = self.entity_integration_map.lock() {
-                    map.remove(&entity_id);
+                if let Ok(mut map) = self.node_integration_map.lock() {
+                    map.remove(&node_id);
                 }
             }
-            FromIntegrationMessage::LightStateChanged {
-                entity_id,
-                on,
-                brightness,
+            FromIntegrationMessage::AttributeChanged {
+                node_id,
+                endpoint_id,
+                cluster,
             } => {
-                let light_state = LightState { on, brightness };
                 info!(
-                    "Light state changed: {} -> on={}, brightness={:?}",
-                    entity_id, on, brightness
+                    "Attribute changed: node={} endpoint={} cluster={}",
+                    node_id,
+                    endpoint_id,
+                    cluster.name()
                 );
 
                 {
                     let mut state = State::clone(&self.state.load());
-                    state.lights.insert(entity_id.clone(), light_state.clone());
+                    if let Some(node) = state.nodes.get_mut(&node_id) {
+                        let endpoint = node.endpoints.entry(endpoint_id).or_default();
+                        endpoint
+                            .clusters
+                            .insert(cluster.name().to_string(), cluster.clone());
+                    }
                     self.state.store(Arc::new(state));
                 }
 
-                let _event = Event::LightStateChanged {
-                    entity_id,
-                    state: light_state,
+                let _event = match cluster {
+                    Cluster::OnOff(attributes) => Event::OnOffChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::LevelControl(attributes) => Event::LevelControlChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::OccupancySensing(attributes) => Event::OccupancySensingChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
                 };
-                // TODO: Trigger automations based on state change
-            }
-            FromIntegrationMessage::BinarySensorStateChanged { entity_id, on } => {
-                let sensor_state = BinarySensorState { on };
-                info!("Binary sensor state changed: {} -> on={}", entity_id, on);
-
-                {
-                    let mut state = State::clone(&self.state.load());
-                    state
-                        .binary_sensors
-                        .insert(entity_id.clone(), sensor_state.clone());
-                    self.state.store(Arc::new(state));
-                }
-
-                let _event = Event::BinarySensorStateChanged {
-                    entity_id,
-                    state: sensor_state,
-                };
-                // TODO: Trigger automations based on state change
+                // TODO: Trigger automations based on attribute-changed event
             }
         }
         Ok(())
