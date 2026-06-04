@@ -46,8 +46,11 @@ fn shape_to_ty(shape: &facet::Shape) -> Ty {
 fn struct_fields_for_type(name: &str) -> HashMap<String, Ty> {
     let shape = match name {
         "State" => state::State::SHAPE,
-        "LightState" => state::LightState::SHAPE,
-        "BinarySensorState" => state::BinarySensorState::SHAPE,
+        "OnOffCluster" => crate::matter::OnOffCluster::SHAPE,
+        "LevelControlCluster" => crate::matter::LevelControlCluster::SHAPE,
+        "OccupancySensingCluster" => crate::matter::OccupancySensingCluster::SHAPE,
+        "Endpoint" => crate::matter::Endpoint::SHAPE,
+        "Node" => crate::matter::Node::SHAPE,
         _ => return HashMap::new(),
     };
     if let facet::Type::User(facet::UserType::Struct(st)) = &shape.ty {

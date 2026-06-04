@@ -188,10 +188,10 @@ fn test_lower_short_circuit_or() {
 #[test]
 fn test_lower_list_comprehension() {
     let src = r#"observer {
-  state = { lights, ... },
+  state = { nodes, ... },
   ...
 } /true/ {
-  [ Event::LightStateChanged(l) for l in keys(lights) ]
+  [ Event::OnOffChanged(l) for l in keys(nodes) ]
 }"#;
     let result = lower_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -199,13 +199,13 @@ fn test_lower_list_comprehension() {
       Params:
         %0: state [State]
       bb0:
-        %1 = field %0.lights [Map<String, LightState>]
+        %1 = field %0.nodes [Map<Int, Node>]
         %2 = const_bool true [Bool]
         branch %2 -> bb1, bb2
       bb1:
         %4 = empty_list [[<error>]]
-        %5 = call keys(%1) [[String]]
-        %6 = iter_init %5 [[String]]
+        %5 = call keys(%1) [[Int]]
+        %6 = iter_init %5 [[Int]]
         jump -> bb3
       bb2:
         %3 = empty_list [[Event]]
@@ -213,7 +213,7 @@ fn test_lower_list_comprehension() {
       bb3:
         iter_next %6 -> %7, bb4, bb5
       bb4:
-        %8 = variant Event::LightStateChanged(%7) [Event]
+        %8 = variant Event::OnOffChanged(%7) [Event]
         %9 = list_push %4, %8 [()]
         jump -> bb3
       bb5:
@@ -475,10 +475,10 @@ fn test_lower_unit_literals() {
 #[test]
 fn test_lower_field_access() {
     let src = r#"observer {
-  state = { lights, ... },
+  state = { nodes, ... },
   ...
 } /true/ {
-  lights;
+  nodes;
   []
 }"#;
     let result = lower_and_pretty(src);
@@ -487,7 +487,7 @@ fn test_lower_field_access() {
       Params:
         %0: state [State]
       bb0:
-        %1 = field %0.lights [Map<String, LightState>]
+        %1 = field %0.nodes [Map<Int, Node>]
         %2 = const_bool true [Bool]
         branch %2 -> bb1, bb2
       bb1:
@@ -710,10 +710,10 @@ fn test_lower_multiple_lets_and_arithmetic() {
 #[test]
 fn test_lower_list_comprehension_with_filter() {
     let src = r#"observer {
-  state = { lights, ... },
+  state = { nodes, ... },
   ...
 } /true/ {
-  [ Event::LightStateChanged(l) for l in keys(lights) if true ]
+  [ Event::OnOffChanged(l) for l in keys(nodes) if true ]
 }"#;
     let result = lower_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -721,13 +721,13 @@ fn test_lower_list_comprehension_with_filter() {
       Params:
         %0: state [State]
       bb0:
-        %1 = field %0.lights [Map<String, LightState>]
+        %1 = field %0.nodes [Map<Int, Node>]
         %2 = const_bool true [Bool]
         branch %2 -> bb1, bb2
       bb1:
         %4 = empty_list [[<error>]]
-        %5 = call keys(%1) [[String]]
-        %6 = iter_init %5 [[String]]
+        %5 = call keys(%1) [[Int]]
+        %6 = iter_init %5 [[Int]]
         jump -> bb3
       bb2:
         %3 = empty_list [[Event]]
@@ -740,7 +740,7 @@ fn test_lower_list_comprehension_with_filter() {
       bb5:
         return %4
       bb6:
-        %10 = variant Event::LightStateChanged(%7) [Event]
+        %10 = variant Event::OnOffChanged(%7) [Event]
         %11 = list_push %4, %10 [()]
         %12 = unit [()]
         %8 = copy %12 [()]
@@ -762,14 +762,14 @@ fn test_lower_nested_pattern() {
     let src = r#"observer {
   event,
   state = {
-    lights,
-    binary_sensors,
+    nodes,
+    by_entity_id,
     ...
   },
   ...
 } /true/ {
-  lights;
-  binary_sensors;
+  nodes;
+  by_entity_id;
   []
 }"#;
     let result = lower_and_pretty(src);
@@ -779,8 +779,8 @@ fn test_lower_nested_pattern() {
         %0: event [Event]
         %1: state [State]
       bb0:
-        %2 = field %1.lights [Map<String, LightState>]
-        %3 = field %1.binary_sensors [Map<String, BinarySensorState>]
+        %2 = field %1.nodes [Map<Int, Node>]
+        %3 = field %1.by_entity_id [Map<String, Int>]
         %4 = const_bool true [Bool]
         branch %4 -> bb1, bb2
       bb1:
@@ -801,12 +801,12 @@ fn test_lower_lights_off_observer() {
     let src = r#"observer {
   event,
   state = {
-    lights,
+    nodes,
     ...
   },
   ...
 } /true/ {
-  [ Event::LightStateChanged(l) for l in keys(lights) ]
+  [ Event::OnOffChanged(l) for l in keys(nodes) ]
 }"#;
     let result = lower_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -815,13 +815,13 @@ fn test_lower_lights_off_observer() {
         %0: event [Event]
         %1: state [State]
       bb0:
-        %2 = field %1.lights [Map<String, LightState>]
+        %2 = field %1.nodes [Map<Int, Node>]
         %3 = const_bool true [Bool]
         branch %3 -> bb1, bb2
       bb1:
         %5 = empty_list [[<error>]]
-        %6 = call keys(%2) [[String]]
-        %7 = iter_init %6 [[String]]
+        %6 = call keys(%2) [[Int]]
+        %7 = iter_init %6 [[Int]]
         jump -> bb3
       bb2:
         %4 = empty_list [[Event]]
@@ -829,7 +829,7 @@ fn test_lower_lights_off_observer() {
       bb3:
         iter_next %7 -> %8, bb4, bb5
       bb4:
-        %9 = variant Event::LightStateChanged(%8) [Event]
+        %9 = variant Event::OnOffChanged(%8) [Event]
         %10 = list_push %5, %9 [()]
         jump -> bb3
       bb5:
@@ -886,11 +886,11 @@ fn test_lower_no_filter() {
 fn test_lower_observer_if_else_with_events() {
     let src = r#"observer {
   event,
-  state = { lights, ... },
+  state = { nodes, ... },
   ...
 } /true/ {
   if true {
-    [ Event::LightStateChanged(l) for l in keys(lights) ]
+    [ Event::OnOffChanged(l) for l in keys(nodes) ]
   } else {
     []
   }
@@ -902,7 +902,7 @@ fn test_lower_observer_if_else_with_events() {
         %0: event [Event]
         %1: state [State]
       bb0:
-        %2 = field %1.lights [Map<String, LightState>]
+        %2 = field %1.nodes [Map<Int, Node>]
         %3 = const_bool true [Bool]
         branch %3 -> bb1, bb2
       bb1:
@@ -913,8 +913,8 @@ fn test_lower_observer_if_else_with_events() {
         return %4
       bb3:
         %7 = empty_list [[<error>]]
-        %8 = call keys(%2) [[String]]
-        %9 = iter_init %8 [[String]]
+        %8 = call keys(%2) [[Int]]
+        %9 = iter_init %8 [[Int]]
         jump -> bb6
       bb4:
         %13 = empty_list [[<error>]]
@@ -925,7 +925,7 @@ fn test_lower_observer_if_else_with_events() {
       bb6:
         iter_next %9 -> %10, bb7, bb8
       bb7:
-        %11 = variant Event::LightStateChanged(%10) [Event]
+        %11 = variant Event::OnOffChanged(%10) [Event]
         %12 = list_push %7, %11 [()]
         jump -> bb6
       bb8:

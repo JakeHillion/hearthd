@@ -315,48 +315,47 @@ fn test_check_pattern_simple() {
 
 #[test]
 fn test_check_pattern_nested() {
-    let result = check_and_pretty("observer { state = { lights, ... }, ... } /true/ { lights }");
+    let result = check_and_pretty("observer { state = { nodes, ... }, ... } /true/ { nodes }");
     insta::assert_snapshot!(result, @"
     Automation: observer
       Pattern:
         PatternStruct:
           FieldPattern: state
             PatternStruct:
-              FieldPattern: lights
+              FieldPattern: nodes
               Rest: ...
           Rest: ...
       Filter:
         Bool: true [type: Bool]
       Body:
         ExprStmt:
-          Ident: lights [type: Map<String, LightState>]
+          Ident: nodes [type: Map<Int, Node>]
     Errors:
-      type error at 51..57: observer body must return [Event], found Map<String, LightState>
+      type error at 50..55: observer body must return [Event], found Map<Int, Node>
     ");
 }
 
 #[test]
 fn test_check_pattern_with_two_fields() {
-    let result = check_and_pretty(
-        "observer { state = { lights, binary_sensors, ... }, ... } /true/ { lights }",
-    );
+    let result =
+        check_and_pretty("observer { state = { nodes, by_entity_id, ... }, ... } /true/ { nodes }");
     insta::assert_snapshot!(result, @"
     Automation: observer
       Pattern:
         PatternStruct:
           FieldPattern: state
             PatternStruct:
-              FieldPattern: lights
-              FieldPattern: binary_sensors
+              FieldPattern: nodes
+              FieldPattern: by_entity_id
               Rest: ...
           Rest: ...
       Filter:
         Bool: true [type: Bool]
       Body:
         ExprStmt:
-          Ident: lights [type: Map<String, LightState>]
+          Ident: nodes [type: Map<Int, Node>]
     Errors:
-      type error at 67..73: observer body must return [Event], found Map<String, LightState>
+      type error at 64..69: observer body must return [Event], found Map<Int, Node>
     ");
 }
 
@@ -366,7 +365,7 @@ fn test_check_pattern_with_two_fields() {
 
 #[test]
 fn test_check_field_access() {
-    let result = check_and_pretty("observer { state, ... } /true/ { state.lights }");
+    let result = check_and_pretty("observer { state, ... } /true/ { state.nodes }");
     insta::assert_snapshot!(result, @"
     Automation: observer
       Pattern:
@@ -377,10 +376,10 @@ fn test_check_field_access() {
         Bool: true [type: Bool]
       Body:
         ExprStmt:
-          Field: .lights [type: Map<String, LightState>]
+          Field: .nodes [type: Map<Int, Node>]
             Ident: state [type: State]
     Errors:
-      type error at 33..45: observer body must return [Event], found Map<String, LightState>
+      type error at 33..44: observer body must return [Event], found Map<Int, Node>
     ");
 }
 
@@ -390,18 +389,18 @@ fn test_check_field_access() {
 
 #[test]
 fn test_check_enum_path() {
-    let result = check_and_pretty("observer {} { Event::LightStateChanged }");
+    let result = check_and_pretty("observer {} { Event::OnOffChanged }");
     insta::assert_snapshot!(result, @"
     Automation: observer
       Pattern:
         PatternStruct:
       Body:
         ExprStmt:
-          Path: [type: Event::LightStateChanged]
+          Path: [type: Event::OnOffChanged]
             Segment: Event
-            Segment: LightStateChanged
+            Segment: OnOffChanged
     Errors:
-      type error at 14..38: observer body must return [Event], found Event::LightStateChanged
+      type error at 14..33: observer body must return [Event], found Event::OnOffChanged
     ");
 }
 
@@ -429,26 +428,26 @@ fn test_check_unknown_enum_variant() {
 #[test]
 fn test_check_builtin_keys() {
     let result =
-        check_and_pretty("observer { state = { lights, ... }, ... } /true/ { keys(lights) }");
+        check_and_pretty("observer { state = { nodes, ... }, ... } /true/ { keys(nodes) }");
     insta::assert_snapshot!(result, @"
     Automation: observer
       Pattern:
         PatternStruct:
           FieldPattern: state
             PatternStruct:
-              FieldPattern: lights
+              FieldPattern: nodes
               Rest: ...
           Rest: ...
       Filter:
         Bool: true [type: Bool]
       Body:
         ExprStmt:
-          Call: [type: [String]]
+          Call: [type: [Int]]
             Ident: keys [type: <error>]
             Args:
-              Ident: lights [type: Map<String, LightState>]
+              Ident: nodes [type: Map<Int, Node>]
     Errors:
-      type error at 51..63: observer body must return [Event], found [String]
+      type error at 50..61: observer body must return [Event], found [Int]
     ");
 }
 
@@ -560,7 +559,7 @@ fn test_check_if_without_else() {
 #[test]
 fn test_check_list_comp() {
     let result = check_and_pretty(
-        "observer { state = { lights, ... }, ... } /true/ { [Event::LightStateChanged(l) for l in keys(lights)] }",
+        "observer { state = { nodes, ... }, ... } /true/ { [Event::OnOffChanged(l) for l in keys(nodes)] }",
     );
     insta::assert_snapshot!(result, @"
     Automation: observer
@@ -568,7 +567,7 @@ fn test_check_list_comp() {
         PatternStruct:
           FieldPattern: state
             PatternStruct:
-              FieldPattern: lights
+              FieldPattern: nodes
               Rest: ...
           Rest: ...
       Filter:
@@ -582,18 +581,18 @@ fn test_check_list_comp() {
               For:
                 Var: l
                 Iter:
-                  Call: [type: [String]]
+                  Call: [type: [Int]]
                     Ident: keys [type: <error>]
                     Args:
-                      Ident: lights [type: Map<String, LightState>]
+                      Ident: nodes [type: Map<Int, Node>]
                 Body:
                   Push: __result0
                     Call: [type: Event]
-                      Path: [type: Event::LightStateChanged]
+                      Path: [type: Event::OnOffChanged]
                         Segment: Event
-                        Segment: LightStateChanged
+                        Segment: OnOffChanged
                       Args:
-                        Ident: l [type: String]
+                        Ident: l [type: Int]
             Result:
               Ident: __result0 [type: [Event]]
     ");
@@ -711,12 +710,12 @@ fn test_check_lights_off_automation() {
     let src = r#"observer {
   event,
   state = {
-    lights,
+    nodes,
     ...
   },
   ...
 } /true/ {
-  [ Event::LightStateChanged(l) for l in keys(lights) ]
+  [ Event::OnOffChanged(l) for l in keys(nodes) ]
 }"#;
     let result = check_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -726,7 +725,7 @@ fn test_check_lights_off_automation() {
           FieldPattern: event
           FieldPattern: state
             PatternStruct:
-              FieldPattern: lights
+              FieldPattern: nodes
               Rest: ...
           Rest: ...
       Filter:
@@ -740,18 +739,18 @@ fn test_check_lights_off_automation() {
               For:
                 Var: l
                 Iter:
-                  Call: [type: [String]]
+                  Call: [type: [Int]]
                     Ident: keys [type: <error>]
                     Args:
-                      Ident: lights [type: Map<String, LightState>]
+                      Ident: nodes [type: Map<Int, Node>]
                 Body:
                   Push: __result0
                     Call: [type: Event]
-                      Path: [type: Event::LightStateChanged]
+                      Path: [type: Event::OnOffChanged]
                         Segment: Event
-                        Segment: LightStateChanged
+                        Segment: OnOffChanged
                       Args:
-                        Ident: l [type: String]
+                        Ident: l [type: Int]
             Result:
               Ident: __result0 [type: [Event]]
     ");
