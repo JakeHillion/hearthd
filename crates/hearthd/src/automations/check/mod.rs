@@ -292,6 +292,7 @@ pub struct TypeChecker {
     env: TypeEnv,
     errors: Vec<TypeError>,
     constraints: Vec<EntityConstraint>,
+    schema: Option<std::sync::Arc<crate::automations::schema::DeploymentSchema>>,
 }
 
 impl Default for TypeChecker {
@@ -307,7 +308,17 @@ impl TypeChecker {
             env: TypeEnv::new(),
             errors: Vec::new(),
             constraints: Vec::new(),
+            schema: None,
         }
+    }
+
+    /// Install a deployment schema for structural state-binding lookups.
+    pub fn with_schema(
+        mut self,
+        schema: std::sync::Arc<crate::automations::schema::DeploymentSchema>,
+    ) -> Self {
+        self.schema = Some(schema);
+        self
     }
 
     fn error(&mut self, span: SimpleSpan, message: String) {
@@ -486,7 +497,37 @@ impl TypeChecker {
     /// Get the fields of a type for nested pattern matching.
     fn type_fields(&self, ty: &Ty) -> HashMap<String, Ty> {
         match ty {
-            Ty::Named(name) => TypeRegistry::struct_fields(name).unwrap_or_default(),
+            Ty::Named(name) if name == "State" => {
+                // When a schema is installed, surface each known domain
+                // as a synthetic group type so patterns can destructure
+                // `state = { light = { … }, ... }`. Without a schema,
+                // fall back to the static facet shape (which exposes
+                // only the raw maps).
+                if let Some(schema) = &self.schema {
+                    let mut fields = HashMap::new();
+                    for domain in schema.domains.keys() {
+                        fields.insert(domain.clone(), Ty::Named(format!("__domain_{}", domain)));
+                    }
+                    fields
+                } else {
+                    TypeRegistry::struct_fields(name).unwrap_or_default()
+                }
+            }
+            Ty::Named(name) => {
+                if let Some(domain) = name.strip_prefix("__domain_") {
+                    if let Some(schema) = &self.schema {
+                        if let Some(slugs) = schema.domains.get(domain) {
+                            return slugs
+                                .keys()
+                                .map(|slug| (slug.clone(), Ty::Named("Node".into())))
+                                .collect();
+                        }
+                    }
+                    HashMap::new()
+                } else {
+                    TypeRegistry::struct_fields(name).unwrap_or_default()
+                }
+            }
             _ => HashMap::new(),
         }
     }
@@ -1023,6 +1064,13 @@ impl TypeChecker {
             return Ty::Error;
         }
 
+        // Deployment-schema-aware path: `state.<domain>` synthesises a
+        // group type, and `<group>.<slug>` resolves to a `Node` so
+        // automations can bind specific real devices.
+        if let Some(domain_ty) = self.lookup_schema_field(ty, field, span) {
+            return domain_ty;
+        }
+
         // Check entity registry
         if self.registry.is_entity_registry(ty) {
             if let Some(domain) = self.registry.entity_registry_domain(ty) {
@@ -1039,6 +1087,38 @@ impl TypeChecker {
         } else {
             self.error(span, format!("no field '{}' on type {}", field, ty));
             Ty::Error
+        }
+    }
+
+    /// Resolve `state.<domain>` or `<state-domain-group>.<slug>` against
+    /// the active deployment schema. Returns `None` if no schema is
+    /// installed, or the access does not match the schema-aware pattern.
+    fn lookup_schema_field(&mut self, ty: &Ty, field: &str, span: SimpleSpan) -> Option<Ty> {
+        let schema = self.schema.as_ref()?;
+        match ty {
+            Ty::Named(name) if name == "State" => {
+                if schema.has_domain(field) {
+                    Some(Ty::Named(format!("__domain_{}", field)))
+                } else {
+                    None
+                }
+            }
+            Ty::Named(name) => {
+                let domain = name.strip_prefix("__domain_")?;
+                if schema.has_slug(domain, field) {
+                    Some(Ty::Named("Node".into()))
+                } else {
+                    self.error(
+                        span,
+                        format!(
+                            "no entity '{}' in state.{} for this deployment",
+                            field, domain
+                        ),
+                    );
+                    Some(Ty::Error)
+                }
+            }
+            _ => None,
         }
     }
 
@@ -1530,6 +1610,18 @@ fn find_await_in_stmt(stmt: &TypedStmt) -> Option<SimpleSpan> {
 /// Convenience function: parse, desugar, and type-check a program.
 pub fn check_program(program: &lowered::LoweredProgram) -> CheckResult {
     TypeChecker::new().check_program(program)
+}
+
+/// Same as [`check_program`] but installs a deployment schema first, so
+/// structurally-bound `state.<domain>.<slug>` paths can be validated
+/// against the running fabric.
+pub fn check_program_with_schema(
+    program: &lowered::LoweredProgram,
+    schema: std::sync::Arc<crate::automations::schema::DeploymentSchema>,
+) -> CheckResult {
+    TypeChecker::new()
+        .with_schema(schema)
+        .check_program(program)
 }
 
 /// Render type errors as pretty diagnostics using ariadne.

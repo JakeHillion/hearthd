@@ -1287,3 +1287,122 @@ fn test_membership_on_scalars_still_checks() {
         );
     }
 }
+
+// =============================================================================
+// Deployment schema (state.<domain>.<slug> binding)
+// =============================================================================
+
+/// A schema over one node per entry, as `(entity_id, node id)`.
+fn build_schema(entries: &[(&str, u64)]) -> crate::automations::schema::DeploymentSchema {
+    let mut state = crate::engine::state::State::default();
+    for (entity_id, raw) in entries {
+        let id = crate::engine::NodeId::from_raw(*raw);
+        state.nodes.insert(
+            id,
+            crate::matter::Node {
+                entity_id: entity_id.to_string(),
+                integration: "test".to_string(),
+                name: None,
+                endpoints: std::collections::HashMap::new(),
+            },
+        );
+    }
+    crate::automations::schema::DeploymentSchema::from_state(&state)
+}
+
+/// [`check_errors`] with a deployment schema installed.
+fn check_errors_with_schema(
+    input: &str,
+    schema: crate::automations::schema::DeploymentSchema,
+) -> String {
+    let program = crate::automations::parse(input).expect("parsing should succeed");
+    let lowered = crate::automations::desugar_program(program);
+    let result =
+        crate::automations::check::check_program_with_schema(&lowered, std::sync::Arc::new(schema));
+    let rendered = format_type_errors(&result.errors, input, "<test>");
+    strip_ansi(&rendered)
+}
+
+/// A slug the deployment declares resolves to a `Node`, so destructuring
+/// `state.light.living_room_lamp` binds something carrying `entity_id`.
+/// Without a schema `state` exposes only its facet shape, which has no
+/// `light` field at all.
+#[test]
+fn test_schema_state_domain_slug_resolves_to_node() {
+    let result = check_errors_with_schema(
+        r#"observer { event, state = { light = { living_room_lamp }, ... }, ... } /living_room_lamp.entity_id == "light.living_room_lamp"/ { [event] }"#,
+        build_schema(&[("light.living_room_lamp", 1)]),
+    );
+    insta::assert_snapshot!(result, @"");
+}
+
+/// A slug the deployment does not declare is reported rather than quietly
+/// typed as `Error`. The schema is the only record of which devices exist,
+/// so it is the one place a mistyped entity name can be caught before the
+/// automation is deployed.
+#[test]
+fn test_schema_unknown_slug_in_a_pattern_is_a_type_error() {
+    let result = check_errors_with_schema(
+        r#"observer { event, state = { light = { missing }, ... }, ... } /missing.entity_id == "x"/ { [event] }"#,
+        build_schema(&[("light.kitchen_lamp", 1)]),
+    );
+    insta::assert_snapshot!(result, @r#"
+    Error: unknown field 'missing' in pattern
+       ╭─[ <test>:1:39 ]
+       │
+     1 │ observer { event, state = { light = { missing }, ... }, ... } /missing.entity_id == "x"/ { [event] }
+       │                                       ───┬───  
+       │                                          ╰───── unknown field 'missing' in pattern
+    ───╯
+    "#);
+}
+
+/// The same resolution drives a path that is written out rather than
+/// destructured, since both go through field access on `state`.
+#[test]
+fn test_schema_state_path_resolves_to_node() {
+    let result = check_errors_with_schema(
+        r#"observer { event, state, ... } /state.light.living_room_lamp.entity_id == "light.living_room_lamp"/ { [event] }"#,
+        build_schema(&[("light.living_room_lamp", 1)]),
+    );
+    insta::assert_snapshot!(result, @"");
+}
+
+/// A written-out path names the deployment it was checked against, which a
+/// pattern cannot: the pattern only knows the field is not there, where the
+/// path knows which domain it looked in.
+#[test]
+fn test_schema_unknown_slug_in_a_path_is_a_type_error() {
+    let result = check_errors_with_schema(
+        r#"observer { event, state, ... } /state.light.missing.entity_id == "x"/ { [event] }"#,
+        build_schema(&[("light.living_room_lamp", 1)]),
+    );
+    insta::assert_snapshot!(result, @r#"
+    Error: no entity 'missing' in state.light for this deployment
+       ╭─[ <test>:1:33 ]
+       │
+     1 │ observer { event, state, ... } /state.light.missing.entity_id == "x"/ { [event] }
+       │                                 ─────────┬─────────  
+       │                                          ╰─────────── no entity 'missing' in state.light for this deployment
+    ───╯
+    "#);
+}
+
+/// Without a schema `state` keeps the facet shape of
+/// [`crate::engine::state::State`], which has no domains on it at all — so
+/// the same source that checks above is rejected.
+#[test]
+fn test_schema_absent_leaves_state_with_its_facet_shape() {
+    let result = check_errors(
+        r#"observer { event, state, ... } /state.light.living_room_lamp.entity_id == "x"/ { [event] }"#,
+    );
+    insta::assert_snapshot!(result, @r#"
+    Error: no field 'light' on type State
+       ╭─[ <test>:1:33 ]
+       │
+     1 │ observer { event, state, ... } /state.light.living_room_lamp.entity_id == "x"/ { [event] }
+       │                                 ─────┬─────  
+       │                                      ╰─────── no field 'light' on type State
+    ───╯
+    "#);
+}
