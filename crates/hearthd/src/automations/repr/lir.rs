@@ -17,6 +17,7 @@ use super::ast;
 use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::typed::Ty;
+use crate::automations::domain::Domain;
 
 /// A numbered register within a function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,6 +101,13 @@ pub enum LirInstr {
         dst: Reg,
         value: String,
         unit: ast::UnitType,
+    },
+    /// An entity the automation names, resolved by relocation.
+    EntityRef {
+        dst: Reg,
+        domain: Domain,
+        slug: String,
+        span: chumsky::span::SimpleSpan,
     },
     Unit {
         dst: Reg,

@@ -8,6 +8,7 @@
 use super::ast;
 use super::function::FunctionIdentity;
 use super::typed::Ty;
+use crate::automations::domain::Domain;
 
 /// A numbered temporary value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -83,6 +84,18 @@ pub enum Op {
     ConstUnit {
         value: String,
         unit: ast::UnitType,
+    },
+
+    /// An entity the automation names, e.g. `state.light.living_room_lamp`.
+    ///
+    /// A constant whose value is not known yet: the name is fixed at compile
+    /// time, the node it stands for is supplied by relocation. The whole
+    /// access collapses to this, so there is no field lookup left to do at
+    /// runtime.
+    EntityRef {
+        domain: Domain,
+        slug: String,
+        span: chumsky::span::SimpleSpan,
     },
 
     /// The unit/void value.

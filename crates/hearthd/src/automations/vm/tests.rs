@@ -1,8 +1,8 @@
 //! Tests for the synchronous bytecode VM.
 //!
 //! Each test compiles real DSL source through the whole pipeline
-//! (parse → desugar → check → HIR → LIR → bytecode) and executes the
-//! result, so what runs here is exactly what the runner will run.
+//! (parse → desugar → check → HIR → LIR → bytecode → relocate) and executes
+//! the result, so what runs here is exactly what the runner will run.
 //!
 //! [`compile`] asserts the source type-checks cleanly. The VM's safety
 //! argument is that its input has already passed the checker, so a test
@@ -30,6 +30,7 @@ use crate::automations::repr::BytecodeAutomation;
 use crate::automations::repr::BytecodeProgram;
 use crate::automations::repr::Opcode;
 use crate::automations::repr::function::FunctionIdentity;
+use crate::automations::schema::DeploymentSchema;
 
 // ============================================================================
 // Harness
@@ -47,7 +48,12 @@ fn compile(src: &str) -> BytecodeAutomation {
     );
     let hir = crate::automations::lower_program(&checked);
     let lir = crate::automations::lower_lir_program(&hir);
-    match crate::automations::lower_bytecode_program(&lir) {
+    let relocatable = crate::automations::lower_bytecode_program(&lir);
+    // These automations name no entities, so relocating against an empty
+    // deployment resolves everything there is to resolve.
+    let bytecode = crate::automations::relocate_program(&relocatable, &DeploymentSchema::default())
+        .expect("source names no entities, so relocation has nothing to resolve");
+    match bytecode {
         BytecodeProgram::Automation(auto) => auto,
         BytecodeProgram::Template { .. } => panic!("expected an Automation, got a Template"),
     }

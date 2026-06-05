@@ -109,6 +109,7 @@ fn write_op(op: &Op, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Op::ConstString(s) => write!(f, "const_string \"{}\"", s),
         Op::ConstBool(b) => write!(f, "const_bool {}", b),
         Op::ConstUnit { value, unit } => write!(f, "const_unit {}{}", value, unit),
+        Op::EntityRef { domain, slug, .. } => write!(f, "entity {}.{}", domain, slug),
         Op::Unit => write!(f, "unit"),
         Op::BinOp { op, left, right } => write!(f, "{} {}, {}", op, left, right),
         Op::Neg(tmp) => write!(f, "neg {}", tmp),

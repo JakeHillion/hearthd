@@ -93,6 +93,12 @@ fn lower_instr(instr: &Instruction) -> LirInstr {
             value: value.clone(),
             unit: *unit,
         },
+        Op::EntityRef { domain, slug, span } => LirInstr::EntityRef {
+            dst,
+            domain: *domain,
+            slug: slug.clone(),
+            span: *span,
+        },
         Op::Unit => LirInstr::Unit { dst },
         Op::BinOp { op, left, right } => LirInstr::BinOp {
             dst,
@@ -211,6 +217,7 @@ fn op_input_tmps(op: &Op) -> Vec<usize> {
         | Op::ConstString(_)
         | Op::ConstBool(_)
         | Op::ConstUnit { .. }
+        | Op::EntityRef { .. }
         | Op::Unit
         | Op::EmptyList => Vec::new(),
         Op::BinOp { left, right, .. } => vec![left.0, right.0],

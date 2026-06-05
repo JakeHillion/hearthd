@@ -7,6 +7,7 @@
 use super::ast;
 use super::function::FunctionIdentity;
 use super::lowered::Origin;
+use crate::automations::domain::Domain;
 
 /// Internal semantic type. Distinct from the syntactic `ast::Type`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +38,12 @@ pub enum Ty {
     // Named type referencing the registry (e.g. "Event", "Light")
     Named(std::string::String),
 
+    // The group of entities a deployment has in one domain, as `state.light`.
+    // Its fields are slugs, each naming a `Node`; which slugs exist is
+    // deployment knowledge the checker deliberately does not have, so any
+    // slug type checks and the relocator decides whether it resolves.
+    DomainGroup(Domain),
+
     // Enum variant (e.g. Event::LightOff)
     EnumVariant {
         enum_name: std::string::String,
@@ -66,6 +73,7 @@ impl std::fmt::Display for Ty {
             Ty::Option(t) => write!(f, "Option<{}>", t),
             Ty::Future(t) => write!(f, "Future<{}>", t),
             Ty::Named(n) => write!(f, "{}", n),
+            Ty::DomainGroup(d) => write!(f, "state.{}", d),
             Ty::EnumVariant {
                 enum_name,
                 variant_name,
@@ -253,7 +261,7 @@ pub enum TypedProgram {
 /// must exist in domain "person_tracker".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityConstraint {
-    pub domain: std::string::String,
+    pub domain: Domain,
     pub entity: std::string::String,
     pub span: chumsky::span::SimpleSpan,
 }

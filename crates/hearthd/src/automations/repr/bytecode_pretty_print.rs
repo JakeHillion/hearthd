@@ -4,6 +4,7 @@
 //! tests. Each instruction is shown with its byte offset so jump targets
 //! are readable.
 
+use super::ast;
 use super::bytecode::*;
 use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
@@ -17,81 +18,170 @@ impl PrettyPrint for BytecodeProgram {
             BytecodeProgram::Template {
                 params,
                 automations,
-            } => {
-                write_indent(indent, f)?;
-                writeln!(f, "Template:")?;
-                write_indent(indent + 1, f)?;
-                writeln!(f, "Params:")?;
-                for param in params {
-                    param.pretty_print(indent + 2, f)?;
-                }
-                write_indent(indent + 1, f)?;
-                writeln!(f, "Automations:")?;
-                for auto in automations {
-                    auto.pretty_print(indent + 2, f)?;
-                }
-                Ok(())
-            }
+            } => write_template(params, automations, indent, f),
         }
     }
 }
 
 impl PrettyPrint for BytecodeAutomation {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write_indent(indent, f)?;
-        writeln!(f, "Automation: {}", self.kind)?;
-        if let Some(filter) = &self.filter {
-            write_indent(indent + 1, f)?;
-            writeln!(f, "filter:")?;
-            filter.pretty_print(indent + 2, f)?;
-        }
-        write_indent(indent + 1, f)?;
-        writeln!(f, "body:")?;
-        self.body.pretty_print(indent + 2, f)
+        write_automation(self.kind, self.filter.as_ref(), &self.body, indent, f)
     }
 }
 
 impl PrettyPrint for Bytecode {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write_indent(indent, f)?;
-        writeln!(f, "regs: {}", self.num_regs)?;
-        if !self.params.is_empty() {
-            write_indent(indent, f)?;
-            writeln!(f, "params:")?;
-            for param in &self.params {
-                write_indent(indent + 1, f)?;
-                writeln!(f, "r{}: {} [{}]", param.reg, param.name, param.ty)?;
-            }
-        }
-        if !self.consts.is_empty() {
-            write_indent(indent, f)?;
-            writeln!(f, "consts:")?;
-            for (i, c) in self.consts.iter().enumerate() {
-                write_indent(indent + 1, f)?;
-                write!(f, "#{} = ", i)?;
-                write_const(c, f)?;
-                writeln!(f)?;
-            }
-        }
-        write_indent(indent, f)?;
-        writeln!(f, "code:")?;
-        disassemble(&self.code, &self.consts, indent + 1, f)
+        let listing: Vec<String> = self.consts.iter().map(verbose).collect();
+        let briefs: Vec<String> = self.consts.iter().map(brief).collect();
+        write_function(
+            &self.params,
+            self.num_regs,
+            &listing,
+            &briefs,
+            &self.code,
+            indent,
+            f,
+        )
     }
 }
 
-fn write_const(c: &Const, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl PrettyPrint for RelocatableProgram {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RelocatableProgram::Automation(auto) => auto.pretty_print(indent, f),
+            RelocatableProgram::Template {
+                params,
+                automations,
+            } => write_template(params, automations, indent, f),
+        }
+    }
+}
+
+impl PrettyPrint for RelocatableAutomation {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_automation(self.kind, self.filter.as_ref(), &self.body, indent, f)
+    }
+}
+
+impl PrettyPrint for RelocatableBytecode {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let listing: Vec<String> = self.consts.iter().map(reloc_verbose).collect();
+        let briefs: Vec<String> = self.consts.iter().map(reloc_brief).collect();
+        write_function(
+            &self.params,
+            self.num_regs,
+            &listing,
+            &briefs,
+            &self.code,
+            indent,
+            f,
+        )
+    }
+}
+
+/// The body every function form prints, over an already-rendered pool.
+///
+/// Relocation changes what a pool slot holds and nothing else, so a
+/// relocatable function and the bytecode it becomes render identically
+/// apart from the slots that were symbols.
+fn write_function(
+    params: &[BytecodeParam],
+    num_regs: u32,
+    listing: &[String],
+    briefs: &[String],
+    code: &[u8],
+    indent: usize,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    write_indent(indent, f)?;
+    writeln!(f, "regs: {}", num_regs)?;
+    if !params.is_empty() {
+        write_indent(indent, f)?;
+        writeln!(f, "params:")?;
+        for param in params {
+            write_indent(indent + 1, f)?;
+            writeln!(f, "r{}: {} [{}]", param.reg, param.name, param.ty)?;
+        }
+    }
+    if !listing.is_empty() {
+        write_indent(indent, f)?;
+        writeln!(f, "consts:")?;
+        for (i, c) in listing.iter().enumerate() {
+            write_indent(indent + 1, f)?;
+            writeln!(f, "#{} = {}", i, c)?;
+        }
+    }
+    write_indent(indent, f)?;
+    writeln!(f, "code:")?;
+    disassemble(code, briefs, indent + 1, f)
+}
+
+/// The `Template:` header both program forms print.
+fn write_template<A: PrettyPrint>(
+    params: &[ast::Spanned<ast::TemplateParam>],
+    automations: &[A],
+    indent: usize,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    write_indent(indent, f)?;
+    writeln!(f, "Template:")?;
+    write_indent(indent + 1, f)?;
+    writeln!(f, "Params:")?;
+    for param in params {
+        param.pretty_print(indent + 2, f)?;
+    }
+    write_indent(indent + 1, f)?;
+    writeln!(f, "Automations:")?;
+    for auto in automations {
+        auto.pretty_print(indent + 2, f)?;
+    }
+    Ok(())
+}
+
+/// The `Automation:` header both automation forms print.
+fn write_automation<B: PrettyPrint>(
+    kind: ast::AutomationKind,
+    filter: Option<&B>,
+    body: &B,
+    indent: usize,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    write_indent(indent, f)?;
+    writeln!(f, "Automation: {}", kind)?;
+    if let Some(filter) = filter {
+        write_indent(indent + 1, f)?;
+        writeln!(f, "filter:")?;
+        filter.pretty_print(indent + 2, f)?;
+    }
+    write_indent(indent + 1, f)?;
+    writeln!(f, "body:")?;
+    body.pretty_print(indent + 2, f)
+}
+
+/// One resolved pool entry as the `consts:` listing names it, which says
+/// what kind of constant it is where the operand form does not.
+fn verbose(c: &Const) -> String {
     match c {
-        Const::Int(n) => write!(f, "int {}", n),
-        Const::Float(n) => write!(f, "float {}", n),
-        Const::String(s) => write!(f, "string \"{}\"", s),
-        Const::Ident(s) => write!(f, "ident {}", s),
-        Const::UnitLit { value, unit } => write!(f, "unit {}{}", value, unit),
+        Const::Int(n) => format!("int {}", n),
+        Const::Float(n) => format!("float {}", n),
+        Const::String(s) => format!("string \"{}\"", s),
+        Const::Ident(s) => format!("ident {}", s),
+        Const::UnitLit { value, unit } => format!("unit {}{}", value, unit),
+        Const::Node(id) => format!("node {}", id),
+    }
+}
+
+/// One pool entry as the listing names it, relocated or not.
+fn reloc_verbose(c: &RelocConst) -> String {
+    match c {
+        RelocConst::Resolved(konst) => verbose(konst),
+        RelocConst::Symbol(symbol) => format!("entity {}", symbol),
     }
 }
 
 fn disassemble(
     code: &[u8],
-    consts: &[Const],
+    consts: &[String],
     indent: usize,
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
@@ -104,13 +194,17 @@ fn disassemble(
         write_indent(indent, f)?;
         write!(f, "{:04}: ", start)?;
         match opcode {
-            Opcode::LoadConstInt | Opcode::LoadConstFloat | Opcode::LoadConstString => {
+            Opcode::LoadConstInt
+            | Opcode::LoadConstFloat
+            | Opcode::LoadConstString
+            | Opcode::LoadConstNode => {
                 let dst = read_u32(code, &mut pc);
                 let idx = read_u32(code, &mut pc);
                 let name = match opcode {
                     Opcode::LoadConstInt => "load_const_int",
                     Opcode::LoadConstFloat => "load_const_float",
                     Opcode::LoadConstString => "load_const_string",
+                    Opcode::LoadConstNode => "load_const_node",
                     _ => unreachable!(),
                 };
                 writeln!(
@@ -346,12 +440,27 @@ fn read_u32(code: &[u8], pc: &mut usize) -> u32 {
     u32::from_le_bytes(bytes)
 }
 
-fn const_brief(consts: &[Const], idx: u32) -> String {
-    match &consts[idx as usize] {
+/// The pool entry an operand names, as the disassembly shows it.
+fn const_brief(consts: &[String], idx: u32) -> String {
+    consts[idx as usize].clone()
+}
+
+/// One resolved pool entry in brief form.
+fn brief(c: &Const) -> String {
+    match c {
         Const::Int(n) => format!("int {}", n),
         Const::Float(n) => format!("float {}", n),
         Const::String(s) => format!("\"{}\"", s),
         Const::Ident(s) => s.clone(),
         Const::UnitLit { value, unit } => format!("{}{}", value, unit),
+        Const::Node(id) => format!("node {}", id),
+    }
+}
+
+/// One pool entry in brief form, whether or not it has been relocated.
+fn reloc_brief(c: &RelocConst) -> String {
+    match c {
+        RelocConst::Resolved(konst) => brief(konst),
+        RelocConst::Symbol(symbol) => format!("entity {}", symbol),
     }
 }
