@@ -23,6 +23,24 @@ latitude = 59.9110
 longitude = 10.7579
 # elevation_m and timezone are optional and can be omitted
 
+[automations]
+
+# One entry per automation, keyed by the name it is reported under. Each
+# points at a .hda file, which is compiled at startup and run against the
+# devices the integrations discovered; an automation naming a device this
+# deployment does not have is reported and skipped, and the rest still run.
+#
+# The pair under examples/automations/ turn a lamp on when a motion sensor
+# reports occupancy and off five minutes after the last report. They name
+# light.living_room_lamp and binary_sensor.kitchen_motion, so change those to
+# entities you actually have before enabling them.
+#
+# [automations.kitchen_motion_on]
+# file = "/etc/hearthd/automations/kitchen_motion_on.hda"
+#
+# [automations.kitchen_motion_off]
+# file = "/etc/hearthd/automations/kitchen_motion_off.hda"
+
 [integrations]
 
 # EcoFlow, over EcoFlow's consumer cloud API. Currently supports the Wave 3

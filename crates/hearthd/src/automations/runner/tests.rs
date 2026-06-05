@@ -515,3 +515,44 @@ fn test_runner_a_non_list_body_result_sends_nothing() {
     );
     insta::assert_snapshot!(sink.rendered(), @"");
 }
+
+// ============================================================================
+// The shipped examples
+// ============================================================================
+
+// The automations under `examples/automations/` are what a new deployment is
+// pointed at, so they are compiled here rather than described. `include_str!`
+// is what keeps the files themselves checked: a copy of their text would
+// drift from the files the moment either changed.
+const EXAMPLE_MOTION_ON: &str =
+    include_str!("../../../../../examples/automations/kitchen_motion_on.hda");
+const EXAMPLE_MOTION_OFF: &str =
+    include_str!("../../../../../examples/automations/kitchen_motion_off.hda");
+
+/// The shipped pair, run against the deployment they are written for: motion
+/// turns the lamp on at once and off five minutes later.
+#[tokio::test(start_paused = true)]
+async fn test_runner_the_shipped_examples_drive_a_light() {
+    let state = build_state();
+    let schema = Arc::new(DeploymentSchema::from_state(&state));
+    let sink = Arc::new(RecordingSink::default());
+    let runner = Runner::new(
+        sink.clone(),
+        schema.clone(),
+        vec![
+            compile_observer(EXAMPLE_MOTION_ON, &schema),
+            compile_observer(EXAMPLE_MOTION_OFF, &schema),
+        ],
+    );
+
+    runner.dispatch(&motion(), &state);
+    settle().await;
+    insta::assert_snapshot!(sink.rendered(), @"1 e1 OnOff(On)");
+
+    tokio::time::advance(Duration::from_secs(6 * 60)).await;
+    settle().await;
+    insta::assert_snapshot!(sink.rendered(), @r"
+    1 e1 OnOff(On)
+    1 e1 OnOff(Off)
+    ");
+}
