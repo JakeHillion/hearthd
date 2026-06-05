@@ -210,10 +210,10 @@ impl<C: MqttClient> MqttIntegration<C> {
             })?;
 
         let state_topic = light.state_topic.clone();
-        let node = light.to_node(INTEGRATION_NAME);
         info!("Discovered light entity: {} ({})", light.name, entity_id);
 
         let node_id = node_ids.allocate();
+        let node = light.to_node(INTEGRATION_NAME, node_id);
         let light_arc = Arc::new(Mutex::new(light));
 
         {
@@ -285,13 +285,13 @@ impl<C: MqttClient> MqttIntegration<C> {
                 })?;
 
         let state_topic = sensor.state_topic.clone();
-        let node = sensor.to_node(INTEGRATION_NAME);
         info!(
             "Discovered binary sensor entity: {} ({})",
             sensor.name, entity_id
         );
 
         let node_id = node_ids.allocate();
+        let node = sensor.to_node(INTEGRATION_NAME, node_id);
         let sensor_arc = Arc::new(Mutex::new(sensor));
 
         {
@@ -370,7 +370,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     );
                     return Ok(());
                 }
-                sensor.to_node(INTEGRATION_NAME)
+                sensor.to_node(INTEGRATION_NAME, node_id)
             };
             info!("Added {:?} channel to sensor {}", measurement, entity_id);
             // Re-announce the node so the engine picks up the new cluster; the
@@ -393,10 +393,10 @@ impl<C: MqttClient> MqttIntegration<C> {
         })?;
 
         let state_topic = sensor.state_topic.clone();
-        let node = sensor.to_node(INTEGRATION_NAME);
         info!("Discovered sensor entity: {} ({})", sensor.name, entity_id);
 
         let node_id = node_ids.allocate();
+        let node = sensor.to_node(INTEGRATION_NAME, node_id);
         let sensor_arc = Arc::new(Mutex::new(sensor));
 
         {

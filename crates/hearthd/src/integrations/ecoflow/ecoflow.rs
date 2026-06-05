@@ -83,6 +83,7 @@ struct Device {
 impl Device {
     fn node(&self) -> Node {
         Node {
+            id: self.node_id,
             entity_id: self.entity_id.clone(),
             integration: INTEGRATION_NAME.to_string(),
             name: Some(self.name.clone()),

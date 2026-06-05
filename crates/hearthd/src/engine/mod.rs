@@ -3,6 +3,7 @@ mod event;
 mod integration;
 mod message;
 mod node_id;
+mod runner;
 pub mod state;
 
 pub use engine::Engine;
@@ -16,4 +17,5 @@ pub use message::FromIntegrationMessage;
 pub use message::ToIntegrationMessage;
 pub use node_id::NodeId;
 pub use node_id::NodeIdAllocator;
+pub use runner::AutomationRunner;
 pub use state::State;

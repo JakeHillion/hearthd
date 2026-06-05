@@ -71,7 +71,7 @@ impl MetnoIntegration {
         Self { sites, _task: None }
     }
 
-    fn build_node(name: &str, entity_id: &str) -> Node {
+    fn build_node(id: NodeId, name: &str, entity_id: &str) -> Node {
         let clusters = forecast::null_clusters()
             .into_iter()
             .map(|c| (c.name().to_string(), c))
@@ -81,6 +81,7 @@ impl MetnoIntegration {
         endpoints.insert(METNO_ENDPOINT, Endpoint { clusters });
 
         Node {
+            id,
             entity_id: entity_id.to_string(),
             integration: INTEGRATION_NAME.to_string(),
             name: Some(format!("{name} weather")),
@@ -224,7 +225,7 @@ impl Integration for MetnoIntegration {
         for site in self.sites.drain(..) {
             let entity_id = format!("weather.{}", site.name);
             let node_id = node_ids.allocate();
-            let node = Self::build_node(&site.name, &entity_id);
+            let node = Self::build_node(node_id, &site.name, &entity_id);
             // Seed the diff baseline with the same clusters we announce.
             let last = node.endpoints[&METNO_ENDPOINT].clusters.clone();
 
@@ -274,7 +275,7 @@ mod tests {
 
     #[test]
     fn build_node_advertises_all_weather_clusters() {
-        let node = MetnoIntegration::build_node("home", "weather.home");
+        let node = MetnoIntegration::build_node(NodeId::from_raw(1), "home", "weather.home");
         assert_eq!(node.entity_id, "weather.home");
         assert_eq!(node.integration, "metno");
         let endpoint = node.endpoints.get(&METNO_ENDPOINT).unwrap();

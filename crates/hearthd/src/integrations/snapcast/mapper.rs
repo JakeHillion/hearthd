@@ -58,6 +58,7 @@ pub struct CommandContext<'a> {
 
 /// Build a Matter node for a Snapcast group.
 pub fn group_node(
+    id: NodeId,
     group: &Group,
     streams: &HashMap<String, Stream>,
     stream_indices: &HashMap<String, u8>,
@@ -118,6 +119,7 @@ pub fn group_node(
     endpoints.insert(SNAPCAST_ENDPOINT, endpoint);
 
     Node {
+        id,
         entity_id: entity_id.to_string(),
         integration: INTEGRATION_NAME.to_string(),
         name: Some(group_display_name(group)),
@@ -126,7 +128,7 @@ pub fn group_node(
 }
 
 /// Build a Matter node for a Snapcast client.
-pub fn client_node(client: &Client, entity_id: &str) -> Node {
+pub fn client_node(id: NodeId, client: &Client, entity_id: &str) -> Node {
     let mut endpoint = Endpoint::default();
     endpoint.clusters.insert(
         crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
@@ -151,6 +153,7 @@ pub fn client_node(client: &Client, entity_id: &str) -> Node {
     endpoints.insert(SNAPCAST_ENDPOINT, endpoint);
 
     Node {
+        id,
         entity_id: entity_id.to_string(),
         integration: INTEGRATION_NAME.to_string(),
         name: Some(client_display_name(client)),

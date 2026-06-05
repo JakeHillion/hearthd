@@ -11,6 +11,7 @@ use crate::matter::LevelControlCluster;
 use crate::matter::MediaInputCluster;
 use crate::matter::MediaPlaybackCluster;
 use crate::matter::ModeSelectCluster;
+use crate::matter::Node;
 use crate::matter::OccupancySensingCluster;
 use crate::matter::OnOffCluster;
 use crate::matter::PowerSourceCluster;
@@ -30,6 +31,11 @@ use crate::matter::WindMeasurementCluster;
 /// fans out an `AttributeChanged` message into a per-cluster `Event`
 /// variant so DSL programs can read attribute fields directly (e.g.
 /// `event.attributes.on_off`).
+///
+/// The `LightOn` / `LightOff` action variants are intended for emission
+/// by observer bodies: when the runner sees one in a body's return value
+/// it dispatches the corresponding cluster command back through the
+/// engine.
 #[derive(Debug, Clone)]
 pub enum Event {
     OnOffChanged {
@@ -147,4 +153,10 @@ pub enum Event {
         endpoint_id: EndpointId,
         attributes: WeatherConditionCluster,
     },
+
+    /// Action: turn a light on. Carries the target node so the runner
+    /// can route the cluster command.
+    LightOn(Node),
+    /// Action: turn a light off.
+    LightOff(Node),
 }

@@ -1300,6 +1300,7 @@ fn build_schema(entries: &[(&str, u64)]) -> crate::automations::schema::Deployme
         state.nodes.insert(
             id,
             crate::matter::Node {
+                id,
                 entity_id: entity_id.to_string(),
                 integration: "test".to_string(),
                 name: None,

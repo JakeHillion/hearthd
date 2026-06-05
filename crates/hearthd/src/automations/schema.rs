@@ -79,8 +79,9 @@ mod tests {
     use super::*;
     use crate::matter::Node;
 
-    fn fake_node(entity_id: &str) -> Node {
+    fn fake_node(id: NodeId, entity_id: &str) -> Node {
         Node {
+            id,
             entity_id: entity_id.to_string(),
             integration: "test".to_string(),
             name: None,
@@ -91,9 +92,8 @@ mod tests {
     fn state_with(entries: &[(u64, &str)]) -> State {
         let mut state = State::default();
         for (raw, entity_id) in entries {
-            state
-                .nodes
-                .insert(NodeId::from_raw(*raw), fake_node(entity_id));
+            let id = NodeId::from_raw(*raw);
+            state.nodes.insert(id, fake_node(id, entity_id));
         }
         state
     }
