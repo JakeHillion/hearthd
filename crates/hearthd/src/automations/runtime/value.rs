@@ -44,6 +44,21 @@ pub enum Value {
     /// (`node.id`, `node.entity_id`, …) resolve against the engine
     /// snapshot when read.
     Node(NodeId),
+
+    /// An unawaited future produced by an async builtin (`sleep`,
+    /// `sleep_unique`). The VM's `Await` opcode consumes it.
+    Future(FutureKind, Vec<Value>),
+}
+
+/// Tag identifying which async operation a `Value::Future` represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FutureKind {
+    /// `sleep(d)` — wait `d` and always complete with `true`.
+    Sleep,
+    /// `sleep_unique(d)` — wait `d`, but is cancelled when the same
+    /// automation re-triggers. Completion yields `true`; cancellation
+    /// yields `false`.
+    SleepUnique,
 }
 
 /// A list iterator: the source list and a 0-based cursor.

@@ -1,14 +1,17 @@
 //! Bytecode VM for the HearthD Automations language.
 //!
-//! [`run_sync`] executes a [`Bytecode`] function to completion. It is
-//! intended for filter expressions, which must be cheap and side-effect
-//! free; an `Await` opcode is a runtime error.
+//! Two entry points share a single step function: [`run_sync`] for filter
+//! evaluation (cheap, no suspension) and [`run_async`] for body
+//! evaluation (supports `await`).
 //!
 //! The VM is a flat register machine: each `Bytecode` declares
 //! `num_regs`, the VM allocates that many `Value` slots, and instructions
 //! read and write them by index. Decoded operands match the layout in
 //! [`super::super::repr::bytecode`].
 
+use std::time::Duration;
+
+use super::value::FutureKind;
 use super::value::IterState;
 use super::value::Value;
 use crate::automations::repr::bytecode::*;
@@ -42,7 +45,56 @@ pub fn run_sync(bc: &Bytecode, params: Vec<Value>) -> Result<Value, VmError> {
         match step(bc, &mut regs, &mut pc)? {
             StepResult::Continue => {}
             StepResult::Return(v) => return Ok(v),
-            StepResult::Await => return Err(VmError::AwaitInSync),
+            StepResult::Suspend { .. } => return Err(VmError::AwaitInSync),
+        }
+    }
+}
+
+/// Asynchronously run a `Bytecode` function with the given positional
+/// parameters. Suspends the executing tokio task at each `await` opcode
+/// (e.g. for `sleep` / `sleep_unique`).
+pub async fn run_async(bc: &Bytecode, params: Vec<Value>) -> Result<Value, VmError> {
+    assert_eq!(
+        params.len(),
+        bc.params.len(),
+        "param count mismatch: expected {}, got {}",
+        bc.params.len(),
+        params.len(),
+    );
+
+    let mut regs = vec![Value::Unit; bc.num_regs as usize];
+    for (slot, value) in bc.params.iter().zip(params) {
+        regs[slot.reg as usize] = value;
+    }
+
+    let mut pc = 0usize;
+    loop {
+        match step(bc, &mut regs, &mut pc)? {
+            StepResult::Continue => {}
+            StepResult::Return(v) => return Ok(v),
+            StepResult::Suspend { dst, kind, args } => {
+                let resume = perform_await(kind, args).await?;
+                regs[dst] = resume;
+            }
+        }
+    }
+}
+
+async fn perform_await(kind: FutureKind, args: Vec<Value>) -> Result<Value, VmError> {
+    let duration = match args.as_slice() {
+        [Value::Int(ms)] => Duration::from_millis((*ms).max(0) as u64),
+        [Value::Float(s)] => Duration::from_secs_f64((*s).max(0.0)),
+        other => {
+            return Err(VmError::TypeMismatch(format!(
+                "expected one numeric duration argument, got {:?}",
+                other
+            )));
+        }
+    };
+    match kind {
+        FutureKind::Sleep | FutureKind::SleepUnique => {
+            tokio::time::sleep(duration).await;
+            Ok(Value::Bool(true))
         }
     }
 }
@@ -74,7 +126,14 @@ impl std::error::Error for VmError {}
 enum StepResult {
     Continue,
     Return(Value),
-    Await,
+    /// The `Await` opcode fired: caller must drive the future to
+    /// completion and store the resulting `Value` into register `dst`
+    /// before resuming.
+    Suspend {
+        dst: usize,
+        kind: FutureKind,
+        args: Vec<Value>,
+    },
 }
 
 fn step(bc: &Bytecode, regs: &mut [Value], pc: &mut usize) -> Result<StepResult, VmError> {
@@ -113,21 +172,15 @@ fn step(bc: &Bytecode, regs: &mut [Value], pc: &mut usize) -> Result<StepResult,
             regs[dst] = Value::Bool(b);
         }
         Opcode::LoadConstUnit => {
-            // Unit literals (e.g. `5min`) decode the underlying integer
-            // and discard the unit tag for now; the runtime treats them
-            // as plain Ints until typed wrappers are introduced.
+            // Unit literals normalise to milliseconds for durations (e.g.
+            // `5min` -> 300000) so the await opcode can consume them as
+            // plain numbers. Angles and temperatures fall through as raw
+            // numbers; we'll introduce typed wrappers when something
+            // actually consumes them.
             let dst = read_u32(&bc.code, pc) as usize;
             let idx = read_u32(&bc.code, pc) as usize;
             regs[dst] = match &bc.consts[idx] {
-                Const::UnitLit { value, .. } => {
-                    if let Ok(n) = value.parse::<i64>() {
-                        Value::Int(n)
-                    } else if let Ok(n) = value.parse::<f64>() {
-                        Value::Float(n)
-                    } else {
-                        return Err(VmError::TypeMismatch("bad unit literal".into()));
-                    }
-                }
+                Const::UnitLit { value, unit } => normalize_unit_literal(value, *unit)?,
                 _ => return Err(VmError::TypeMismatch("const idx not UnitLit".into())),
             };
         }
@@ -313,7 +366,22 @@ fn step(bc: &Bytecode, regs: &mut [Value], pc: &mut usize) -> Result<StepResult,
             let src = read_u32(&bc.code, pc) as usize;
             return Ok(StepResult::Return(regs[src].clone()));
         }
-        Opcode::Await => return Ok(StepResult::Await),
+        Opcode::Await => {
+            let dst = read_u32(&bc.code, pc) as usize;
+            let src = read_u32(&bc.code, pc) as usize;
+            match &regs[src] {
+                Value::Future(kind, args) => {
+                    return Ok(StepResult::Suspend {
+                        dst,
+                        kind: *kind,
+                        args: args.clone(),
+                    });
+                }
+                other => {
+                    return Err(VmError::TypeMismatch(format!("await on {:?}", other)));
+                }
+            }
+        }
     }
     Ok(StepResult::Continue)
 }
@@ -378,6 +446,43 @@ fn eval_binop(op: HirBinOp, lhs: &Value, rhs: &Value) -> Result<Value, VmError> 
     }
 }
 
+fn normalize_unit_literal(
+    value: &str,
+    unit: crate::automations::repr::ast::UnitType,
+) -> Result<Value, VmError> {
+    use crate::automations::repr::ast::UnitType;
+    let scale_ms: Option<f64> = match unit {
+        UnitType::Seconds => Some(1000.0),
+        UnitType::Minutes => Some(60_000.0),
+        UnitType::Hours => Some(3_600_000.0),
+        UnitType::Days => Some(86_400_000.0),
+        // Non-duration units pass through unscaled for now.
+        UnitType::Degrees
+        | UnitType::Radians
+        | UnitType::Celsius
+        | UnitType::Fahrenheit
+        | UnitType::Kelvin => None,
+    };
+    if let Some(scale) = scale_ms {
+        let raw: f64 = value
+            .parse::<f64>()
+            .map_err(|_| VmError::TypeMismatch(format!("bad duration literal {}", value)))?;
+        let ms = raw * scale;
+        // Prefer Int when the result is whole.
+        if ms.fract() == 0.0 {
+            Ok(Value::Int(ms as i64))
+        } else {
+            Ok(Value::Float(ms))
+        }
+    } else if let Ok(n) = value.parse::<i64>() {
+        Ok(Value::Int(n))
+    } else if let Ok(n) = value.parse::<f64>() {
+        Ok(Value::Float(n))
+    } else {
+        Err(VmError::TypeMismatch(format!("bad unit literal {}", value)))
+    }
+}
+
 fn call_builtin(name: &str, args: Vec<Value>) -> Result<Value, VmError> {
     match name {
         "len" => match args.as_slice() {
@@ -390,6 +495,12 @@ fn call_builtin(name: &str, args: Vec<Value>) -> Result<Value, VmError> {
             [Value::Float(n)] => Ok(Value::Float(n.abs())),
             other => Err(VmError::TypeMismatch(format!("abs({:?})", other))),
         },
+        // Async builtins return a `Future` value; the subsequent `Await`
+        // opcode drives them. `sleep_unique` looks identical here — the
+        // re-trigger cancellation contract is enforced by the runner via
+        // task abort, not by the VM.
+        "sleep" => Ok(Value::Future(FutureKind::Sleep, args)),
+        "sleep_unique" => Ok(Value::Future(FutureKind::SleepUnique, args)),
         other => Err(VmError::UnknownBuiltin(other.to_string())),
     }
 }

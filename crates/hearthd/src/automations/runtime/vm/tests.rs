@@ -1,4 +1,5 @@
 use super::super::value::Value;
+use super::run_async;
 use super::run_sync;
 
 /// Compile a filter expression and run it synchronously. The source is
@@ -91,4 +92,60 @@ fn test_vm_register_trace_for_and() {
     };
     // The final result should be Bool(false) by short-circuiting.
     assert_eq!(run_sync(filter, Vec::new()).unwrap(), Value::Bool(false));
+}
+
+// =============================================================================
+// Async VM: sleep_unique + await
+// =============================================================================
+
+/// Drives the body of `observer {} /true/ { if await sleep_unique(d) { … } else { … } }`
+/// under `tokio::time::pause` and returns the final `Value`.
+async fn run_body_with_paused_time(
+    body_src: &str,
+    advance: std::time::Duration,
+) -> Result<Value, super::VmError> {
+    let src = format!("observer {{}} /true/ {{ {} }}", body_src);
+    let program = crate::automations::parse(&src).expect("parse");
+    let lowered = crate::automations::desugar_program(program);
+    let result = crate::automations::check_program(&lowered);
+    let hir = crate::automations::lower_program(&result);
+    let lir = crate::automations::lower_lir_program(&hir);
+    let bc = crate::automations::lower_bytecode_program(&lir);
+    let body = match &bc {
+        crate::automations::repr::BytecodeProgram::Automation(auto) => &auto.body,
+        _ => panic!("expected automation"),
+    };
+
+    let body_clone = body.clone();
+    let handle = tokio::spawn(async move { run_async(&body_clone, Vec::new()).await });
+    // Yield once so the task actually starts and reaches the sleep.
+    tokio::task::yield_now().await;
+    tokio::time::advance(advance).await;
+    handle.await.expect("task joined")
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_sleep_unique_completes_after_advance() {
+    // After advancing time past the 5min sleep, the await resolves to
+    // true and the body returns [].
+    let result = run_body_with_paused_time(
+        "if await sleep_unique(5min) { [] } else { [] }",
+        std::time::Duration::from_secs(6 * 60),
+    )
+    .await
+    .expect("body should run");
+    // Empty list either way; the assertion is that we got a value at all.
+    assert_eq!(result, Value::List(Vec::new()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_sleep_completes() {
+    // `sleep` is the simpler builtin: same Future shape, no cancellation.
+    let result = run_body_with_paused_time(
+        "if await sleep(1s) { [] } else { [] }",
+        std::time::Duration::from_secs(2),
+    )
+    .await
+    .expect("body should run");
+    assert_eq!(result, Value::List(Vec::new()));
 }

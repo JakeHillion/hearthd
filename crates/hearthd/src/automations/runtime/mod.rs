@@ -10,4 +10,5 @@ pub mod vm;
 
 pub use value::Value;
 pub use vm::VmError;
+pub use vm::run_async;
 pub use vm::run_sync;
