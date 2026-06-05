@@ -4,6 +4,7 @@
 //! pretty-printing utilities for debugging and testing.
 
 pub mod ast;
+pub mod bytecode;
 pub mod hir;
 pub mod lir;
 pub mod lowered;
@@ -11,6 +12,7 @@ pub mod pretty_print;
 pub mod typed;
 
 // Pretty print impls (use the same PrettyPrint trait)
+mod bytecode_pretty_print;
 mod hir_pretty_print;
 mod lir_pretty_print;
 mod lowered_pretty_print;
@@ -18,6 +20,11 @@ mod typed_pretty_print;
 
 // Re-export AST types at the repr level
 pub use ast::*;
+// Re-export bytecode types
+pub use bytecode::{
+    BinOpTag, Bytecode, BytecodeAutomation, BytecodeParam, BytecodeProgram, Const, Opcode,
+    StructFieldTag,
+};
 // Re-export HIR types
 pub use hir::{
     BasicBlock, BlockId, HirAutomation, HirBinOp, HirFunction, HirProgram, HirStructField,

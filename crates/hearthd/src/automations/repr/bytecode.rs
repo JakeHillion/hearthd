@@ -1,0 +1,201 @@
+//! Bytecode encoding for the HearthD Automations language.
+//!
+//! `Bytecode` is the compact, encoded form of a [`super::lir::LirFunction`]
+//! ready for VM consumption. Opcodes are a single byte; operands are
+//! fixed-width little-endian `u32` register indices and constant-pool
+//! indices. Jumps store the absolute byte offset of their target instead
+//! of a label id, so the VM only needs `code` and `consts` to execute.
+//!
+//! Constants (ints, floats, strings, identifier names, unit literals) are
+//! interned into a per-function pool keyed by the underlying value so
+//! repeated literals don't bloat the stream.
+//!
+//! A disassembler (see `bytecode_pretty_print`) expands the byte stream
+//! back into a readable form for snapshot tests.
+
+use strum::FromRepr;
+
+use super::ast;
+use super::hir::HirBinOp;
+use super::typed::Ty;
+
+// ============================================================================
+// Opcode tags
+// ============================================================================
+
+/// One byte per opcode. Numeric values are stable — they are written into
+/// the byte stream and decoded by the VM and disassembler.
+///
+/// The high nibble groups opcodes by category, so a raw byte in a dump is
+/// categorisable at a glance. New opcodes are appended within their own
+/// group to keep related values adjacent; the gaps exist to make that
+/// possible without renumbering anything already encoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
+#[repr(u8)]
+pub enum Opcode {
+    // === 0x0_: load a constant or the unit value into a register ===
+    LoadConstInt = 0x01,
+    LoadConstFloat = 0x02,
+    LoadConstString = 0x03,
+    LoadConstBool = 0x04,
+    LoadConstUnit = 0x05,
+    Unit = 0x06,
+
+    // === 0x1_: unary and binary operators ===
+    BinOp = 0x10,
+    Neg = 0x11,
+    Not = 0x12,
+    Deref = 0x13,
+
+    // === 0x2_: field access ===
+    Field = 0x20,
+    OptionalField = 0x21,
+
+    // === 0x3_: construction by name (resolved against the constant pool) ===
+    Call = 0x30,
+    Variant = 0x31,
+
+    // === 0x4_: list construction and iteration ===
+    EmptyList = 0x40,
+    List = 0x41,
+    ListPush = 0x42,
+    IterInit = 0x43,
+
+    // === 0x5_: struct construction ===
+    Struct = 0x50,
+
+    // === 0x6_: register-to-register movement ===
+    Copy = 0x60,
+
+    // === 0x7_: control flow (the former LIR terminators) ===
+    Jump = 0x70,
+    JumpIf = 0x71,
+    IterNext = 0x72,
+    Return = 0x73,
+
+    // === 0x8_: suspension ===
+    Await = 0x80,
+}
+
+/// Tag byte for `BinOp` instructions. Stable values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
+#[repr(u8)]
+pub enum BinOpTag {
+    Add = 0,
+    Sub = 1,
+    Mul = 2,
+    Div = 3,
+    Mod = 4,
+    Eq = 5,
+    Ne = 6,
+    Lt = 7,
+    Le = 8,
+    Gt = 9,
+    Ge = 10,
+    In = 11,
+}
+
+impl From<HirBinOp> for BinOpTag {
+    fn from(op: HirBinOp) -> Self {
+        match op {
+            HirBinOp::Add => BinOpTag::Add,
+            HirBinOp::Sub => BinOpTag::Sub,
+            HirBinOp::Mul => BinOpTag::Mul,
+            HirBinOp::Div => BinOpTag::Div,
+            HirBinOp::Mod => BinOpTag::Mod,
+            HirBinOp::Eq => BinOpTag::Eq,
+            HirBinOp::Ne => BinOpTag::Ne,
+            HirBinOp::Lt => BinOpTag::Lt,
+            HirBinOp::Le => BinOpTag::Le,
+            HirBinOp::Gt => BinOpTag::Gt,
+            HirBinOp::Ge => BinOpTag::Ge,
+            HirBinOp::In => BinOpTag::In,
+        }
+    }
+}
+
+impl From<BinOpTag> for HirBinOp {
+    fn from(tag: BinOpTag) -> Self {
+        match tag {
+            BinOpTag::Add => HirBinOp::Add,
+            BinOpTag::Sub => HirBinOp::Sub,
+            BinOpTag::Mul => HirBinOp::Mul,
+            BinOpTag::Div => HirBinOp::Div,
+            BinOpTag::Mod => HirBinOp::Mod,
+            BinOpTag::Eq => HirBinOp::Eq,
+            BinOpTag::Ne => HirBinOp::Ne,
+            BinOpTag::Lt => HirBinOp::Lt,
+            BinOpTag::Le => HirBinOp::Le,
+            BinOpTag::Gt => HirBinOp::Gt,
+            BinOpTag::Ge => HirBinOp::Ge,
+            BinOpTag::In => HirBinOp::In,
+        }
+    }
+}
+
+/// Tag byte for struct field entries inside a `Struct` instruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
+#[repr(u8)]
+pub enum StructFieldTag {
+    Set = 0,
+    Spread = 1,
+}
+
+// ============================================================================
+// Constant pool
+// ============================================================================
+
+/// One entry in a bytecode constant pool. `Float` is wrapped to expose
+/// stable `Eq`/`Hash` (by bit pattern), so we can intern by value.
+#[derive(Debug, Clone)]
+pub enum Const {
+    Int(i64),
+    Float(f64),
+    /// String literals (`"hello"`).
+    String(String),
+    /// Identifier names: builtin function names, enum names, variant names,
+    /// struct names, and field accessors.
+    Ident(String),
+    UnitLit {
+        value: String,
+        unit: ast::UnitType,
+    },
+}
+
+// ============================================================================
+// Top-level bytecode
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct BytecodeParam {
+    pub name: String,
+    pub reg: u32,
+    pub ty: Ty,
+}
+
+/// A single compiled function ready for the VM.
+#[derive(Debug, Clone)]
+pub struct Bytecode {
+    pub params: Vec<BytecodeParam>,
+    pub num_regs: u32,
+    pub consts: Vec<Const>,
+    pub code: Vec<u8>,
+}
+
+/// A compiled automation: filter (optional) + body, both as `Bytecode`.
+#[derive(Debug, Clone)]
+pub struct BytecodeAutomation {
+    pub kind: ast::AutomationKind,
+    pub filter: Option<Bytecode>,
+    pub body: Bytecode,
+}
+
+/// A compiled program.
+#[derive(Debug, Clone)]
+pub enum BytecodeProgram {
+    Automation(BytecodeAutomation),
+    Template {
+        params: Vec<ast::Spanned<ast::TemplateParam>>,
+        automations: Vec<BytecodeAutomation>,
+    },
+}
