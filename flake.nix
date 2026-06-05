@@ -63,7 +63,16 @@
             ];
           };
 
-          src = craneLib.cleanCargoSource (craneLib.path ./.);
+          # Not `cleanCargoSource` on its own: it keeps only the files cargo
+          # needs to build, and the example automations under `examples/` are
+          # compiled by the automations tests rather than only read by people.
+          # Without them in the source the tests cannot `include_str!` one, and
+          # an example could stop compiling without anything noticing.
+          src = lib.cleanSourceWith {
+            src = craneLib.path ./.;
+            filter = path: type:
+              craneLib.filterCargoSources path type || lib.hasSuffix ".hda" path;
+          };
           inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
 
           fileSetForCrate = cratePath:

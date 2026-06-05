@@ -1,0 +1,13 @@
+// Turn the living-room lamp on whenever the kitchen motion sensor
+// reports occupancy.
+observer {
+  event,
+  state = {
+    light = { living_room_lamp },
+    binary_sensor = { kitchen_motion },
+    ...
+  },
+  ...
+} /event.node_id == kitchen_motion.id/ {
+  [ Event::LightOn(living_room_lamp) ]
+}
