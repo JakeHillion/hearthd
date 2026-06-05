@@ -24,12 +24,25 @@ pub struct Param {
     pub ty: Ty,
 }
 
+/// A self-contained HIR function: a list of basic blocks operating over a
+/// fresh `Tmp` namespace, taking the listed `params` as its inputs.
+///
+/// An automation is split into two functions — an optional `filter` returning
+/// `Bool`, and a `body` returning `[Event]` (observer) or `Event` (mutator).
+/// They share the same destructuring pattern, but each lowers it
+/// independently into its own block list and `Tmp` namespace.
+#[derive(Debug, Clone)]
+pub struct HirFunction {
+    pub params: Vec<Param>,
+    pub blocks: Vec<BasicBlock>,
+}
+
 /// A lowered automation in HIR form.
 #[derive(Debug, Clone)]
 pub struct HirAutomation {
     pub kind: ast::AutomationKind,
-    pub params: Vec<Param>,
-    pub blocks: Vec<BasicBlock>,
+    pub filter: Option<HirFunction>,
+    pub body: HirFunction,
 }
 
 /// A lowered program in HIR form.

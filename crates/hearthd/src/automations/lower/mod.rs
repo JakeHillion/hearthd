@@ -100,48 +100,36 @@ pub fn lower_program(result: &CheckResult) -> HirProgram {
 }
 
 fn lower_automation(auto: &TypedAutomation) -> HirAutomation {
-    let mut lowerer = Lowerer::new();
-
-    // Lower pattern to params and initial bindings.
-    let params = lowerer.lower_pattern(&auto.pattern);
-
-    // Lower filter (if present): branch to body or exit.
-    if let Some(filter) = &auto.filter {
-        let body_entry = lowerer.fresh_block();
-        let exit_block = lowerer.fresh_block();
-
-        let cond = lowerer.lower_expr(filter);
-        lowerer.set_terminator(Terminator::Branch {
-            cond,
-            then_block: body_entry,
-            else_block: exit_block,
-        });
-
-        // Exit block: return default value for automation kind.
-        lowerer.switch_to(exit_block);
-        match auto.kind {
-            ast::AutomationKind::Observer => {
-                let empty =
-                    lowerer.emit(Op::EmptyList, Ty::List(Box::new(Ty::Named("Event".into()))));
-                lowerer.set_terminator(Terminator::Return(empty));
-            }
-            ast::AutomationKind::Mutator => {
-                let event_tmp = lowerer.lookup("event");
-                lowerer.set_terminator(Terminator::Return(event_tmp));
-            }
+    // Filter and body are lowered into separate functions. Each independently
+    // lowers the destructuring pattern, so each has its own `Tmp` namespace
+    // and its own pattern-extraction prelude. The runtime feeds the same
+    // (event, state) inputs to both.
+    let filter = auto.filter.as_ref().map(|filter_expr| {
+        let mut lowerer = Lowerer::new();
+        let params = lowerer.lower_pattern(&auto.pattern);
+        let cond = lowerer.lower_expr(filter_expr);
+        lowerer.set_terminator(Terminator::Return(cond));
+        HirFunction {
+            params,
+            blocks: lowerer.blocks,
         }
+    });
 
-        lowerer.switch_to(body_entry);
-    }
-
-    // Lower body: the last expression becomes the return value.
-    let result = lowerer.lower_stmts_result(&auto.body);
-    lowerer.set_terminator(Terminator::Return(result));
+    let body = {
+        let mut lowerer = Lowerer::new();
+        let params = lowerer.lower_pattern(&auto.pattern);
+        let result = lowerer.lower_stmts_result(&auto.body);
+        lowerer.set_terminator(Terminator::Return(result));
+        HirFunction {
+            params,
+            blocks: lowerer.blocks,
+        }
+    };
 
     HirAutomation {
         kind: auto.kind,
-        params,
-        blocks: lowerer.blocks,
+        filter,
+        body,
     }
 }
 

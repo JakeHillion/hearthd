@@ -1100,6 +1100,35 @@ fn test_error_for_non_iterable() {
 }
 
 #[test]
+fn test_error_await_in_filter() {
+    // Filters run synchronously on every event; they must not suspend.
+    let result = check_errors("observer {} /await sleep(5s)/ { [] }");
+    insta::assert_snapshot!(result, @"
+    Error: filter must be Bool, found ()
+       ╭─[ <test>:1:14 ]
+       │
+     1 │ observer {} /await sleep(5s)/ { [] }
+       │              ───────┬───────  
+       │                     ╰───────── filter must be Bool, found ()
+    ───╯
+    Error: filter expression cannot use `await`
+       ╭─[ <test>:1:14 ]
+       │
+     1 │ observer {} /await sleep(5s)/ { [] }
+       │              ───────┬───────  
+       │                     ╰───────── filter expression cannot use `await`
+    ───╯
+    Error: observer body must return [Event], found [<error>]
+       ╭─[ <test>:1:33 ]
+       │
+     1 │ observer {} /await sleep(5s)/ { [] }
+       │                                 ─┬  
+       │                                  ╰── observer body must return [Event], found [<error>]
+    ───╯
+    ");
+}
+
+#[test]
 fn test_error_multiple_errors() {
     let result = check_errors(r#"observer {} { let a = "hi" + 1; !42 }"#);
     insta::assert_snapshot!(result, @r#"

@@ -48,15 +48,28 @@ impl PrettyPrint for HirAutomation {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write_indent(indent, f)?;
         writeln!(f, "Automation: {}", self.kind)?;
-        if !self.params.is_empty() {
+        if let Some(filter) = &self.filter {
             write_indent(indent + 1, f)?;
+            writeln!(f, "filter:")?;
+            filter.pretty_print(indent + 2, f)?;
+        }
+        write_indent(indent + 1, f)?;
+        writeln!(f, "body:")?;
+        self.body.pretty_print(indent + 2, f)
+    }
+}
+
+impl PrettyPrint for HirFunction {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.params.is_empty() {
+            write_indent(indent, f)?;
             writeln!(f, "Params:")?;
             for param in &self.params {
-                write_indent(indent + 2, f)?;
+                write_indent(indent + 1, f)?;
                 writeln!(f, "{}: {} [{}]", param.tmp, param.name, param.ty)?;
             }
         }
-        self.blocks.pretty_print(indent + 1, f)
+        self.blocks.pretty_print(indent, f)
     }
 }
 
