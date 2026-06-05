@@ -11,8 +11,10 @@ pub mod lower_lir;
 pub mod parser;
 pub mod repr;
 pub mod runtime;
+pub mod schema;
 
 pub use check::check_program;
+pub use check::check_program_with_schema;
 pub use desugar::desugar;
 pub use desugar::desugar_program;
 pub use lower::lower_program;

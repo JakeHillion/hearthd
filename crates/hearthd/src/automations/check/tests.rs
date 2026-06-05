@@ -1148,3 +1148,80 @@ fn test_error_multiple_errors() {
     ───╯
     "#);
 }
+
+// =============================================================================
+// Deployment schema (state.<domain>.<slug> binding)
+// =============================================================================
+
+fn build_schema(
+    entries: &[(&str, crate::matter::NodeId)],
+) -> crate::automations::schema::DeploymentSchema {
+    let mut state = crate::engine::state::State::default();
+    for (entity_id, id) in entries {
+        state.nodes.insert(
+            *id,
+            crate::matter::Node {
+                entity_id: entity_id.to_string(),
+                integration: "test".to_string(),
+                name: None,
+                endpoints: std::collections::HashMap::new(),
+            },
+        );
+    }
+    crate::automations::schema::DeploymentSchema::from_state(&state)
+}
+
+fn check_errors_with_schema(
+    input: &str,
+    schema: crate::automations::schema::DeploymentSchema,
+) -> String {
+    let program = crate::automations::parse(input).expect("parsing should succeed");
+    let lowered = crate::automations::desugar_program(program);
+    let result =
+        crate::automations::check::check_program_with_schema(&lowered, std::sync::Arc::new(schema));
+    let rendered = crate::automations::check::format_type_errors(&result.errors, input, "<test>");
+    strip_ansi(&rendered)
+}
+
+#[test]
+fn test_schema_state_domain_slug_resolves_to_node() {
+    // With a schema declaring `light.living_room_lamp`, the filter
+    // `state.light.living_room_lamp.entity_id == "light.living_room_lamp"`
+    // typechecks (entity_id is a String field on Node, comparable to a
+    // String literal). The body still flags an "observer body must
+    // return [Event]" error since we don't construct one.
+    let schema = build_schema(&[("light.living_room_lamp", 1)]);
+    let src = r#"observer { state = { light = { living_room_lamp }, ... }, ... } /living_room_lamp.entity_id == "light.living_room_lamp"/ { [] }"#;
+    let result = check_errors_with_schema(src, schema);
+    // Only the body error should remain; the filter is well-typed.
+    assert!(
+        !result.contains("no field 'light' on type State"),
+        "filter rejected unexpectedly:\n{}",
+        result
+    );
+    assert!(
+        !result.contains("no entity"),
+        "filter rejected unexpectedly:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_schema_unknown_slug_is_a_type_error() {
+    // Schema knows `light.kitchen_lamp` but the source asks for
+    // `light.missing` — destructuring must be reported as a type error
+    // (the schema-aware `type_fields` only exposes slugs that exist).
+    let schema = build_schema(&[("light.kitchen_lamp", 1)]);
+    let src = r#"observer { state = { light = { missing }, ... }, ... } /missing.entity_id == "x"/ { [] }"#;
+    let result = check_errors_with_schema(src, schema);
+    assert!(
+        result.contains("missing"),
+        "expected an error mentioning the unknown slug, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("unknown field"),
+        "expected an unknown-field error, got:\n{}",
+        result
+    );
+}
