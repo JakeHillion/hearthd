@@ -61,13 +61,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Debug print config at debug level
     debug!("Configuration loaded: {:#?}", cfg);
 
-    // Load and parse automations
+    // Read each automation source up front; we'll compile after
+    // integrations have had a chance to discover devices.
+    let mut sources: Vec<(String, String, String)> = Vec::new(); // (name, path, source)
     for (name, entry) in &cfg.automations.automations {
         match std::fs::read_to_string(&entry.file) {
-            Ok(source) => match hearthd::automations::parse(&source) {
-                Ok(ast) => info!(?ast, "Parsed automation '{}': {}", name, entry.file),
-                Err(errs) => warn!(?errs, "Failed to parse '{}': {}", name, entry.file),
-            },
+            Ok(source) => sources.push((name.clone(), entry.file.clone(), source)),
             Err(e) => warn!("Failed to read '{}' ({}): {}", name, entry.file, e),
         }
     }
@@ -81,6 +80,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wrap engine in Arc for thread-safe sharing
     let engine: Arc<hearthd::Engine> = Arc::new(engine);
     let engine_for_http = engine.clone();
+
+    // Give integrations a brief window to publish their initial
+    // discovery so the schema we build covers the real device set.
+    // Real discovery-settled signalling can replace this later.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let snapshot = engine.state_snapshot();
+    let schema = Arc::new(hearthd::automations::schema::DeploymentSchema::from_state(
+        &snapshot,
+    ));
+    let mut compiled: Vec<hearthd::automations::runtime::CompiledAutomation> = Vec::new();
+    for (id, (name, path, source)) in sources.iter().enumerate() {
+        match compile_automation(id, source, schema.clone()) {
+            Ok(auto) => compiled.push(auto),
+            Err(diag) => warn!("Failed to compile '{}' ({}):\n{}", name, path, diag),
+        }
+    }
+    if !compiled.is_empty() {
+        let runner = Arc::new(hearthd::automations::runtime::Runner::new(
+            engine.clone(),
+            schema,
+            compiled,
+        ));
+        engine.set_runner(runner);
+        info!("automation runner installed");
+    }
 
     info!("hearthd started");
 
@@ -171,4 +195,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("hearthd stopped");
     Ok(())
+}
+
+/// Run an automation source string through the full compile pipeline:
+/// parse → desugar → check (with schema) → lower → lower_lir → lower_bytecode.
+/// Returns a single `CompiledAutomation` for a top-level observer/mutator.
+/// Template programs are not supported yet and produce an error.
+fn compile_automation(
+    id: usize,
+    source: &str,
+    schema: Arc<hearthd::automations::schema::DeploymentSchema>,
+) -> Result<hearthd::automations::runtime::CompiledAutomation, String> {
+    let program = hearthd::automations::parse(source).map_err(|e| format!("parse: {:?}", e))?;
+    let lowered = hearthd::automations::desugar_program(program);
+    let typed = hearthd::automations::check::check_program_with_schema(&lowered, schema);
+    if !typed.errors.is_empty() {
+        return Err(format!("type errors: {:?}", typed.errors));
+    }
+    let hir = hearthd::automations::lower_program(&typed);
+    let lir = hearthd::automations::lower_lir_program(&hir);
+    let bc = hearthd::automations::lower_bytecode_program(&lir);
+    match bc {
+        hearthd::automations::repr::BytecodeProgram::Automation(auto) => {
+            Ok(hearthd::automations::runtime::CompiledAutomation {
+                id,
+                kind: auto.kind,
+                filter: auto.filter.ok_or_else(|| "filter required".to_string())?,
+                body: auto.body,
+            })
+        }
+        hearthd::automations::repr::BytecodeProgram::Template { .. } => {
+            Err("templates are not supported yet".to_string())
+        }
+    }
 }

@@ -1,0 +1,19 @@
+// Turn the living-room lamp off five minutes after the last motion
+// event. `sleep_unique` cancels any pending off-timer when a fresh
+// motion event re-triggers this observer, so only the most recent
+// instance ever produces an Off command.
+observer {
+  event,
+  state = {
+    light = { living_room_lamp },
+    binary_sensor = { kitchen_motion },
+    ...
+  },
+  ...
+} /event.node_id == kitchen_motion.id/ {
+  if await sleep_unique(5min) {
+    [ Event::LightOff(living_room_lamp) ]
+  } else {
+    []
+  }
+}
