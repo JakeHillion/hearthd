@@ -18,8 +18,8 @@ mod typed_pretty_print;
 pub use ast::*;
 // Re-export HIR types
 pub use hir::{
-    BasicBlock, BlockId, HirAutomation, HirBinOp, HirProgram, HirStructField, Instruction, Op,
-    Param, Terminator, Tmp,
+    BasicBlock, BlockId, HirAutomation, HirBinOp, HirFunction, HirProgram, HirStructField,
+    Instruction, Op, Param, Terminator, Tmp,
 };
 // Re-export lowered AST types with a Lowered prefix already in their names
 pub use lowered::{

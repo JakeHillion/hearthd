@@ -347,6 +347,12 @@ impl TypeChecker {
             if typed.ty != Ty::Bool && typed.ty != Ty::Error {
                 self.error(f.span(), format!("filter must be Bool, found {}", typed.ty));
             }
+            // Filters are evaluated synchronously on every event for every
+            // automation, so they must not suspend. Reject `await` anywhere
+            // inside the filter expression.
+            if let Some(span) = find_await_span(&typed) {
+                self.error(span, "filter expression cannot use `await`".into());
+            }
             typed
         });
 
@@ -1379,6 +1385,70 @@ impl TypeChecker {
                 value: Box::new(self.ast_type_to_ty(value)),
             },
             ast::Type::Option(inner) => Ty::Option(Box::new(self.ast_type_to_ty(inner))),
+        }
+    }
+}
+
+/// Walk a typed expression looking for a `UnaryOp::Await` subexpression.
+/// Returns the span of the first await found, or `None` if absent.
+fn find_await_span(expr: &TypedExpr) -> Option<SimpleSpan> {
+    match &expr.kind {
+        TypedExprKind::UnaryOp {
+            op: ast::UnaryOp::Await,
+            ..
+        } => Some(expr.origin.span()),
+        TypedExprKind::UnaryOp { expr, .. } => find_await_span(expr),
+        TypedExprKind::BinOp { left, right, .. } => {
+            find_await_span(left).or_else(|| find_await_span(right))
+        }
+        TypedExprKind::Field { expr, .. } | TypedExprKind::OptionalField { expr, .. } => {
+            find_await_span(expr)
+        }
+        TypedExprKind::Call { func, args } => find_await_span(func).or_else(|| {
+            args.iter().find_map(|arg| match arg {
+                TypedArg::Positional(e) | TypedArg::Named { value: e, .. } => find_await_span(e),
+            })
+        }),
+        TypedExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => find_await_span(cond)
+            .or_else(|| then_block.iter().find_map(find_await_in_stmt))
+            .or_else(|| {
+                else_block
+                    .as_ref()
+                    .and_then(|b| b.iter().find_map(find_await_in_stmt))
+            }),
+        TypedExprKind::List(items) => items.iter().find_map(find_await_span),
+        TypedExprKind::StructLit { fields, .. } => fields.iter().find_map(|f| match f {
+            TypedStructField::Field { value, .. } => find_await_span(value),
+            _ => None,
+        }),
+        TypedExprKind::Block { stmts, result } => stmts
+            .iter()
+            .find_map(find_await_in_stmt)
+            .or_else(|| find_await_span(result)),
+        TypedExprKind::Int(_)
+        | TypedExprKind::Float(_)
+        | TypedExprKind::String(_)
+        | TypedExprKind::Bool(_)
+        | TypedExprKind::UnitLiteral { .. }
+        | TypedExprKind::Ident(_)
+        | TypedExprKind::Path(_)
+        | TypedExprKind::MutableList => None,
+    }
+}
+
+fn find_await_in_stmt(stmt: &TypedStmt) -> Option<SimpleSpan> {
+    match stmt {
+        TypedStmt::Let { value, .. }
+        | TypedStmt::LetMut { value, .. }
+        | TypedStmt::Expr(value)
+        | TypedStmt::Return(value, _)
+        | TypedStmt::Push { value, .. } => find_await_span(value),
+        TypedStmt::For { iter, body, .. } => {
+            find_await_span(iter).or_else(|| body.iter().find_map(find_await_in_stmt))
         }
     }
 }
