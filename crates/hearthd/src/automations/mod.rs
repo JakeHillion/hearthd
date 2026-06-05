@@ -12,6 +12,7 @@ pub mod lir;
 pub mod parser;
 pub mod pretty_print;
 pub mod relocate;
+pub mod runner;
 pub mod schema;
 pub mod vm;
 

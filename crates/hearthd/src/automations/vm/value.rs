@@ -8,11 +8,11 @@
 //! pair, so the VM is the only thing that can keep `1h` from equalling
 //! `3600` or `90deg`.
 //!
-//! Domain-specific cluster snapshots (`OnOffCluster`, `OccupancySensingCluster`,
-//! …) are deliberately not modeled yet; they arrive once the runner starts
-//! feeding real engine state to the VM in later commits. A [`Value::Node`]
-//! is only the identifier relocation resolved a name to — reading anything
-//! off it needs that same engine state.
+//! A cluster snapshot has no variant of its own: the runner projects one into
+//! a `Struct`, since the language reads its attributes by name and nothing
+//! needs the cluster's identity. A [`Value::Node`] is only the identifier
+//! relocation resolved a name to — reading anything off it needs the engine
+//! state the runner holds.
 
 use super::quantity::Quantity;
 use crate::engine::NodeId;
