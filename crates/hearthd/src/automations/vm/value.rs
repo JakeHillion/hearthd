@@ -8,12 +8,13 @@
 //! pair, so the VM is the only thing that can keep `1h` from equalling
 //! `3600` or `90deg`.
 //!
-//! Domain-specific cluster snapshots (`OnOffCluster`, `OccupancySensingCluster`,
-//! …) and engine `Node` references are deliberately not modeled yet; they
-//! arrive once the runner starts feeding real engine state to the VM in
-//! later commits.
+//! A cluster snapshot has no variant of its own: the runner projects one into
+//! a `Struct`, since the language reads its attributes by name and nothing
+//! needs the cluster's identity. A node does, because an action has to name
+//! the node it targets and get back to the engine's own identifier for it.
 
 use super::quantity::Quantity;
+use crate::engine::NodeId;
 
 /// One register's worth of runtime value.
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +53,16 @@ pub enum Value {
     /// dimension is what keeps `1h == 90deg` and `1h == 3600` false instead
     /// of comparing bare magnitudes.
     Quantity(Quantity),
+
+    /// A node in the engine's fabric.
+    ///
+    /// The identifier rather than a projection of the node, because this is
+    /// what an action has to carry: the runner turns `Event::LightOn(node)`
+    /// into a command addressed to a `NodeId`, and `NodeId` is deliberately
+    /// not reconstructable from an integer. Equality is the engine's, so
+    /// `event.node_id == kitchen_motion.id` compares identity rather than
+    /// two numbers that happen to agree.
+    Node(NodeId),
 
     /// An unawaited future, as produced by `sleep` / `sleep_unique`.
     ///
@@ -214,6 +225,7 @@ impl std::fmt::Display for Value {
                 f.write_str("}")
             }
             Value::Quantity(q) => write!(f, "{}", q),
+            Value::Node(id) => write!(f, "node#{}", id),
             Value::Future(pending) => write!(f, "<{}>", pending),
         }
     }
