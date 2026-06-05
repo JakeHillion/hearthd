@@ -4,6 +4,8 @@
 //! independently testable and cannot reach into the register file.
 
 use super::error::VmError;
+use super::quantity::Quantity;
+use super::value::Pending;
 use super::value::Value;
 use crate::automations::repr::function::FunctionIdentity;
 use crate::automations::repr::hir::HirBinOp;
@@ -64,9 +66,9 @@ pub(super) fn values_equal(lhs: &Value, rhs: &Value) -> Result<bool, VmError> {
         (Value::Float(a), Value::Int(b)) => Ok(*a == (*b as f64)),
 
         // The checker rejects equality on `Future`. Reaching here would
-        // answer a meaningless question, and answer it wrongly: a
-        // payload-free future compares equal to every other future.
-        (Value::Future, _) | (_, Value::Future) => Err(VmError::InvariantViolation(
+        // answer a meaningless question: two futures standing for the same
+        // wait are still distinct suspensions.
+        (Value::Future(_), _) | (_, Value::Future(_)) => Err(VmError::InvariantViolation(
             "equality on an unawaited future".into(),
         )),
 
@@ -258,10 +260,19 @@ pub(super) fn call(function: FunctionIdentity, args: Vec<Value>) -> Result<Value
         // is opaque once built: only the async driver's `Await` may look at
         // one. The synchronous driver builds them and never actualises one,
         // because the checker keeps `await` out of a filter.
-        FunctionIdentity::Sleep | FunctionIdentity::SleepUnique => match args.as_slice() {
-            [Value::Quantity(_)] => Ok(Value::Future),
-            other => Err(bad_args(function, other)),
-        },
+        // Only a duration is accepted; the checker types both parameters
+        // that way.
+        FunctionIdentity::Sleep | FunctionIdentity::SleepUnique => {
+            let unique = function == FunctionIdentity::SleepUnique;
+            match args.as_slice() {
+                [Value::Quantity(Quantity::Duration(ns))] => Ok(Value::Future(if unique {
+                    Pending::SleepUnique(*ns)
+                } else {
+                    Pending::Sleep(*ns)
+                })),
+                other => Err(bad_args(function, other)),
+            }
+        }
     }
 }
 

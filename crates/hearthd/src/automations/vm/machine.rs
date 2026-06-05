@@ -1,11 +1,15 @@
 //! The register machine itself: operand decoding and instruction dispatch.
 
+use std::sync::Arc;
+
 use super::consts::VmConst;
 use super::error::VmError;
 use super::ops::call;
 use super::ops::eval_binop;
 use super::ops::field_access;
+use super::suspension::Suspension;
 use super::value::IterState;
+use super::value::Pending;
 use super::value::Value;
 use crate::automations::repr::bytecode::*;
 use crate::automations::repr::function::FunctionIdentity;
@@ -24,11 +28,13 @@ enum VmPoll {
     Awaiting,
 }
 
-/// A register machine holding one compiled function.
+/// One compiled function in the form opcodes read it: the blueprint a run is
+/// instantiated from.
 ///
-/// Build once with [`Vm::new`], then call [`Vm::run_sync`] per set of inputs.
-#[derive(Debug, Clone)]
-pub struct Vm {
+/// Everything here is fixed at construction and read-only during execution,
+/// which is what lets concurrent runs of one function share a single copy.
+#[derive(Debug)]
+pub struct Program {
     /// The instruction stream. Boxed rather than borrowed so the VM outlives
     /// whatever compiled it, and boxed rather than a `Vec` because it is
     /// fixed at construction and never appended to.
@@ -41,16 +47,33 @@ pub struct Vm {
     /// declared names and types are compile-time metadata that no opcode
     /// reads, so they are dropped rather than carried around at runtime.
     param_regs: Box<[u32]>,
+    /// How many registers the function declared. A blueprint has no register
+    /// file to read this back off, and [`Program::instance`] has to size one.
+    num_regs: usize,
+}
+
+/// One run of a [`Program`]: a register machine over a shared blueprint.
+///
+/// Take one with [`Program::instance`]. A filter's is rebound and rerun per
+/// event by [`Vm::run_sync`]; a body's is consumed by [`Vm::run_async`],
+/// because a function that suspends owns its registers until it finishes.
+///
+/// Deliberately not `Clone`: a clone would copy whatever the register file
+/// happens to hold mid-run. Taking another `instance` is what makes sense.
+#[derive(Debug)]
+pub struct Vm {
+    /// Shared with every other run of the same function.
+    program: Arc<Program>,
     /// Scratch slots, one per register the function declared. Allocated once
-    /// at construction and reset in place between runs, so `regs.len()` *is*
-    /// the function's register count — there is no separate `num_regs`.
+    /// at construction and reset in place between runs.
     regs: Vec<Value>,
-    /// Byte offset of the next instruction in `code`.
+    /// Byte offset of the next instruction in `program.code`.
     pc: usize,
 }
 
-impl Vm {
-    /// Build a VM for `bytecode`, taking ownership of its code and constants.
+impl Program {
+    /// Compile `bytecode` into a blueprint, taking ownership of its code and
+    /// constants.
     ///
     /// Fails if a unit literal does not fit its dimension's canonical unit.
     /// Decoding the constant pool up front is what lets that surface when an
@@ -69,15 +92,30 @@ impl Vm {
             .map(VmConst::try_from)
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(Self {
+        Ok(Program {
             code: code.into_boxed_slice(),
             consts: consts.into_boxed_slice(),
             param_regs: params.iter().map(|p| p.reg).collect(),
-            regs: vec![Value::Unit; num_regs as usize],
-            pc: 0,
+            num_regs: num_regs as usize,
         })
     }
 
+    /// One run of this program: its own register file and program counter
+    /// over the shared blueprint.
+    ///
+    /// This is how one compiled body runs several times at once. The runs
+    /// share no state, so a firing that arrives while an older body is still
+    /// suspended runs beside it.
+    pub fn instance(self: &Arc<Self>) -> Vm {
+        Vm {
+            program: Arc::clone(self),
+            regs: vec![Value::Unit; self.num_regs],
+            pc: 0,
+        }
+    }
+}
+
+impl Vm {
     /// Run to completion synchronously, returning the value passed to
     /// `RETURN`. An `Await` is an error: filters must not suspend.
     ///
@@ -96,6 +134,61 @@ impl Vm {
         }
     }
 
+    /// Run to completion, suspending the calling task at each `Await`.
+    ///
+    /// Consumes the `Vm` rather than borrowing it: a body that suspends owns
+    /// its program counter and register file until it finishes, so it cannot
+    /// be rebound the way a filter's is. A caller firing the same body again
+    /// takes another [`Program::instance`], and the two run side by side.
+    ///
+    /// `suspension` serves the waits the body suspends on, and is the only
+    /// say in whether a `sleep_unique` was superseded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `params` does not match the function's parameter count,
+    /// as [`Vm::run_sync`] does.
+    pub async fn run_async(
+        mut self,
+        params: Vec<Value>,
+        suspension: &dyn Suspension,
+    ) -> Result<Value, VmError> {
+        self.bind(params);
+        loop {
+            match self.poll()? {
+                VmPoll::Ready(value) => return Ok(value),
+                VmPoll::Awaiting => {
+                    // `poll` stops with the operands still at the program
+                    // counter, so reading them is this driver's job.
+                    let dst = self.read_index();
+                    let src = self.read_index();
+                    let pending = match &self.regs[src] {
+                        Value::Future(pending) => *pending,
+                        // The checker types `await` as taking a `Future`,
+                        // so a register holding anything else is a broken
+                        // compiler rather than a bad automation.
+                        other => {
+                            return Err(VmError::InvariantViolation(format!("await on {}", other)));
+                        }
+                    };
+                    // The one place a suspension becomes a register value,
+                    // so the type each builtin resolves to is fixed here
+                    // rather than in every [`Suspension`].
+                    let duration = pending.duration();
+                    self.regs[dst] = match pending {
+                        Pending::Sleep(_) => {
+                            suspension.sleep(duration).await;
+                            Value::Unit
+                        }
+                        Pending::SleepUnique(_) => {
+                            Value::Bool(suspension.sleep_unique(duration).await)
+                        }
+                    };
+                }
+            }
+        }
+    }
+
     /// Reset execution state and load a fresh set of parameters.
     ///
     /// Every register is reset to `Unit` first. That is for correctness, not
@@ -104,15 +197,15 @@ impl Vm {
     fn bind(&mut self, params: Vec<Value>) {
         assert_eq!(
             params.len(),
-            self.param_regs.len(),
+            self.program.param_regs.len(),
             "param count mismatch: expected {}, got {}",
-            self.param_regs.len(),
+            self.program.param_regs.len(),
             params.len(),
         );
 
         self.pc = 0;
         self.regs.fill(Value::Unit);
-        for (reg, value) in self.param_regs.iter().zip(params) {
+        for (reg, value) in self.program.param_regs.iter().zip(params) {
             self.regs[*reg as usize] = value;
         }
     }
@@ -131,7 +224,7 @@ impl Vm {
     /// the compiler and never parsed from an external source, so a short
     /// read is a broken compiler rather than anything a filter can provoke.
     fn read_u8(&mut self) -> u8 {
-        let byte = self.code[self.pc];
+        let byte = self.program.code[self.pc];
         self.pc += 1;
         byte
     }
@@ -144,7 +237,7 @@ impl Vm {
     /// always four bytes wide, so the `try_into` cannot fail once the
     /// indexing has succeeded.
     fn read_u32(&mut self) -> u32 {
-        let bytes: [u8; 4] = self.code[self.pc..self.pc + 4]
+        let bytes: [u8; 4] = self.program.code[self.pc..self.pc + 4]
             .try_into()
             .expect("a four-byte slice is always a [u8; 4]");
         self.pc += 4;
@@ -164,7 +257,7 @@ impl Vm {
     /// through `intern_ident`, and the ident and string pools are keyed
     /// separately, so a string literal never lands in one of these slots.
     fn const_ident(&self, idx: usize) -> Result<&str, VmError> {
-        match &self.consts[idx] {
+        match &self.program.consts[idx] {
             VmConst::Ident(s) => Ok(s.as_str()),
             _ => Err(VmError::InvariantViolation("const idx not Ident".into())),
         }
@@ -192,7 +285,7 @@ impl Vm {
                 Opcode::LoadConstInt => {
                     let dst = self.read_index();
                     let idx = self.read_index();
-                    self.regs[dst] = match &self.consts[idx] {
+                    self.regs[dst] = match &self.program.consts[idx] {
                         VmConst::Int(n) => Value::Int(*n),
                         _ => return Err(VmError::InvariantViolation("const idx not Int".into())),
                     };
@@ -200,7 +293,7 @@ impl Vm {
                 Opcode::LoadConstFloat => {
                     let dst = self.read_index();
                     let idx = self.read_index();
-                    self.regs[dst] = match &self.consts[idx] {
+                    self.regs[dst] = match &self.program.consts[idx] {
                         VmConst::Float(n) => Value::Float(*n),
                         _ => return Err(VmError::InvariantViolation("const idx not Float".into())),
                     };
@@ -208,7 +301,7 @@ impl Vm {
                 Opcode::LoadConstString => {
                     let dst = self.read_index();
                     let idx = self.read_index();
-                    self.regs[dst] = match &self.consts[idx] {
+                    self.regs[dst] = match &self.program.consts[idx] {
                         VmConst::String(s) => Value::String(s.clone()),
                         _ => {
                             return Err(VmError::InvariantViolation("const idx not String".into()));
@@ -228,7 +321,7 @@ impl Vm {
                     // `3600` would compare equal.
                     let dst = self.read_index();
                     let idx = self.read_index();
-                    self.regs[dst] = match &self.consts[idx] {
+                    self.regs[dst] = match &self.program.consts[idx] {
                         VmConst::Quantity(q) => Value::Quantity(*q),
                         _ => {
                             return Err(VmError::InvariantViolation(

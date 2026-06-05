@@ -10,7 +10,7 @@ use crate::automations::repr::bytecode::Const;
 /// plus its `UnitType`, because that is what the disassembler renders. No
 /// opcode wants that: they want the canonical magnitude. Converting once at
 /// construction rather than per execution is the same reasoning that drops
-/// parameter names and `num_regs` — a `Vm` keeps only what opcodes read.
+/// parameter names: a [`Program`] keeps only what opcodes read.
 /// Without it a filter carrying `5min` would re-parse a string on every
 /// event.
 #[derive(Debug, Clone)]
