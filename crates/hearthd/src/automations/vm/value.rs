@@ -55,12 +55,70 @@ pub enum Value {
 
     /// An unawaited future, as produced by `sleep` / `sleep_unique`.
     ///
-    /// Deliberately opaque and payload-free. The checker rejects equality
-    /// on `Future` and rejects `await` in a filter, so nothing the
-    /// synchronous VM can reach inspects one: a filter may construct a
-    /// future and discard it, never observe it. The async driver needs the
-    /// duration in order to suspend, and is what gives this a payload.
-    Future,
+    /// Still opaque to everything the synchronous driver can reach: the
+    /// checker rejects equality on `Future` and rejects `await` in a
+    /// filter, so a filter may construct one and discard it but never
+    /// observe it. The payload is there for [`Vm::run_async`], which has
+    /// to know how long to suspend for.
+    ///
+    /// [`Vm::run_async`]: super::Vm::run_async
+    Future(Pending),
+}
+
+/// What an unawaited future will do once a driver awaits it.
+///
+/// Both constructors suspend for a duration, so the payload is that duration
+/// in [`Quantity::Duration`]'s canonical unit, nanoseconds. Which builtin
+/// produced it is carried too, because the two do not resolve the same way —
+/// see [`Suspension`], which is what decides.
+///
+/// The `strum` string is the source spelling of the builtin, which is what
+/// `Display` names it by.
+///
+/// [`Suspension`]: super::Suspension
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum Pending {
+    /// `sleep(d)`: suspend for `d`, and complete. Nothing interrupts it: a
+    /// body waiting on one runs to its end even when the automation fires
+    /// again, and the new firing runs beside it rather than replacing it.
+    /// The checker types it `Future<()>`, because a wait that always
+    /// completes has nothing to report.
+    Sleep(i64),
+    /// `sleep_unique(d)`: the same wait, except that a newer instance of the
+    /// same automation makes it resolve `false` rather than killing the
+    /// body, which carries on into its `else` branch. Typed `Future<Bool>`
+    /// for that reason: `if await sleep_unique(5min) { … } else { … }` reads
+    /// as "unless a newer firing beat me to it".
+    SleepUnique(i64),
+}
+
+impl Pending {
+    /// How long to suspend for.
+    ///
+    /// Clamped at zero rather than reported: a wait that has already elapsed
+    /// is the only reading a negative duration has.
+    pub(super) fn duration(self) -> std::time::Duration {
+        std::time::Duration::from_nanos(self.nanos().max(0) as u64)
+    }
+
+    /// The wait in nanoseconds, whichever builtin produced it.
+    fn nanos(self) -> i64 {
+        match self {
+            Pending::Sleep(ns) | Pending::SleepUnique(ns) => ns,
+        }
+    }
+
+    /// The wait as a quantity, so it renders in the unit it was written.
+    fn quantity(self) -> Quantity {
+        Quantity::Duration(self.nanos())
+    }
+}
+
+impl std::fmt::Display for Pending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}({})", <&'static str>::from(self), self.quantity())
+    }
 }
 
 /// A list iterator.
@@ -144,7 +202,7 @@ impl std::fmt::Display for Value {
                 f.write_str("}")
             }
             Value::Quantity(q) => write!(f, "{}", q),
-            Value::Future => f.write_str("<future>"),
+            Value::Future(pending) => write!(f, "<{}>", pending),
         }
     }
 }

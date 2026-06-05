@@ -10,27 +10,32 @@
 //! once. A body's cannot be shared that way — a suspended function owns its
 //! program counter and registers until it finishes.
 //!
-//! `run_sync` rejects the `Await` opcode, since filters must not suspend. The
-//! async driver for automation bodies reuses the same dispatch loop and
-//! arrives separately; it belongs under this module, because resuming from an
+//! `run_sync` rejects the `Await` opcode, since filters must not suspend.
+//! [`Vm::run_async`] is the driver for bodies: it reuses the same dispatch
+//! loop and differs only at the `Await`, where it hands the suspension to a
+//! [`Suspension`]. It belongs under this module, because resuming from an
 //! `Await` needs the machine's internals.
 //!
 //! The submodules are private and this is the whole public surface.
-//! [`Quantity`] and [`IterState`] are here only because [`Value`] variants
-//! carry them.
+//! [`Quantity`], [`IterState`] and [`Pending`] are here only because
+//! [`Value`] variants carry them.
 
 mod consts;
 mod error;
 mod machine;
 mod ops;
 mod quantity;
+mod suspension;
 mod value;
 
 #[cfg(test)]
 mod tests;
 
 pub use error::VmError;
+pub use machine::Program;
 pub use machine::Vm;
 pub use quantity::Quantity;
+pub use suspension::Suspension;
 pub use value::IterState;
+pub use value::Pending;
 pub use value::Value;
