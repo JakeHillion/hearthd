@@ -9,11 +9,13 @@
 //! `3600` or `90deg`.
 //!
 //! Domain-specific cluster snapshots (`OnOffCluster`, `OccupancySensingCluster`,
-//! …) and engine `Node` references are deliberately not modeled yet; they
-//! arrive once the runner starts feeding real engine state to the VM in
-//! later commits.
+//! …) are deliberately not modeled yet; they arrive once the runner starts
+//! feeding real engine state to the VM in later commits. A [`Value::Node`]
+//! is only the identifier relocation resolved a name to — reading anything
+//! off it needs that same engine state.
 
 use super::quantity::Quantity;
+use crate::engine::NodeId;
 
 /// One register's worth of runtime value.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +45,12 @@ pub enum Value {
     /// An anonymous record/struct, e.g. a cluster snapshot or the
     /// destructured `state.lights` group. Fields are looked up by name.
     Struct(std::collections::BTreeMap<String, Value>),
+
+    /// A node the relocator resolved an entity symbol to.
+    ///
+    /// A handle, not a snapshot: the deployment decides which node a name
+    /// stands for, and the engine decides what that node currently is.
+    Node(NodeId),
 
     /// A unit literal (`5min`, `20c`) normalised to its dimension's
     /// canonical unit: nanoseconds, tenths of a degree, or hundredths of a
@@ -160,6 +168,7 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Unit => f.write_str("()"),
+            Value::Node(id) => write!(f, "node({})", id),
             Value::Bool(b) => write!(f, "{}", b),
             Value::Int(n) => write!(f, "{}", n),
             // `{:?}` so a whole float keeps its decimal point (`2.0`, not

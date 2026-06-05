@@ -20,6 +20,10 @@ pub(super) fn field_access(base: &Value, field: &str) -> Result<Value, VmError> 
             // delegates to the inner value (e.g. `event.attributes`).
             field_access(&args[0], field)
         }
+        // A node is a handle. Reading a field off one is a well-typed
+        // dereference against engine state this VM does not have yet, so it
+        // is a gap to report rather than an invariant broken.
+        Value::Node(_) => Err(VmError::NodeFieldNotImplemented(field.to_string())),
         other => Err(VmError::InvariantViolation(format!(
             "field access `.{}` on {:?}",
             field, other

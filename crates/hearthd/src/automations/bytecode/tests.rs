@@ -13,6 +13,57 @@ fn lower_and_pretty(input: &str) -> String {
 }
 
 // =============================================================================
+// Entity references
+// =============================================================================
+
+/// Naming an entity is a constant-pool symbol, however it is written.
+/// Destructuring `state = { light = { lamp } }` must lower to exactly what
+/// the path `state.light.lamp` does: one `load_const_node`, no `field` on
+/// `state`, and no `ident` constant for the group. Both forms are compared
+/// filter to filter, since the pattern is lowered into each function and a
+/// body that does not use the binding would otherwise differ by a dead load.
+#[test]
+fn test_lower_bytecode_destructured_entity_matches_path() {
+    let destructured = lower_and_pretty(
+        r#"observer { event, state = { light = { lamp }, ... }, ... } /lamp.entity_id == "x"/ { [event] }"#,
+    );
+    let path = lower_and_pretty(
+        r#"observer { event, state, ... } /state.light.lamp.entity_id == "x"/ { [event] }"#,
+    );
+    insta::assert_snapshot!(destructured, @r#"
+    Automation: observer
+      filter:
+        regs: 6
+        params:
+          r0: event [Event]
+          r1: state [State]
+        consts:
+          #0 = entity light.lamp
+          #1 = ident entity_id
+          #2 = string "x"
+        code:
+          load_const_node    r2, #0 (entity light.lamp)
+          field              r3, r2, #1 (entity_id)
+          load_const_string  r4, #2 ("x")
+          eq                 r5, r3, r4
+          return             r5
+      body:
+        regs: 4
+        params:
+          r0: event [Event]
+          r1: state [State]
+        consts:
+          #0 = entity light.lamp
+        code:
+          load_const_node    r2, #0 (entity light.lamp)
+          list               r3, [r0]
+          return             r3
+    "#);
+    let filter = |pretty: &str| pretty.split("  body:").next().unwrap().to_string();
+    assert_eq!(filter(&destructured), filter(&path));
+}
+
+// =============================================================================
 // Literal / simple body
 // =============================================================================
 
