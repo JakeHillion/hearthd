@@ -383,7 +383,13 @@ mod tests {
         indices.insert("spotify".to_string(), 0);
 
         let g = group("spotify");
-        let node = mapper::group_node(&g, &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(
+            NodeId::from_raw(1),
+            &g,
+            &streams,
+            &indices,
+            "media_player.kitchen",
+        );
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let on_off = match endpoint.clusters.get("OnOff") {
             Some(Cluster::OnOff(c)) => c,
@@ -401,7 +407,13 @@ mod tests {
 
         let mut g = group("spotify");
         g.muted = true;
-        let node = mapper::group_node(&g, &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(
+            NodeId::from_raw(1),
+            &g,
+            &streams,
+            &indices,
+            "media_player.kitchen",
+        );
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let on_off = match endpoint.clusters.get("OnOff") {
             Some(Cluster::OnOff(c)) => c,
@@ -420,7 +432,13 @@ mod tests {
         indices.insert("airplay".to_string(), 1);
 
         let g = group("airplay");
-        let node = mapper::group_node(&g, &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(
+            NodeId::from_raw(1),
+            &g,
+            &streams,
+            &indices,
+            "media_player.kitchen",
+        );
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let media_input = match endpoint.clusters.get("MediaInput") {
             Some(Cluster::MediaInput(c)) => c,
@@ -444,7 +462,13 @@ mod tests {
         let mut indices = HashMap::new();
         indices.insert("spotify".to_string(), 0);
 
-        let node = mapper::group_node(&group("gone"), &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(
+            NodeId::from_raw(1),
+            &group("gone"),
+            &streams,
+            &indices,
+            "media_player.kitchen",
+        );
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let media_input = match endpoint.clusters.get("MediaInput") {
             Some(Cluster::MediaInput(c)) => c,
@@ -465,6 +489,7 @@ mod tests {
         indices.insert("spotify".to_string(), 0);
 
         let node = mapper::group_node(
+            NodeId::from_raw(1),
             &group("spotify"),
             &streams,
             &indices,
@@ -489,7 +514,13 @@ mod tests {
         indices.insert("spotify".to_string(), 0);
 
         let g = group("spotify");
-        let node = mapper::group_node(&g, &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(
+            NodeId::from_raw(1),
+            &g,
+            &streams,
+            &indices,
+            "media_player.kitchen",
+        );
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let media_playback = match endpoint.clusters.get("MediaPlayback") {
             Some(Cluster::MediaPlayback(c)) => c,
@@ -509,6 +540,7 @@ mod tests {
         indices.insert("spotify".to_string(), 0);
 
         let node = mapper::group_node(
+            NodeId::from_raw(1),
             &group("spotify"),
             &streams,
             &indices,
@@ -527,6 +559,7 @@ mod tests {
         // The cluster set a node exposes must not depend on whether the
         // server happened to describe the stream it points at.
         let node = mapper::group_node(
+            NodeId::from_raw(1),
             &group("gone"),
             &HashMap::new(),
             &HashMap::new(),
@@ -539,7 +572,7 @@ mod tests {
     #[test]
     fn client_node_exposes_volume_and_connection() {
         let c = client(false, 74, true);
-        let node = mapper::client_node(&c, "speaker.kitchen_speaker");
+        let node = mapper::client_node(NodeId::from_raw(1), &c, "speaker.kitchen_speaker");
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
 
         let on_off = match endpoint.clusters.get("OnOff") {
@@ -790,7 +823,13 @@ mod tests {
         let mut indices = HashMap::new();
         indices.insert("spotify".to_string(), 0);
 
-        let node = mapper::group_node(&group("spotify"), &streams, &indices, "media_player.k");
+        let node = mapper::group_node(
+            NodeId::from_raw(1),
+            &group("spotify"),
+            &streams,
+            &indices,
+            "media_player.k",
+        );
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let playback = match endpoint.clusters.get("MediaPlayback") {
             Some(Cluster::MediaPlayback(c)) => c,

@@ -333,6 +333,7 @@ fn node_for(host: &Host) -> Node {
     endpoints.insert(WOL_ENDPOINT, endpoint);
 
     Node {
+        id: host.node_id,
         entity_id: format!("switch.{}", host.key),
         integration: INTEGRATION_NAME.to_string(),
         name: Some(host.name.clone()),

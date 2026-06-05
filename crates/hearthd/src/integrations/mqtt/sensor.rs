@@ -152,7 +152,7 @@ impl Sensor {
     }
 
     /// Build the Matter `Node` snapshot for this sensor.
-    pub fn to_node(&self, integration: &str) -> Node {
+    pub fn to_node(&self, integration: &str, id: crate::engine::NodeId) -> Node {
         let mut endpoint = Endpoint::default();
         if let Some(temp) = &self.temperature {
             endpoint.clusters.insert(
@@ -171,6 +171,7 @@ impl Sensor {
         endpoints.insert(Z2M_ENDPOINT, endpoint);
 
         Node {
+            id,
             entity_id: self.entity_id.clone(),
             integration: integration.to_string(),
             name: Some(self.name.clone()),
@@ -286,7 +287,7 @@ mod tests {
 
         assert_eq!(sensor.name, "Living Room temperature");
         assert_eq!(sensor.state_topic, "zigbee2mqtt/climate_sensor");
-        let node = sensor.to_node("mqtt");
+        let node = sensor.to_node("mqtt", crate::engine::NodeId::from_raw(1));
         let endpoint = node.endpoints.get(&Z2M_ENDPOINT).unwrap();
         assert!(
             endpoint
@@ -327,7 +328,7 @@ mod tests {
         // A repeat discovery for the same measurement is a no-op.
         assert!(!sensor.add_channel(Measurement::Humidity, &humidity_discovery()));
 
-        let node = sensor.to_node("mqtt");
+        let node = sensor.to_node("mqtt", crate::engine::NodeId::from_raw(1));
         let endpoint = node.endpoints.get(&Z2M_ENDPOINT).unwrap();
         assert!(
             endpoint

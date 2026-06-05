@@ -231,6 +231,7 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
             groups.insert(group.id.clone(), group.clone());
 
             let node = mapper::group_node(
+                node_id,
                 group,
                 &inner.streams,
                 &inner.stream_indices,
@@ -246,7 +247,7 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
                 live_clients.insert(client.id.clone(), node_id);
                 clients.insert(client.id.clone(), client.clone());
 
-                let node = mapper::client_node(client, &mapper::client_entity_id(client));
+                let node = mapper::client_node(node_id, client, &mapper::client_entity_id(client));
                 publish(&mut inner, &mut messages, node_id, node);
             }
         }
@@ -463,7 +464,7 @@ mod tests {
     use crate::matter::Endpoint;
     use crate::matter::OnOffCluster;
 
-    fn node(entity_id: &str, name: &str, on_off: bool) -> Node {
+    fn node(id: NodeId, entity_id: &str, name: &str, on_off: bool) -> Node {
         let mut endpoint = Endpoint::default();
         endpoint.clusters.insert(
             crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
@@ -472,6 +473,7 @@ mod tests {
         let mut endpoints = HashMap::new();
         endpoints.insert(mapper::SNAPCAST_ENDPOINT, endpoint);
         Node {
+            id,
             entity_id: entity_id.to_string(),
             integration: INTEGRATION_NAME.to_string(),
             name: Some(name.to_string()),
@@ -485,7 +487,12 @@ mod tests {
         let mut messages = Vec::new();
         let id = NodeId::from_raw(1);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(
+            &mut inner,
+            &mut messages,
+            id,
+            node(id, "speaker.a", "A", true),
+        );
 
         assert!(matches!(
             messages.as_slice(),
@@ -503,9 +510,19 @@ mod tests {
         let mut messages = Vec::new();
         let id = NodeId::from_raw(1);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(
+            &mut inner,
+            &mut messages,
+            id,
+            node(id, "speaker.a", "A", true),
+        );
         messages.clear();
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(
+            &mut inner,
+            &mut messages,
+            id,
+            node(id, "speaker.a", "A", true),
+        );
 
         assert!(messages.is_empty());
     }
@@ -516,9 +533,19 @@ mod tests {
         let mut messages = Vec::new();
         let id = NodeId::from_raw(1);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(
+            &mut inner,
+            &mut messages,
+            id,
+            node(id, "speaker.a", "A", true),
+        );
         messages.clear();
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", false));
+        publish(
+            &mut inner,
+            &mut messages,
+            id,
+            node(id, "speaker.a", "A", false),
+        );
 
         match messages.as_slice() {
             [
@@ -545,13 +572,18 @@ mod tests {
         let mut messages = Vec::new();
         let id = NodeId::from_raw(1);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(
+            &mut inner,
+            &mut messages,
+            id,
+            node(id, "speaker.a", "A", true),
+        );
         messages.clear();
         publish(
             &mut inner,
             &mut messages,
             id,
-            node("speaker.kitchen", "Kitchen", true),
+            node(id, "speaker.kitchen", "Kitchen", true),
         );
 
         match messages.as_slice() {

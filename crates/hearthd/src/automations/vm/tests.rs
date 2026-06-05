@@ -1359,9 +1359,11 @@ fn test_vm_gap_keys_needs_a_map() {
 #[test]
 fn test_vm_gap_node_field_needs_engine_state() {
     let mut state = crate::engine::state::State::default();
+    let id = crate::engine::NodeId::from_raw(3);
     state.nodes.insert(
-        crate::engine::NodeId::from_raw(3),
+        id,
         crate::matter::Node {
+            id,
             entity_id: "light.living_room_lamp".to_string(),
             integration: "test".to_string(),
             name: None,

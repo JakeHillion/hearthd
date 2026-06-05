@@ -27,6 +27,8 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::engine::NodeId;
+
 mod clusters;
 mod commands;
 
@@ -247,6 +249,11 @@ impl Endpoint {
 /// A Matter node: a physical device addressable on the fabric.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, facet::Facet)]
 pub struct Node {
+    /// Locally assigned NodeId. Mirrors the key under which this node is
+    /// stored in `State::nodes` so values flowing through the runtime can
+    /// resolve back to the engine without a side lookup.
+    pub id: NodeId,
+
     /// External alias used by API clients (e.g. "light.living_room").
     pub entity_id: String,
 

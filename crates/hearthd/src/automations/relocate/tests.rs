@@ -19,9 +19,11 @@ use crate::matter::Node;
 fn schema(entries: &[(&str, u64)]) -> DeploymentSchema {
     let mut state = State::default();
     for (entity_id, raw) in entries {
+        let id = NodeId::from_raw(*raw);
         state.nodes.insert(
-            NodeId::from_raw(*raw),
+            id,
             Node {
+                id,
                 entity_id: entity_id.to_string(),
                 integration: "test".to_string(),
                 name: None,
