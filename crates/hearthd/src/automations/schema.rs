@@ -73,6 +73,7 @@ mod tests {
         (
             id,
             Node {
+                id,
                 entity_id: entity_id.to_string(),
                 integration: "test".to_string(),
                 name: None,

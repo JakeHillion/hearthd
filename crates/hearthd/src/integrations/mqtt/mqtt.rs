@@ -218,10 +218,10 @@ impl<C: MqttClient> MqttIntegration<C> {
             })?;
 
         let state_topic = light.state_topic.clone();
-        let node = light.to_node(INTEGRATION_NAME);
         info!("Discovered light entity: {} ({})", light.name, entity_id);
 
         let node_id = next_node_id.fetch_add(1, Ordering::Relaxed);
+        let node = light.to_node(INTEGRATION_NAME, node_id);
         let light_arc = Arc::new(Mutex::new(light));
 
         {
@@ -293,13 +293,13 @@ impl<C: MqttClient> MqttIntegration<C> {
                 })?;
 
         let state_topic = sensor.state_topic.clone();
-        let node = sensor.to_node(INTEGRATION_NAME);
         info!(
             "Discovered binary sensor entity: {} ({})",
             sensor.name, entity_id
         );
 
         let node_id = next_node_id.fetch_add(1, Ordering::Relaxed);
+        let node = sensor.to_node(INTEGRATION_NAME, node_id);
         let sensor_arc = Arc::new(Mutex::new(sensor));
 
         {

@@ -166,7 +166,7 @@ impl BinarySensor {
     }
 
     /// Build the Matter `Node` snapshot for this sensor.
-    pub fn to_node(&self, integration: &str) -> Node {
+    pub fn to_node(&self, integration: &str, id: crate::matter::NodeId) -> Node {
         let mut endpoint = Endpoint::default();
         endpoint.clusters.insert(
             crate::matter::CLUSTER_NAME_OCCUPANCY_SENSING.to_string(),
@@ -177,6 +177,7 @@ impl BinarySensor {
         endpoints.insert(Z2M_ENDPOINT, endpoint);
 
         Node {
+            id,
             entity_id: self.entity_id.clone(),
             integration: integration.to_string(),
             name: Some(self.name.clone()),

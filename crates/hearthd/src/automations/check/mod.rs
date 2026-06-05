@@ -118,6 +118,9 @@ impl TypeRegistry {
             );
             fields
         });
+        // Action variants emitted by observer bodies.
+        variants.insert("LightOn".into(), HashMap::new());
+        variants.insert("LightOff".into(), HashMap::new());
         self.enums.insert("Event".into(), EnumInfo { variants });
     }
 

@@ -17,6 +17,7 @@ use super::integration::Integration;
 use super::integration::ToIntegrationSender;
 use super::message::FromIntegrationMessage;
 use super::message::ToIntegrationMessage;
+use super::runner::AutomationRunner;
 use super::state::State;
 use crate::engine::IntegrationContext;
 use crate::matter::Cluster;
@@ -46,6 +47,17 @@ pub struct Engine {
 
     /// Handles for integration tasks
     integration_handles: Vec<JoinHandle<()>>,
+
+    /// Optional automation runner. When set, the engine calls
+    /// `runner.dispatch(...)` on each `AttributeChanged` event from
+    /// inside its own task; the runner is responsible for any task
+    /// spawning needed to actually execute automations.
+    ///
+    /// Held in a `std::sync::RwLock` rather than `arc_swap` because
+    /// trait objects don't satisfy `arc_swap::RefCnt`'s `Sized` bound.
+    /// `set_runner` is expected to be called at most a handful of times
+    /// (typically once at startup), so the lock is not on a hot path.
+    runner: std::sync::RwLock<Option<Arc<dyn AutomationRunner>>>,
 }
 
 /// Capacity for the integration→engine message channel
@@ -63,7 +75,23 @@ impl Engine {
             message_rx: Mutex::new(message_rx),
             message_tx,
             integration_handles: Vec::new(),
+            runner: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Install (or replace) the automation runner. Subsequent events
+    /// will be dispatched to it.
+    pub fn set_runner(&self, runner: Arc<dyn AutomationRunner>) {
+        *self.runner.write().expect("runner lock poisoned") = Some(runner);
+    }
+
+    /// Snapshot the current automation runner, if any.
+    fn current_runner(&self) -> Option<Arc<dyn AutomationRunner>> {
+        self.runner
+            .read()
+            .expect("runner lock poisoned")
+            .as_ref()
+            .map(Arc::clone)
     }
 
     /// Register integrations from configuration
@@ -262,7 +290,7 @@ impl Engine {
                     self.state.store(Arc::new(state));
                 }
 
-                let _event = match cluster {
+                let event = match cluster {
                     Cluster::OnOff(attributes) => Event::OnOffChanged {
                         node_id,
                         endpoint_id,
@@ -279,7 +307,11 @@ impl Engine {
                         attributes,
                     },
                 };
-                // TODO: Trigger automations based on attribute-changed event
+
+                if let Some(runner) = self.current_runner() {
+                    let snapshot = self.state.load_full();
+                    runner.dispatch(&event, &snapshot);
+                }
             }
         }
         Ok(())
@@ -289,5 +321,117 @@ impl Engine {
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::matter::Endpoint;
+    use crate::matter::Node;
+    use crate::matter::OccupancySensingCluster;
+
+    /// Recording fake: stores every event it sees in order.
+    #[derive(Default)]
+    struct RecordingRunner {
+        events: Mutex<Vec<Event>>,
+    }
+
+    impl AutomationRunner for RecordingRunner {
+        fn dispatch(&self, event: &Event, _state: &Arc<State>) {
+            self.events.lock().unwrap().push(event.clone());
+        }
+    }
+
+    fn fake_motion_node() -> Node {
+        Node {
+            id: 7,
+            entity_id: "binary_sensor.kitchen_motion".into(),
+            integration: "test".into(),
+            name: None,
+            endpoints: HashMap::from([(1u16, Endpoint::default())]),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_fires_on_attribute_changed() {
+        let engine = Engine::new();
+
+        // Seed the state with a known node so AttributeChanged has a
+        // target to merge into.
+        {
+            let mut state = State::clone(&engine.state.load());
+            let node = fake_motion_node();
+            let id = node.id;
+            state.by_entity_id.insert(node.entity_id.clone(), id);
+            state.nodes.insert(id, node);
+            engine.state.store(Arc::new(state));
+        }
+
+        let recorder = Arc::new(RecordingRunner::default());
+        engine.set_runner(recorder.clone());
+
+        engine
+            .handle_event(FromIntegrationMessage::AttributeChanged {
+                node_id: 7,
+                endpoint_id: 1,
+                cluster: Cluster::OccupancySensing(OccupancySensingCluster { occupancy: true }),
+            })
+            .await
+            .expect("handle_event");
+
+        let events = recorder.events.lock().unwrap();
+        assert_eq!(events.len(), 1, "expected one dispatched event");
+        match &events[0] {
+            Event::OccupancySensingChanged {
+                node_id,
+                endpoint_id,
+                attributes,
+            } => {
+                assert_eq!(*node_id, 7);
+                assert_eq!(*endpoint_id, 1);
+                assert!(attributes.occupancy);
+            }
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_is_a_noop_without_runner() {
+        // Without a runner installed, AttributeChanged must still update
+        // state and return Ok — we just don't fan it out anywhere.
+        let engine = Engine::new();
+        let node = fake_motion_node();
+        let id = node.id;
+        {
+            let mut state = State::clone(&engine.state.load());
+            state.by_entity_id.insert(node.entity_id.clone(), id);
+            state.nodes.insert(id, node);
+            engine.state.store(Arc::new(state));
+        }
+
+        engine
+            .handle_event(FromIntegrationMessage::AttributeChanged {
+                node_id: 7,
+                endpoint_id: 1,
+                cluster: Cluster::OccupancySensing(OccupancySensingCluster { occupancy: true }),
+            })
+            .await
+            .expect("handle_event");
+
+        let cluster = engine
+            .state_snapshot()
+            .nodes
+            .get(&7)
+            .and_then(|n| n.endpoints.get(&1))
+            .and_then(|e| e.clusters.get("OccupancySensing"))
+            .cloned()
+            .expect("cluster should be present");
+        match cluster {
+            Cluster::OccupancySensing(c) => assert!(c.occupancy),
+            other => panic!("unexpected cluster {:?}", other),
+        }
     }
 }

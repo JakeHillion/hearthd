@@ -1161,6 +1161,7 @@ fn build_schema(
         state.nodes.insert(
             *id,
             crate::matter::Node {
+                id: *id,
                 entity_id: entity_id.to_string(),
                 integration: "test".to_string(),
                 name: None,
