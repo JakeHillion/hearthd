@@ -53,3 +53,6 @@ webpki-roots = { workspace = true, optional = true }
 [dev-dependencies]
 insta = { workspace = true }
 tempfile = { workspace = true }
+# `test-util` is not in tokio's `full`, and the async VM tests need a
+# pausable clock so a five-minute sleep costs no wall time.
+tokio = { workspace = true, features = ["test-util"] }

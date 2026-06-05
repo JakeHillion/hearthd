@@ -17,7 +17,10 @@
 
 use std::collections::BTreeMap;
 
+use super::Pending;
 use super::Quantity;
+use super::Suspension;
+use super::Timer;
 use super::Value;
 use super::Vm;
 use super::VmError;
@@ -95,6 +98,43 @@ fn run_filter_with(filter: &str, event: Value) -> String {
 fn run_body(body: &str) -> String {
     let auto = compile(&format!("observer {{ event, ... }} /true/ {{ {} }}", body));
     build_and_run(auto.body, vec![sample_event()])
+}
+
+/// Run an automation body on the async driver and render the outcome.
+///
+/// Callers are `#[tokio::test(start_paused = true)]`, so the runtime
+/// auto-advances its clock whenever nothing is runnable: a `sleep` resolves
+/// as soon as the body is the only thing left, and a test costs no wall
+/// time however long the automation waits.
+async fn run_body_async(body: &str) -> String {
+    run_body_with(body, &Timer).await
+}
+
+/// [`run_body_async`] against a given suspension policy.
+async fn run_body_with(body: &str, suspension: &dyn Suspension) -> String {
+    let auto = compile(&format!("observer {{ event, ... }} /true/ {{ {} }}", body));
+    match Vm::new(auto.body) {
+        Ok(vm) => render(vm.run_async(vec![sample_event()], suspension).await),
+        Err(err) => format!("error: {}", err),
+    }
+}
+
+/// A [`Suspension`] where a newer instance always exists, so every
+/// `sleep_unique` fails at once and no wait is ever served.
+struct Superseded;
+
+#[async_trait::async_trait]
+impl Suspension for Superseded {
+    async fn resolve(&self, pending: Pending) -> Value {
+        match pending {
+            // Nothing may cut a `sleep` short, whatever else is running.
+            Pending::Sleep(_) => {
+                tokio::time::sleep(pending.duration()).await;
+                Value::Unit
+            }
+            Pending::SleepUnique(_) => Value::Bool(false),
+        }
+    }
 }
 
 /// Describe the register interface a compiled filter exposes: the
@@ -1103,8 +1143,9 @@ fn test_vm_builtin_clamp_nan_value_passes_through() {
 // ============================================================================
 // Futures
 //
-// `sleep` builds an opaque, payload-free handle. A filter may construct one
-// and discard it; only the async driver may look at one.
+// `sleep` builds a handle carrying the wait it stands for. It is opaque to
+// everything but the async driver: a filter may construct one and discard it,
+// and only an `Await` may look inside.
 // ============================================================================
 
 /// A filter can construct a future and count it without observing it, so
@@ -1126,15 +1167,134 @@ fn test_vm_sync_driver_refuses_await() {
     );
 }
 
-/// A payload-free future compares equal to every other future, so equality
-/// is reported rather than answered. The checker rejects `Future` equality,
+/// Comparing two futures would answer a question about the waits they
+/// stand for rather than about the waits themselves, so equality is
+/// reported instead of answered. The checker rejects `Future` equality,
 /// which makes this unreachable from source and a standing assertion that
 /// it stays that way.
 #[test]
 fn test_vm_future_equality_is_rejected() {
     insta::assert_snapshot!(
-        render(super::ops::values_equal(&Value::Future, &Value::Future).map(Value::Bool)),
+        render(
+            super::ops::values_equal(
+                &Value::Future(Pending::Sleep(1)),
+                &Value::Future(Pending::Sleep(1)),
+            )
+            .map(Value::Bool)
+        ),
         @"error: VM invariant violated: equality on an unawaited future"
+    );
+}
+
+/// A future renders as the wait it stands for, so a diagnostic naming one
+/// says which builtin built it and how long it runs.
+#[test]
+fn test_vm_future_renders_its_wait() {
+    insta::assert_snapshot!(Value::Future(Pending::SleepUnique(300_000_000_000)), @"<sleep_unique(300s)>");
+}
+
+// ============================================================================
+// The async driver
+//
+// Everything above runs on `run_sync`. These run the same compiled bodies on
+// `run_async`, which is the only driver that may pass an `Await`.
+// ============================================================================
+
+/// The whole point: a body suspends at its `await` and runs on afterwards
+/// to its return value. `sleep` is typed `Future<()>`, so the `await` is a
+/// statement rather than something to branch on.
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_await_resumes_the_body() {
+    insta::assert_snapshot!(
+        run_body_async("await sleep(5min); [event]").await,
+        @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]"
+    );
+}
+
+/// `sleep_unique` suspends exactly as `sleep` does, and resumes `true`: a
+/// wait that reaches its end is by definition the one that was not
+/// superseded. The "only the most recent firing wins" half is the runner
+/// abandoning the body, not anything the VM does differently.
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_sleep_unique_resumes_true() {
+    insta::assert_snapshot!(
+        run_body_async("if await sleep_unique(5min) { [] } else { [event] }").await,
+        @"[]"
+    );
+}
+
+/// The await really waits: the clock advances by the full duration, so a
+/// body cannot resume early.
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_await_waits_out_its_duration() {
+    let start = tokio::time::Instant::now();
+    let _ = run_body_async("await sleep(1h); [event]").await;
+    insta::assert_snapshot!(start.elapsed().as_secs(), @"3600");
+}
+
+/// A body with no `await` runs on the async driver unchanged — the two
+/// drivers share the dispatch loop and differ only at the suspension.
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_body_without_await() {
+    insta::assert_snapshot!(run_body_async("[event]").await, @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+}
+
+/// A body whose `sleep_unique` is superseded takes its `else` branch and
+/// runs on. This is the path the `Future<Bool>` typing exists for, and the
+/// reason the machine asks a [`Suspension`] rather than deciding itself: a
+/// register machine has no notion of a second instance.
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_a_superseded_sleep_unique_resolves_false() {
+    insta::assert_snapshot!(
+        run_body_with("if await sleep_unique(5min) { [] } else { [event] }", &Superseded).await,
+        @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]"
+    );
+}
+
+/// `sleep` has no failing form to reach. Even a `Suspension` that supersedes
+/// everything it can resolves one normally, because `Future<()>` leaves it
+/// nothing to report.
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_sleep_has_no_superseded_form() {
+    insta::assert_snapshot!(
+        run_body_with("await sleep(5min); [event]", &Superseded).await,
+        @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]"
+    );
+}
+
+/// Two instances of one body execute independently over a shared program.
+/// The parameters each was bound with stay its own, which is what lets a
+/// re-triggered automation run beside the firing it followed.
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_instances_do_not_share_registers() {
+    let auto = compile("observer { event, ... } /true/ { await sleep(5min); [event] }");
+    let template = Vm::new(auto.body).expect("the body builds");
+
+    let first = template
+        .instance()
+        .run_async(vec![event_with_node_id(1)], &Timer);
+    let second = template
+        .instance()
+        .run_async(vec![event_with_node_id(2)], &Timer);
+    let (first, second) = tokio::join!(first, second);
+
+    insta::assert_snapshot!(render(first), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 1})]");
+    insta::assert_snapshot!(render(second), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 2})]");
+}
+
+/// Awaiting a register that holds something other than a future is
+/// reported rather than run. The checker types `await`'s operand as a
+/// `Future`, so this is only ever reachable by hand.
+#[tokio::test(start_paused = true)]
+async fn test_vm_async_await_on_non_future_is_an_error() {
+    let mut code = vec![Opcode::Await as u8];
+    code.extend_from_slice(&0u32.to_le_bytes());
+    // Source register 1 is left at its initial `Unit`.
+    code.extend_from_slice(&1u32.to_le_bytes());
+    let vm = Vm::new(raw_bytecode(2, code)).expect("no constants to decode");
+    insta::assert_snapshot!(
+        render(vm.run_async(Vec::new(), &Timer).await),
+        @"error: VM invariant violated: await on ()"
     );
 }
 
