@@ -1384,3 +1384,174 @@ fn test_equality_on_an_untyped_operand_still_checks() {
         );
     }
 }
+// =============================================================================
+// Structural state binding (state.<domain>.<slug>)
+// =============================================================================
+
+/// Naming an entity type checks with no deployment in sight. `state.light`
+/// is the light domain on every install, and any slug under it is a `Node`,
+/// so the automation compiles before anything knows whether this house has
+/// a living room lamp.
+#[test]
+fn test_state_domain_slug_resolves_to_node() {
+    let result = check_errors(
+        r#"observer { event, state, ... } /state.light.living_room_lamp.entity_id == "light.living_room_lamp"/ { [event] }"#,
+    );
+    insta::assert_snapshot!(result, @"");
+}
+
+/// The same path written as a destructuring pattern, which resolves through
+/// the same rule: a field on a domain group names an entity either way.
+#[test]
+fn test_state_domain_slug_destructures() {
+    let result = check_errors(
+        r#"observer { event, state = { light = { living_room_lamp }, ... }, ... } /living_room_lamp.entity_id == "x"/ { [event] }"#,
+    );
+    insta::assert_snapshot!(result, @"");
+}
+
+/// A domain the language has no variant for is an ordinary unknown field.
+/// This is settled by the `Domain` enum rather than by any deployment, so
+/// the typo is caught on a house that has no lights at all.
+#[test]
+fn test_unknown_domain_on_state_is_a_type_error() {
+    let result = check_errors(
+        r#"observer { event, state, ... } /state.lite.living_room_lamp.entity_id == "x"/ { [event] }"#,
+    );
+    insta::assert_snapshot!(result, @r#"
+    Error: no field 'lite' on type State
+       ╭─[ <test>:1:33 ]
+       │
+     1 │ observer { event, state, ... } /state.lite.living_room_lamp.entity_id == "x"/ { [event] }
+       │                                 ─────┬────  
+       │                                      ╰────── no field 'lite' on type State
+    ───╯
+    "#);
+}
+
+/// Domains are laid over the facet shape rather than replacing it, so the
+/// raw maps `state` has always had are still reachable.
+#[test]
+fn test_state_keeps_its_facet_fields() {
+    let result = check_errors(
+        r#"observer { event, state = { nodes, light = { living_room_lamp }, ... }, ... } /living_room_lamp.entity_id == "x"/ { [event] }"#,
+    );
+    insta::assert_snapshot!(result, @"");
+}
+
+/// A domain group is a value in its own right: it can be bound and passed
+/// around without naming any entity, and doing so records no symbol. This is
+/// the case that cannot fail to relocate — a house with no lights runs it
+/// and gets nothing.
+#[test]
+fn test_domain_group_binds_without_naming_an_entity() {
+    let result = check_errors(
+        r#"observer { event, state, ... } /true/ { let lights = state.light; [event] }"#,
+    );
+    insta::assert_snapshot!(result, @"");
+}
+
+/// Two domains are two types, and there is no join between them. The
+/// language has no tagged unions, so a value that might be either has
+/// nothing to be -- and a field on it names no entity, which is what makes
+/// this a safety property rather than a nicety: a silent join would emit a
+/// symbol for whichever branch won and relocate to a device the source
+/// never named.
+///
+/// The diagnostic is poor. `unify` cannot report, so the mismatch poisons
+/// to `<error>` and the complaint surfaces wherever the value is used.
+/// Rejecting the program is the part that matters here.
+#[test]
+fn test_domain_groups_of_different_domains_do_not_unify() {
+    let result = check_errors(
+        r#"observer { event, state, ... } /true/ { let g = if true { state.light } else { state.climate }; [g.living_room_lamp] }"#,
+    );
+    insta::assert_snapshot!(result, @r#"
+    Error: observer body must return [Event], found [<error>]
+       ╭─[ <test>:1:97 ]
+       │
+     1 │ observer { event, state, ... } /true/ { let g = if true { state.light } else { state.climate }; [g.living_room_lamp] }
+       │                                                                                                 ──────────┬─────────  
+       │                                                                                                           ╰─────────── observer body must return [Event], found [<error>]
+    ───╯
+    "#);
+}
+
+// =============================================================================
+// Entity symbols
+// =============================================================================
+
+/// The symbols a source names, as `domain.slug`, in the order recorded.
+fn entity_symbols(input: &str) -> Vec<String> {
+    let program = crate::automations::parse(input).expect("parsing should succeed");
+    let lowered = crate::automations::desugar_program(program);
+    let result = check_program(&lowered);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    result
+        .constraints
+        .iter()
+        .map(|c| format!("{}.{}", c.domain, c.entity))
+        .collect()
+}
+
+/// Naming an entity records it, which is the whole output the relocator
+/// later consumes.
+#[test]
+fn test_named_entity_is_recorded_as_a_symbol() {
+    let symbols = entity_symbols(
+        r#"observer { event, state, ... } /state.light.living_room_lamp.entity_id == "x"/ { [event] }"#,
+    );
+    insta::assert_debug_snapshot!(symbols, @r#"
+    [
+        "light.living_room_lamp",
+    ]
+    "#);
+}
+
+/// A destructuring pattern records the same symbol the path does.
+#[test]
+fn test_destructured_entity_is_recorded_as_a_symbol() {
+    let symbols = entity_symbols(
+        r#"observer { event, state = { light = { living_room_lamp }, ... }, ... } /living_room_lamp.entity_id == "x"/ { [event] }"#,
+    );
+    insta::assert_debug_snapshot!(symbols, @r#"
+    [
+        "light.living_room_lamp",
+    ]
+    "#);
+}
+
+/// Binding a domain group without naming anything under it records nothing:
+/// there is no entity here for a deployment to be missing.
+#[test]
+fn test_domain_group_alone_records_no_symbol() {
+    let symbols = entity_symbols(
+        r#"observer { event, state, ... } /true/ { let lights = state.light; [event] }"#,
+    );
+    insta::assert_debug_snapshot!(symbols, @"[]");
+}
+
+/// The symbols recorded by a source the checker rejected.
+///
+/// A rejected program never reaches the relocator, but a symbol emitted
+/// here would mean the checker resolved a name the source did not settle.
+fn entity_symbols_allowing_errors(input: &str) -> Vec<String> {
+    let program = crate::automations::parse(input).expect("parsing should succeed");
+    let lowered = crate::automations::desugar_program(program);
+    check_program(&lowered)
+        .constraints
+        .iter()
+        .map(|c| format!("{}.{}", c.domain, c.entity))
+        .collect()
+}
+
+/// A field on a value that could be either of two domains records nothing.
+/// Picking the first branch's domain would name a device the source never
+/// wrote, and relocation would resolve it happily.
+#[test]
+fn test_mismatched_domain_groups_record_no_symbol() {
+    let symbols = entity_symbols_allowing_errors(
+        r#"observer { event, state, ... } /true/ { let g = if true { state.light } else { state.climate }; [g.living_room_lamp] }"#,
+    );
+    insta::assert_debug_snapshot!(symbols, @"[]");
+}

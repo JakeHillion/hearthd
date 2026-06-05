@@ -13,31 +13,32 @@
 use std::collections::HashMap;
 
 use super::bytecode::*;
+use crate::automations::domain::Domain;
 use crate::automations::lir::*;
 
 /// Lower an LIR program to bytecode.
-pub fn lower_bytecode_program(lir: &LirProgram) -> BytecodeProgram {
+pub fn lower_bytecode_program(lir: &LirProgram) -> RelocatableProgram {
     match lir {
-        LirProgram::Automation(auto) => BytecodeProgram::Automation(lower_automation(auto)),
+        LirProgram::Automation(auto) => RelocatableProgram::Automation(lower_automation(auto)),
         LirProgram::Template {
             params,
             automations,
-        } => BytecodeProgram::Template {
+        } => RelocatableProgram::Template {
             params: params.clone(),
             automations: automations.iter().map(lower_automation).collect(),
         },
     }
 }
 
-fn lower_automation(auto: &LirAutomation) -> BytecodeAutomation {
-    BytecodeAutomation {
+fn lower_automation(auto: &LirAutomation) -> RelocatableAutomation {
+    RelocatableAutomation {
         kind: auto.kind,
         filter: auto.filter.as_ref().map(lower_function),
         body: lower_function(&auto.body),
     }
 }
 
-fn lower_function(func: &LirFunction) -> Bytecode {
+fn lower_function(func: &LirFunction) -> RelocatableBytecode {
     let mut enc = Encoder::default();
 
     // Map label id → first byte offset that follows the label.
@@ -60,7 +61,7 @@ fn lower_function(func: &LirFunction) -> Bytecode {
         enc.code[backpatch.byte_pos..backpatch.byte_pos + 4].copy_from_slice(&bytes);
     }
 
-    Bytecode {
+    RelocatableBytecode {
         params: func
             .params
             .iter()
@@ -83,7 +84,7 @@ fn lower_function(func: &LirFunction) -> Bytecode {
 #[derive(Default)]
 struct Encoder {
     code: Vec<u8>,
-    consts: Vec<Const>,
+    consts: Vec<RelocConst>,
     backpatches: Vec<Backpatch>,
     // Interning tables, keyed by structural value.
     int_idx: HashMap<i64, u32>,
@@ -91,6 +92,7 @@ struct Encoder {
     string_idx: HashMap<String, u32>,
     ident_idx: HashMap<String, u32>,
     unit_idx: HashMap<(String, crate::automations::lexer::UnitType), u32>,
+    symbol_idx: HashMap<(Domain, String), u32>,
 }
 
 struct Backpatch {
@@ -127,7 +129,7 @@ impl Encoder {
             return idx;
         }
         let idx = self.consts.len() as u32;
-        self.consts.push(Const::Int(v));
+        self.consts.push(RelocConst::Resolved(Const::Int(v)));
         self.int_idx.insert(v, idx);
         idx
     }
@@ -138,7 +140,7 @@ impl Encoder {
             return idx;
         }
         let idx = self.consts.len() as u32;
-        self.consts.push(Const::Float(v));
+        self.consts.push(RelocConst::Resolved(Const::Float(v)));
         self.float_idx.insert(bits, idx);
         idx
     }
@@ -148,7 +150,8 @@ impl Encoder {
             return idx;
         }
         let idx = self.consts.len() as u32;
-        self.consts.push(Const::String(v.to_string()));
+        self.consts
+            .push(RelocConst::Resolved(Const::String(v.to_string())));
         self.string_idx.insert(v.to_string(), idx);
         idx
     }
@@ -158,7 +161,8 @@ impl Encoder {
             return idx;
         }
         let idx = self.consts.len() as u32;
-        self.consts.push(Const::Ident(v.to_string()));
+        self.consts
+            .push(RelocConst::Resolved(Const::Ident(v.to_string())));
         self.ident_idx.insert(v.to_string(), idx);
         idx
     }
@@ -169,11 +173,35 @@ impl Encoder {
             return idx;
         }
         let idx = self.consts.len() as u32;
-        self.consts.push(Const::UnitLit {
+        self.consts.push(RelocConst::Resolved(Const::UnitLit {
             value: value.to_string(),
             unit,
-        });
+        }));
         self.unit_idx.insert(key, idx);
+        idx
+    }
+
+    /// Reserve a pool slot for an entity the automation names.
+    ///
+    /// Interned like any other constant: two mentions of the same entity
+    /// share one slot, so the relocator resolves each distinct name once.
+    fn intern_symbol(
+        &mut self,
+        domain: Domain,
+        slug: &str,
+        span: chumsky::span::SimpleSpan,
+    ) -> u32 {
+        let key = (domain, slug.to_string());
+        if let Some(&idx) = self.symbol_idx.get(&key) {
+            return idx;
+        }
+        let idx = self.consts.len() as u32;
+        self.consts.push(RelocConst::Symbol(EntitySymbol {
+            domain,
+            slug: slug.to_string(),
+            span,
+        }));
+        self.symbol_idx.insert(key, idx);
         idx
     }
 }
@@ -207,6 +235,17 @@ fn emit(enc: &mut Encoder, instr: &LirInstr) {
         LirInstr::ConstUnit { dst, value, unit } => {
             let idx = enc.intern_unit(value, *unit);
             enc.write_u8(Opcode::LoadConstUnit as u8);
+            enc.write_reg(*dst);
+            enc.write_u32(idx);
+        }
+        LirInstr::EntityRef {
+            dst,
+            domain,
+            slug,
+            span,
+        } => {
+            let idx = enc.intern_symbol(*domain, slug, *span);
+            enc.write_u8(Opcode::LoadConstNode as u8);
             enc.write_reg(*dst);
             enc.write_u32(idx);
         }

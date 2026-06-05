@@ -17,10 +17,12 @@ use strum::FromRepr;
 
 use crate::automations::check::function::FunctionIdentity;
 use crate::automations::check::typed::Ty;
+use crate::automations::domain::Domain;
 use crate::automations::hir::HirBinOp;
 use crate::automations::hir::NumTy;
 use crate::automations::lexer::UnitType;
 use crate::automations::parser::ast;
+use crate::engine::NodeId;
 
 // ============================================================================
 // Opcode tags
@@ -49,6 +51,10 @@ pub enum Opcode {
     LoadConstBool = 0x04,
     LoadConstUnit = 0x05,
     Unit = 0x06,
+    /// Load the node a relocated entity symbol resolved to. The operand is
+    /// a constant-pool index, which holds a `Const::Node` only after
+    /// relocation -- see `RelocatableBytecode`.
+    LoadConstNode = 0x07,
 
     // === 0x1_: unary operators, and the binary ones that stay polymorphic ===
     //
@@ -227,7 +233,7 @@ pub enum StructFieldTag {
 
 /// One entry in a bytecode constant pool. `Float` is wrapped to expose
 /// stable `Eq`/`Hash` (by bit pattern), so we can intern by value.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Const {
     Int(i64),
     Float(f64),
@@ -240,6 +246,10 @@ pub enum Const {
         value: String,
         unit: UnitType,
     },
+    /// A node, put here by the relocator resolving an entity symbol. Nothing
+    /// in the source produces one: the compiler emits a symbol instead, and
+    /// `Bytecode` can only be reached by relocating that away.
+    Node(NodeId),
 }
 
 // ============================================================================
@@ -277,5 +287,72 @@ pub enum BytecodeProgram {
     Template {
         params: Vec<ast::Spanned<ast::TemplateParam>>,
         automations: Vec<BytecodeAutomation>,
+    },
+}
+
+// ============================================================================
+// Relocatable bytecode
+// ============================================================================
+
+/// An entity an automation names, as written in the source.
+///
+/// The domain is settled at compile time — it is a [`Domain`] variant, so it
+/// cannot be wrong. The slug is not: whether this deployment has one is what
+/// relocation decides. The span is kept so a failure to resolve reads like a
+/// compile error, pointing at the name in the source that could not be found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntitySymbol {
+    pub domain: Domain,
+    pub slug: String,
+    pub span: chumsky::span::SimpleSpan,
+}
+
+impl std::fmt::Display for EntitySymbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.domain, self.slug)
+    }
+}
+
+/// A constant-pool entry before relocation: either a constant the compiler
+/// knew outright, or an entity whose address only a deployment can supply.
+#[derive(Debug, Clone)]
+pub enum RelocConst {
+    Resolved(Const),
+    Symbol(EntitySymbol),
+}
+
+/// A compiled function that still has entity symbols in its constant pool.
+///
+/// This is what the compiler produces. It is not executable and deliberately
+/// cannot become executable by accident: turning one into a [`Bytecode`]
+/// means resolving every symbol, which is the only way to build the `Const`
+/// pool the VM reads. An unresolved automation has no path to the machine.
+///
+/// `code` is carried across unchanged. Relocation rewrites the pool and never
+/// the instruction stream, so the bytes a deployment executes are the bytes
+/// the compiler emitted.
+#[derive(Debug, Clone)]
+pub struct RelocatableBytecode {
+    pub params: Vec<BytecodeParam>,
+    pub num_regs: u32,
+    pub consts: Vec<RelocConst>,
+    pub code: Vec<u8>,
+}
+
+/// A compiled automation awaiting relocation.
+#[derive(Debug, Clone)]
+pub struct RelocatableAutomation {
+    pub kind: ast::AutomationKind,
+    pub filter: Option<RelocatableBytecode>,
+    pub body: RelocatableBytecode,
+}
+
+/// A compiled program awaiting relocation.
+#[derive(Debug, Clone)]
+pub enum RelocatableProgram {
+    Automation(RelocatableAutomation),
+    Template {
+        params: Vec<ast::Spanned<ast::TemplateParam>>,
+        automations: Vec<RelocatableAutomation>,
     },
 }

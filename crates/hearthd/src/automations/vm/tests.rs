@@ -1,8 +1,8 @@
 //! Tests for the synchronous bytecode VM.
 //!
 //! Each test compiles real DSL source through the whole pipeline
-//! (parse → desugar → check → HIR → LIR → bytecode) and executes the
-//! result, so what runs here is exactly what the runner will run.
+//! (parse → desugar → check → HIR → LIR → bytecode → relocate) and executes
+//! the result, so what runs here is exactly what the runner will run.
 //!
 //! [`compile`] asserts the source type-checks cleanly. The VM's safety
 //! argument is that its input has already passed the checker, so a test
@@ -29,13 +29,22 @@ use crate::automations::bytecode::BytecodeAutomation;
 use crate::automations::bytecode::BytecodeProgram;
 use crate::automations::bytecode::Opcode;
 use crate::automations::check::function::FunctionIdentity;
+use crate::automations::schema::DeploymentSchema;
 
 // ============================================================================
 // Harness
 // ============================================================================
 
 /// Compile DSL source to bytecode, asserting it type-checks cleanly.
+///
+/// These automations name no entities, so relocating against an empty
+/// deployment resolves everything there is to resolve.
 fn compile(src: &str) -> BytecodeAutomation {
+    compile_against(src, &DeploymentSchema::default())
+}
+
+/// [`compile`], relocated against a given deployment.
+fn compile_against(src: &str, schema: &DeploymentSchema) -> BytecodeAutomation {
     let program = crate::automations::parse(src).expect("source should parse");
     let lowered = crate::automations::desugar_program(program);
     let checked = crate::automations::check_program(&lowered);
@@ -46,7 +55,10 @@ fn compile(src: &str) -> BytecodeAutomation {
     );
     let hir = crate::automations::lower_program(&checked);
     let lir = crate::automations::lower_lir_program(&hir);
-    match crate::automations::lower_bytecode_program(&lir) {
+    let relocatable = crate::automations::lower_bytecode_program(&lir);
+    let bytecode = crate::automations::relocate_program(&relocatable, schema)
+        .expect("every entity the source names should be in the deployment");
+    match bytecode {
         BytecodeProgram::Automation(auto) => auto,
         BytecodeProgram::Template { .. } => panic!("expected an Automation, got a Template"),
     }
@@ -1336,6 +1348,35 @@ fn test_vm_gap_keys_needs_a_map() {
     insta::assert_snapshot!(
         render(super::ops::call(FunctionIdentity::Keys, vec![Value::List(vec![])])),
         @"error: keys is not implemented"
+    );
+}
+
+/// A relocated entity is a `Value::Node` handle, and reading a field off it
+/// is a dereference against engine state the VM does not hold yet. The
+/// instruction is well-typed — `Node` has the field — so the failure is a
+/// reported gap, not an invariant violation. Driven through the whole
+/// pipeline, so what fails here is the artifact the runner would execute.
+#[test]
+fn test_vm_gap_node_field_needs_engine_state() {
+    let mut state = crate::engine::state::State::default();
+    state.nodes.insert(
+        crate::engine::NodeId::from_raw(3),
+        crate::matter::Node {
+            entity_id: "light.living_room_lamp".to_string(),
+            integration: "test".to_string(),
+            name: None,
+            endpoints: std::collections::HashMap::new(),
+        },
+    );
+    let schema = DeploymentSchema::from_state(&state);
+    let auto = compile_against(
+        r#"observer { event, state, ... } /state.light.living_room_lamp.entity_id == "x"/ { [event] }"#,
+        &schema,
+    );
+    let bc = auto.filter.expect("an observer with a filter compiles one");
+    insta::assert_snapshot!(
+        build_and_run(bc, vec![sample_event(), Value::Unit]),
+        @"error: field access `.entity_id` on a node is not implemented"
     );
 }
 

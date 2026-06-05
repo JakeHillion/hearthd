@@ -315,6 +315,14 @@ impl Vm {
                         _ => return Err(VmError::InvariantViolation("const idx not Int".into())),
                     };
                 }
+                Opcode::LoadConstNode => {
+                    let dst = self.read_index();
+                    let idx = self.read_index();
+                    self.regs[dst] = match &self.program.consts[idx] {
+                        VmConst::Node(id) => Value::Node(*id),
+                        _ => return Err(VmError::InvariantViolation("const idx not Node".into())),
+                    };
+                }
                 Opcode::LoadConstFloat => {
                     let dst = self.read_index();
                     let idx = self.read_index();

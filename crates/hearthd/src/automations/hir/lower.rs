@@ -7,9 +7,11 @@
 use std::collections::HashMap;
 
 use facet::Facet as _;
+use strum::IntoEnumIterator;
 
 use super::hir::*;
 use crate::automations::check::typed::*;
+use crate::automations::domain::Domain;
 use crate::automations::parser::ast;
 use crate::engine::state;
 
@@ -40,9 +42,32 @@ fn shape_to_ty(shape: &facet::Shape) -> Ty {
     }
 }
 
+/// What one level of a destructuring pattern is taking fields from.
+///
+/// Mirrors the checker: a domain group has no static field set, so its
+/// slugs are lowered as entity symbols rather than looked up.
+enum PatternScope {
+    Fields(HashMap<String, Ty>),
+    Domain(Domain),
+}
+
+fn pattern_scope(ty: &Ty) -> PatternScope {
+    match ty {
+        Ty::DomainGroup(domain) => PatternScope::Domain(*domain),
+        Ty::Named(name) => PatternScope::Fields(struct_fields_for_type(name)),
+        _ => PatternScope::Fields(HashMap::new()),
+    }
+}
+
 fn struct_fields_for_type(name: &str) -> HashMap<String, Ty> {
+    if name == "State" {
+        let mut fields = shape_fields(state::State::SHAPE);
+        for domain in Domain::iter() {
+            fields.insert(domain.to_string(), Ty::DomainGroup(domain));
+        }
+        return fields;
+    }
     let shape = match name {
-        "State" => state::State::SHAPE,
         "OnOffCluster" => crate::matter::OnOffCluster::SHAPE,
         "LevelControlCluster" => crate::matter::LevelControlCluster::SHAPE,
         "OccupancySensingCluster" => crate::matter::OccupancySensingCluster::SHAPE,
@@ -66,6 +91,17 @@ fn struct_fields_for_type(name: &str) -> HashMap<String, Ty> {
         "Node" => crate::matter::Node::SHAPE,
         _ => return HashMap::new(),
     };
+    if let facet::Type::User(facet::UserType::Struct(st)) = &shape.ty {
+        st.fields
+            .iter()
+            .map(|f| (f.name.to_string(), shape_to_ty(f.shape.get())))
+            .collect()
+    } else {
+        HashMap::new()
+    }
+}
+
+fn shape_fields(shape: &facet::Shape) -> HashMap<String, Ty> {
     if let facet::Type::User(facet::UserType::Struct(st)) = &shape.ty {
         st.fields
             .iter()
@@ -276,14 +312,19 @@ impl Lowerer {
         .into();
 
         let mut params = Vec::new();
-        self.lower_pattern_inner(pattern, &input_fields, None, &mut params);
+        self.lower_pattern_inner(
+            pattern,
+            &PatternScope::Fields(input_fields),
+            None,
+            &mut params,
+        );
         params
     }
 
     fn lower_pattern_inner(
         &mut self,
         pattern: &ast::Spanned<ast::Pattern>,
-        available_fields: &HashMap<String, Ty>,
+        scope: &PatternScope,
         parent: Option<Tmp>,
         params: &mut Vec<Param>,
     ) {
@@ -301,10 +342,49 @@ impl Lowerer {
             ast::Pattern::Struct { fields, .. } => {
                 for field in fields {
                     let field_name = &field.node.name;
+                    // A slug under a domain group is an entity symbol, not a
+                    // field of the group value -- the same collapse a
+                    // written-out path gets, so both forms reach the
+                    // relocator as one kind of thing.
+                    if let PatternScope::Domain(domain) = scope {
+                        let tmp = self.emit(
+                            Op::EntityRef {
+                                domain: *domain,
+                                slug: field_name.clone(),
+                                span: field.span,
+                            },
+                            Ty::Named("Node".into()),
+                        );
+                        self.bind(field_name, tmp);
+                        continue;
+                    }
+
+                    let PatternScope::Fields(available_fields) = scope else {
+                        unreachable!("domain scope handled above")
+                    };
                     let field_ty = available_fields
                         .get(field_name.as_str())
                         .cloned()
                         .unwrap_or(Ty::Error);
+
+                    // Destructuring a domain group never materialises the
+                    // group: every name under it collapses to an entity
+                    // symbol, so there is no value to extract it from. The
+                    // written-out path skips the base for the same reason,
+                    // and skipping it here is what makes
+                    // `state = { light = { lamp } }` and `state.light.lamp`
+                    // lower to the same instructions.
+                    if let (Ty::DomainGroup(domain), Some(sub_pattern)) =
+                        (&field_ty, &field.node.pattern)
+                    {
+                        self.lower_pattern_inner(
+                            sub_pattern,
+                            &PatternScope::Domain(*domain),
+                            None,
+                            params,
+                        );
+                        continue;
+                    }
 
                     let tmp = if let Some(parent_tmp) = parent {
                         // Nested: emit Field instruction to extract from parent.
@@ -328,11 +408,8 @@ impl Lowerer {
 
                     if let Some(sub_pattern) = &field.node.pattern {
                         // Nested destructuring: don't bind parent, recurse.
-                        let sub_fields = match &field_ty {
-                            Ty::Named(name) => struct_fields_for_type(name),
-                            _ => HashMap::new(),
-                        };
-                        self.lower_pattern_inner(sub_pattern, &sub_fields, Some(tmp), params);
+                        let sub_scope = pattern_scope(&field_ty);
+                        self.lower_pattern_inner(sub_pattern, &sub_scope, Some(tmp), params);
                     } else {
                         // Simple binding.
                         self.bind(field_name, tmp);
@@ -420,6 +497,20 @@ impl Lowerer {
             }
 
             TypedExprKind::Field { expr: inner, field } => {
+                // Naming an entity is a constant, not a lookup. The base is
+                // not lowered at all: `state.light` exists to say which
+                // domain the slug belongs to, and once the symbol carries
+                // that there is nothing left for it to compute.
+                if let Ty::DomainGroup(domain) = &inner.ty {
+                    return self.emit(
+                        Op::EntityRef {
+                            domain: *domain,
+                            slug: field.clone(),
+                            span: expr.origin.span(),
+                        },
+                        expr.ty.clone(),
+                    );
+                }
                 let base = self.lower_expr(inner);
                 self.emit(
                     Op::Field {
