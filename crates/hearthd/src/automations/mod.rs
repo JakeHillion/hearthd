@@ -10,6 +10,7 @@ pub mod lower_bytecode;
 pub mod lower_lir;
 pub mod parser;
 pub mod repr;
+pub mod runtime;
 
 pub use check::check_program;
 pub use desugar::desugar;
