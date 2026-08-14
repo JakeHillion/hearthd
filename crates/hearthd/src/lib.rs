@@ -4,6 +4,8 @@ pub mod config;
 mod engine;
 mod integrations;
 pub mod matter;
+#[cfg(any(feature = "integration_ecoflow", feature = "integration_metno"))]
+mod tls;
 
 #[cfg(doc)]
 pub mod examples;

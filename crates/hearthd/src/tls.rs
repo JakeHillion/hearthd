@@ -1,23 +1,20 @@
-//! The TLS configuration shared by both connections to EcoFlow.
-//!
-//! Certificate verification is mandatory and not configurable. The account
-//! credentials, the bearer token and the MQTT credentials are all bearer-style
-//! secrets — anyone who intercepts them controls every device on the account —
-//! so an escape hatch for self-signed certificates would have no legitimate
-//! use against EcoFlow's own servers.
+//! The TLS configuration every outbound connection uses.
 //!
 //! Two deliberate choices here:
 //!
 //! - **Roots come from `webpki-roots`, not the host.** Relying on the system
 //!   trust store makes hearthd fail wherever one is absent, which includes the
-//!   nix build sandbox and minimal containers. Carrying the roots keeps the
-//!   HTTP and MQTT paths trusting exactly the same set, wherever it runs.
+//!   nix build sandbox and minimal containers. Carrying the roots keeps every
+//!   integration trusting exactly the same set, wherever it runs.
 //! - **The provider is passed explicitly rather than installed as the process
 //!   default.** No global state, and no dependence on some other component
 //!   having installed one first.
 //!
 //! `ring` rather than `aws-lc-rs`, because the latter needs cmake and bindgen
-//! at build time and the flake supplies neither.
+//! at build time and the flake supplies neither. That is also why every client
+//! must come through here: the `*-no-provider` features that keep aws-lc-rs out
+//! leave reqwest and rumqttc with no provider of their own, and a client built
+//! without one panics on construction.
 
 use std::sync::Arc;
 

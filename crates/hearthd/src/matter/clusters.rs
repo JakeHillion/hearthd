@@ -8,6 +8,11 @@
 //! reports a value. Integrations must not invent a plausible-looking default:
 //! a fabricated reading that disagrees with the hardware is worse than no
 //! reading.
+//!
+//! Some clusters here are hearthd-local rather than the specification's:
+//! quantities hearthd needs that Matter does not model yet. They are shaped
+//! like the standard ones and carry IDs in the manufacturer-specific range, so
+//! nothing downstream has to treat them specially.
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -24,8 +29,20 @@ pub const CLUSTER_ID_FAN_CONTROL: u32 = 0x0202;
 pub const CLUSTER_ID_DEHUMIDIFICATION_CONTROL: u32 = 0x0203;
 pub const CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION: u32 = 0x0204;
 pub const CLUSTER_ID_TEMPERATURE_MEASUREMENT: u32 = 0x0402;
+pub const CLUSTER_ID_PRESSURE_MEASUREMENT: u32 = 0x0403;
 pub const CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT: u32 = 0x0405;
 pub const CLUSTER_ID_OCCUPANCY_SENSING: u32 = 0x0406;
+
+// hearthd-local clusters for meteorological quantities Matter does not (yet)
+// model as standard clusters. IDs live in the manufacturer-specific range
+// (0xFC00-0xFFFE); if Matter later standardises any of these, swap the
+// corresponding ID/type for the official one.
+pub const CLUSTER_ID_WIND_MEASUREMENT: u32 = 0xFC00;
+pub const CLUSTER_ID_CLOUD_COVER: u32 = 0xFC01;
+pub const CLUSTER_ID_DEW_POINT: u32 = 0xFC02;
+pub const CLUSTER_ID_UV_INDEX: u32 = 0xFC03;
+pub const CLUSTER_ID_PRECIPITATION: u32 = 0xFC04;
+pub const CLUSTER_ID_WEATHER_CONDITION: u32 = 0xFC05;
 
 pub const CLUSTER_NAME_ON_OFF: &str = "OnOff";
 pub const CLUSTER_NAME_LEVEL_CONTROL: &str = "LevelControl";
@@ -39,8 +56,15 @@ pub const CLUSTER_NAME_DEHUMIDIFICATION_CONTROL: &str = "DehumidificationControl
 pub const CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION: &str =
     "ThermostatUserInterfaceConfiguration";
 pub const CLUSTER_NAME_TEMPERATURE_MEASUREMENT: &str = "TemperatureMeasurement";
+pub const CLUSTER_NAME_PRESSURE_MEASUREMENT: &str = "PressureMeasurement";
 pub const CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT: &str = "RelativeHumidityMeasurement";
 pub const CLUSTER_NAME_OCCUPANCY_SENSING: &str = "OccupancySensing";
+pub const CLUSTER_NAME_WIND_MEASUREMENT: &str = "WindMeasurement";
+pub const CLUSTER_NAME_CLOUD_COVER: &str = "CloudCover";
+pub const CLUSTER_NAME_DEW_POINT: &str = "DewPoint";
+pub const CLUSTER_NAME_UV_INDEX: &str = "UvIndex";
+pub const CLUSTER_NAME_PRECIPITATION: &str = "Precipitation";
+pub const CLUSTER_NAME_WEATHER_CONDITION: &str = "WeatherCondition";
 
 /// On/Off cluster (0x0006).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
@@ -61,6 +85,14 @@ pub struct LevelControlCluster {
 pub struct TemperatureMeasurementCluster {
     /// Attribute 0x0000 `MeasuredValue` (int16, hundredths of a degree
     /// Celsius, null if unknown).
+    pub measured_value: Option<i16>,
+}
+
+/// Pressure Measurement cluster (0x0403).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct PressureMeasurementCluster {
+    /// Attribute 0x0000 `MeasuredValue` (int16, tenths of a kPa, which is
+    /// numerically hectopascals; null if unknown).
     pub measured_value: Option<i16>,
 }
 
@@ -370,4 +402,77 @@ pub struct ModeSelectCluster {
     /// Attribute 0x0003 `CurrentMode`. `None` until the device reports one, or
     /// when it reports a value absent from `supported_modes`.
     pub current_mode: Option<u8>,
+}
+
+/// Wind measurement (hearthd-local, 0xFC00).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct WindMeasurementCluster {
+    /// Sustained wind speed (uint16, hundredths of a metre per second; null if
+    /// unknown).
+    pub speed: Option<u16>,
+
+    /// Gust wind speed (uint16, hundredths of a metre per second; null if
+    /// unknown).
+    pub gust: Option<u16>,
+
+    /// Direction the wind blows *from* (uint16, tenths of a degree, 0..3600;
+    /// null if unknown).
+    pub bearing: Option<u16>,
+}
+
+/// Cloud cover (hearthd-local, 0xFC01).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct CloudCoverCluster {
+    /// Fraction of the sky covered by cloud (uint16, hundredths of a percent,
+    /// 0..10000; null if unknown).
+    pub cloud_area_fraction: Option<u16>,
+}
+
+/// Dew point (hearthd-local, 0xFC02).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct DewPointCluster {
+    /// Dew point (int16, hundredths of a degree Celsius; null if unknown).
+    pub measured_value: Option<i16>,
+}
+
+/// UV index (hearthd-local, 0xFC03).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct UvIndexCluster {
+    /// Ultraviolet index (uint16, tenths of an index unit; null if unknown).
+    pub uv_index: Option<u16>,
+}
+
+/// Precipitation (hearthd-local, 0xFC04).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct PrecipitationCluster {
+    /// Precipitation expected over the next hour (uint16, tenths of a
+    /// millimetre; null if unknown).
+    pub amount: Option<u16>,
+
+    /// Probability of precipitation over the next hour (uint16, hundredths of
+    /// a percent, 0..10000; null if unknown).
+    pub probability: Option<u16>,
+}
+
+/// A normalised sky/weather condition, derived from a source-specific symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, facet::Facet)]
+#[repr(u8)]
+pub enum WeatherCondition {
+    ClearSky,
+    ClearNight,
+    PartlyCloudy,
+    Cloudy,
+    Fog,
+    Rainy,
+    Pouring,
+    LightningRainy,
+    Snowy,
+    SnowyRainy,
+}
+
+/// Weather condition (hearthd-local, 0xFC05).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct WeatherConditionCluster {
+    /// Current normalised condition (null if unknown).
+    pub condition: Option<WeatherCondition>,
 }

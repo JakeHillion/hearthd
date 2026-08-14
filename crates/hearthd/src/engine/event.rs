@@ -1,6 +1,8 @@
 use crate::engine::NodeId;
 use crate::matter::BooleanStateCluster;
+use crate::matter::CloudCoverCluster;
 use crate::matter::DehumidificationControlCluster;
+use crate::matter::DewPointCluster;
 use crate::matter::ElectricalPowerMeasurementCluster;
 use crate::matter::EndpointId;
 use crate::matter::FanControlCluster;
@@ -9,10 +11,15 @@ use crate::matter::ModeSelectCluster;
 use crate::matter::OccupancySensingCluster;
 use crate::matter::OnOffCluster;
 use crate::matter::PowerSourceCluster;
+use crate::matter::PrecipitationCluster;
+use crate::matter::PressureMeasurementCluster;
 use crate::matter::RelativeHumidityMeasurementCluster;
 use crate::matter::TemperatureMeasurementCluster;
 use crate::matter::ThermostatCluster;
 use crate::matter::ThermostatUserInterfaceConfigurationCluster;
+use crate::matter::UvIndexCluster;
+use crate::matter::WeatherConditionCluster;
+use crate::matter::WindMeasurementCluster;
 
 /// Automation-level events.
 ///
@@ -36,6 +43,11 @@ pub enum Event {
         node_id: NodeId,
         endpoint_id: EndpointId,
         attributes: TemperatureMeasurementCluster,
+    },
+    PressureMeasurementChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: PressureMeasurementCluster,
     },
     RelativeHumidityMeasurementChanged {
         node_id: NodeId,
@@ -86,5 +98,35 @@ pub enum Event {
         node_id: NodeId,
         endpoint_id: EndpointId,
         attributes: ModeSelectCluster,
+    },
+    WindMeasurementChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: WindMeasurementCluster,
+    },
+    CloudCoverChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: CloudCoverCluster,
+    },
+    DewPointChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: DewPointCluster,
+    },
+    UvIndexChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: UvIndexCluster,
+    },
+    PrecipitationChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: PrecipitationCluster,
+    },
+    WeatherConditionChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: WeatherConditionCluster,
     },
 }
