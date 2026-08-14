@@ -273,6 +273,13 @@ impl Engine {
                         endpoint_id,
                         attributes,
                     },
+                    Cluster::TemperatureMeasurement(attributes) => {
+                        Event::TemperatureMeasurementChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
                     Cluster::OccupancySensing(attributes) => Event::OccupancySensingChanged {
                         node_id,
                         endpoint_id,
