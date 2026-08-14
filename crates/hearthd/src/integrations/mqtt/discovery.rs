@@ -174,6 +174,19 @@ pub struct DeviceInfo {
     pub hw_version: Option<String>,
 }
 
+/// Extract the JSON key name from a Zigbee2MQTT value template.
+///
+/// Parses templates like `{{ value_json.occupancy }}` and returns `"occupancy"`.
+/// Returns `None` if the template doesn't match the expected format.
+pub fn parse_value_template_key(template: &str) -> Option<&str> {
+    let inner = template
+        .trim()
+        .strip_prefix("{{")?
+        .strip_suffix("}}")?
+        .trim();
+    inner.strip_prefix("value_json.")
+}
+
 /// Parse a discovery topic to extract component type, node_id, and object_id
 ///
 /// Topic format: {prefix}/{component}/{node_id}/{object_id}/config
@@ -222,6 +235,24 @@ mod tests {
         let topic = "homeassistant/light/0x00124b001234abcd";
         let result = parse_discovery_topic(topic, "homeassistant");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn parse_value_template_key_examples() {
+        assert_eq!(
+            parse_value_template_key("{{ value_json.occupancy }}"),
+            Some("occupancy")
+        );
+        assert_eq!(
+            parse_value_template_key("{{value_json.contact}}"),
+            Some("contact")
+        );
+        assert_eq!(
+            parse_value_template_key("{{ value_json.temperature }}"),
+            Some("temperature")
+        );
+        assert_eq!(parse_value_template_key("invalid"), None);
+        assert_eq!(parse_value_template_key("{{ something_else }}"), None);
     }
 
     #[test]

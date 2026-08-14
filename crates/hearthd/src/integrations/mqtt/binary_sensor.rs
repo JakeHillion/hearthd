@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::integrations::mqtt::discovery::DeviceInfo;
 use crate::integrations::mqtt::discovery::DiscoveryMessage;
+use crate::integrations::mqtt::discovery::parse_value_template_key;
 use crate::integrations::mqtt::light::Z2M_ENDPOINT;
 use crate::matter::Cluster;
 use crate::matter::Endpoint;
@@ -118,19 +119,6 @@ pub struct BinarySensor {
     value_template: Option<String>,
 
     pub occupancy: OccupancySensingCluster,
-}
-
-/// Extract the JSON key name from a Zigbee2MQTT value template.
-///
-/// Parses templates like `{{ value_json.occupancy }}` and returns `"occupancy"`.
-/// Returns `None` if the template doesn't match the expected format.
-fn parse_value_template_key(template: &str) -> Option<&str> {
-    let inner = template
-        .trim()
-        .strip_prefix("{{")?
-        .strip_suffix("}}")?
-        .trim();
-    inner.strip_prefix("value_json.")
 }
 
 impl BinarySensor {
@@ -296,19 +284,5 @@ mod tests {
 
         sensor.apply_state_payload(br#"{"state": "ON"}"#).unwrap();
         assert!(sensor.occupancy.occupancy);
-    }
-
-    #[test]
-    fn parse_value_template_key_examples() {
-        assert_eq!(
-            parse_value_template_key("{{ value_json.occupancy }}"),
-            Some("occupancy")
-        );
-        assert_eq!(
-            parse_value_template_key("{{value_json.contact}}"),
-            Some("contact")
-        );
-        assert_eq!(parse_value_template_key("invalid"), None);
-        assert_eq!(parse_value_template_key("{{ something_else }}"), None);
     }
 }

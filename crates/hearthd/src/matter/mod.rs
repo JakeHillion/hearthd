@@ -21,10 +21,12 @@ pub type EndpointId = u16;
 // Cluster IDs from the Matter Application Cluster Specification.
 pub const CLUSTER_ID_ON_OFF: u32 = 0x0006;
 pub const CLUSTER_ID_LEVEL_CONTROL: u32 = 0x0008;
+pub const CLUSTER_ID_TEMPERATURE_MEASUREMENT: u32 = 0x0402;
 pub const CLUSTER_ID_OCCUPANCY_SENSING: u32 = 0x0406;
 
 pub const CLUSTER_NAME_ON_OFF: &str = "OnOff";
 pub const CLUSTER_NAME_LEVEL_CONTROL: &str = "LevelControl";
+pub const CLUSTER_NAME_TEMPERATURE_MEASUREMENT: &str = "TemperatureMeasurement";
 pub const CLUSTER_NAME_OCCUPANCY_SENSING: &str = "OccupancySensing";
 
 /// On/Off cluster (0x0006).
@@ -41,6 +43,14 @@ pub struct LevelControlCluster {
     pub current_level: Option<u8>,
 }
 
+/// Temperature Measurement cluster (0x0402).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct TemperatureMeasurementCluster {
+    /// Attribute 0x0000 `MeasuredValue` (int16, hundredths of a degree
+    /// Celsius, null if unknown).
+    pub measured_value: Option<i16>,
+}
+
 /// Occupancy Sensing cluster (0x0406).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
 pub struct OccupancySensingCluster {
@@ -55,6 +65,7 @@ pub struct OccupancySensingCluster {
 pub enum Cluster {
     OnOff(OnOffCluster),
     LevelControl(LevelControlCluster),
+    TemperatureMeasurement(TemperatureMeasurementCluster),
     OccupancySensing(OccupancySensingCluster),
 }
 
@@ -64,6 +75,7 @@ impl Cluster {
         match self {
             Cluster::OnOff(_) => CLUSTER_ID_ON_OFF,
             Cluster::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
+            Cluster::TemperatureMeasurement(_) => CLUSTER_ID_TEMPERATURE_MEASUREMENT,
             Cluster::OccupancySensing(_) => CLUSTER_ID_OCCUPANCY_SENSING,
         }
     }
@@ -73,6 +85,7 @@ impl Cluster {
         match self {
             Cluster::OnOff(_) => CLUSTER_NAME_ON_OFF,
             Cluster::LevelControl(_) => CLUSTER_NAME_LEVEL_CONTROL,
+            Cluster::TemperatureMeasurement(_) => CLUSTER_NAME_TEMPERATURE_MEASUREMENT,
             Cluster::OccupancySensing(_) => CLUSTER_NAME_OCCUPANCY_SENSING,
         }
     }
