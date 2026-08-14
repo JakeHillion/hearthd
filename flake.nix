@@ -79,8 +79,9 @@
           commonArgs = {
             inherit src;
             strictDeps = true;
-            buildInputs = [ ];
-            nativeBuildInputs = [ ];
+            buildInputs = with pkgs; [ openssl ];
+            nativeBuildInputs = with pkgs; [ pkg-config ];
+            env.LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.openssl ];
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
@@ -124,6 +125,8 @@
               rust-analyzer
               cargo-insta
               fmt-toolchain
+              openssl
+              pkg-config
             ];
 
             HA_PYTHON_INTERPRETER = "${haPythonEnv}/bin/python";
