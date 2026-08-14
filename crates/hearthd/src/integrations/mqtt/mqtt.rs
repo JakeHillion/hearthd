@@ -19,6 +19,7 @@ use super::discovery::DiscoveryMessage;
 use super::discovery::parse_discovery_topic;
 use super::light::Light;
 use super::light::Z2M_ENDPOINT;
+use super::sensor::Measurement;
 use super::sensor::Sensor;
 use crate::engine::FromIntegrationMessage;
 use crate::engine::FromIntegrationSender;
@@ -352,31 +353,57 @@ impl<C: MqttClient> MqttIntegration<C> {
         let discovery: DiscoveryMessage = serde_json::from_slice(&msg.payload)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
 
-        // Only temperature sensors map to a Matter cluster today. Z2M reports
-        // many other numeric `sensor` device classes (humidity, pressure,
-        // battery, linkquality, ...) on the same discovery topic; skip those
-        // until we model their clusters.
-        match discovery.device_class.as_deref() {
-            Some("temperature") => {}
-            other => {
+        // Only some numeric `sensor` device classes map to a Matter cluster
+        // today. Z2M reports many others (pressure, battery, linkquality, ...)
+        // on the same discovery topic; skip those until we model their clusters.
+        let measurement = match Measurement::from_device_class(discovery.device_class.as_deref()) {
+            Some(m) => m,
+            None => {
                 debug!(
                     "Skipping sensor {} with unsupported device_class {:?}",
-                    entity_id, other
+                    entity_id, discovery.device_class
                 );
                 return Ok(());
             }
-        }
+        };
 
-        {
+        // A physical device publishes each reading as a separate `sensor`
+        // component sharing one node and one state topic, so fold this
+        // measurement onto the device's existing node if we've already seen
+        // one of its readings.
+        let existing = {
             let guard = inner.lock().await;
-            if guard.entity_to_node.contains_key(&entity_id) {
-                debug!("Ignoring re-discovery for {}", entity_id);
-                return Ok(());
-            }
+            guard.entity_to_node.get(&entity_id).copied()
+        };
+        if let Some(node_id) = existing {
+            let sensor_arc = {
+                let guard = inner.lock().await;
+                match guard.entities.get(&node_id) {
+                    Some(MqttEntity::Sensor(s)) => s.clone(),
+                    _ => return Ok(()),
+                }
+            };
+            let node = {
+                let mut sensor = sensor_arc.lock().await;
+                if !sensor.add_channel(measurement, &discovery) {
+                    debug!(
+                        "Ignoring re-discovery of {:?} for {}",
+                        measurement, entity_id
+                    );
+                    return Ok(());
+                }
+                sensor.to_node(INTEGRATION_NAME)
+            };
+            info!("Added {:?} channel to sensor {}", measurement, entity_id);
+            // Re-announce the node so the engine picks up the new cluster; the
+            // state topic is already subscribed from the first channel.
+            Self::send_node_added(node_id, node, to_engine).await;
+            return Ok(());
         }
 
-        let sensor = Sensor::from_temperature_discovery(
+        let sensor = Sensor::from_discovery(
             discovery,
+            measurement,
             entity_id.clone(),
             z2m_node_id.to_string(),
         )

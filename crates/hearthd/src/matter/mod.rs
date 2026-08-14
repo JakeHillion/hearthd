@@ -22,11 +22,13 @@ pub type EndpointId = u16;
 pub const CLUSTER_ID_ON_OFF: u32 = 0x0006;
 pub const CLUSTER_ID_LEVEL_CONTROL: u32 = 0x0008;
 pub const CLUSTER_ID_TEMPERATURE_MEASUREMENT: u32 = 0x0402;
+pub const CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT: u32 = 0x0405;
 pub const CLUSTER_ID_OCCUPANCY_SENSING: u32 = 0x0406;
 
 pub const CLUSTER_NAME_ON_OFF: &str = "OnOff";
 pub const CLUSTER_NAME_LEVEL_CONTROL: &str = "LevelControl";
 pub const CLUSTER_NAME_TEMPERATURE_MEASUREMENT: &str = "TemperatureMeasurement";
+pub const CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT: &str = "RelativeHumidityMeasurement";
 pub const CLUSTER_NAME_OCCUPANCY_SENSING: &str = "OccupancySensing";
 
 /// On/Off cluster (0x0006).
@@ -51,6 +53,14 @@ pub struct TemperatureMeasurementCluster {
     pub measured_value: Option<i16>,
 }
 
+/// Relative Humidity Measurement cluster (0x0405).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct RelativeHumidityMeasurementCluster {
+    /// Attribute 0x0000 `MeasuredValue` (uint16, hundredths of a percent,
+    /// null if unknown).
+    pub measured_value: Option<u16>,
+}
+
 /// Occupancy Sensing cluster (0x0406).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
 pub struct OccupancySensingCluster {
@@ -66,6 +76,7 @@ pub enum Cluster {
     OnOff(OnOffCluster),
     LevelControl(LevelControlCluster),
     TemperatureMeasurement(TemperatureMeasurementCluster),
+    RelativeHumidityMeasurement(RelativeHumidityMeasurementCluster),
     OccupancySensing(OccupancySensingCluster),
 }
 
@@ -76,6 +87,7 @@ impl Cluster {
             Cluster::OnOff(_) => CLUSTER_ID_ON_OFF,
             Cluster::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
             Cluster::TemperatureMeasurement(_) => CLUSTER_ID_TEMPERATURE_MEASUREMENT,
+            Cluster::RelativeHumidityMeasurement(_) => CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT,
             Cluster::OccupancySensing(_) => CLUSTER_ID_OCCUPANCY_SENSING,
         }
     }
@@ -86,6 +98,7 @@ impl Cluster {
             Cluster::OnOff(_) => CLUSTER_NAME_ON_OFF,
             Cluster::LevelControl(_) => CLUSTER_NAME_LEVEL_CONTROL,
             Cluster::TemperatureMeasurement(_) => CLUSTER_NAME_TEMPERATURE_MEASUREMENT,
+            Cluster::RelativeHumidityMeasurement(_) => CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT,
             Cluster::OccupancySensing(_) => CLUSTER_NAME_OCCUPANCY_SENSING,
         }
     }

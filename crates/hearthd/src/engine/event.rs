@@ -3,6 +3,7 @@ use crate::matter::LevelControlCluster;
 use crate::matter::NodeId;
 use crate::matter::OccupancySensingCluster;
 use crate::matter::OnOffCluster;
+use crate::matter::RelativeHumidityMeasurementCluster;
 use crate::matter::TemperatureMeasurementCluster;
 
 /// Automation-level events.
@@ -27,6 +28,11 @@ pub enum Event {
         node_id: NodeId,
         endpoint_id: EndpointId,
         attributes: TemperatureMeasurementCluster,
+    },
+    RelativeHumidityMeasurementChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: RelativeHumidityMeasurementCluster,
     },
     OccupancySensingChanged {
         node_id: NodeId,

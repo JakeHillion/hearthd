@@ -280,6 +280,13 @@ impl Engine {
                             attributes,
                         }
                     }
+                    Cluster::RelativeHumidityMeasurement(attributes) => {
+                        Event::RelativeHumidityMeasurementChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
                     Cluster::OccupancySensing(attributes) => Event::OccupancySensingChanged {
                         node_id,
                         endpoint_id,
