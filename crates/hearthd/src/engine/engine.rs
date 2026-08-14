@@ -287,6 +287,11 @@ impl Engine {
                             attributes,
                         }
                     }
+                    Cluster::PressureMeasurement(attributes) => Event::PressureMeasurementChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
                     Cluster::RelativeHumidityMeasurement(attributes) => {
                         Event::RelativeHumidityMeasurementChanged {
                             node_id,
@@ -341,6 +346,36 @@ impl Engine {
                         }
                     }
                     Cluster::ModeSelect(attributes) => Event::ModeSelectChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::WindMeasurement(attributes) => Event::WindMeasurementChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::CloudCover(attributes) => Event::CloudCoverChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::DewPoint(attributes) => Event::DewPointChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::UvIndex(attributes) => Event::UvIndexChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::Precipitation(attributes) => Event::PrecipitationChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::WeatherCondition(attributes) => Event::WeatherConditionChanged {
                         node_id,
                         endpoint_id,
                         attributes,

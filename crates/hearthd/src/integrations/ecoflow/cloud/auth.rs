@@ -227,7 +227,7 @@ impl HttpApi {
         // reqwest builds one from the host's trust store, which fails outright
         // wherever there isn't one — a build sandbox, a minimal container —
         // and would have the two connections trusting different roots.
-        let tls = super::tls::client_config().map_err(AuthError::Transport)?;
+        let tls = crate::tls::client_config().map_err(AuthError::Transport)?;
 
         let client = reqwest::Client::builder()
             .use_preconfigured_tls((*tls).clone())

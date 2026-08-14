@@ -33,6 +33,9 @@ enum FieldType {
         value_type: Type,
     },
     Nested(#[allow(dead_code)] Type),
+    /// A list field (`Vec<T>`), merged by concatenation across config files
+    /// rather than conflicting.
+    List(#[allow(dead_code)] Type),
 }
 
 pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<TokenStream> {
@@ -113,6 +116,8 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
                 // Option<SomeStruct> is still Nested
                 FieldType::Nested(field_ty.clone())
             }
+        } else if is_vec(field_ty) {
+            FieldType::List(field_ty.clone())
         } else {
             FieldType::Nested(field_ty.clone())
         };
@@ -206,6 +211,9 @@ fn generate_partial_struct(
             } else {
                 quote! { #field_ty }
             }
+        } else if is_vec(field_ty) {
+            // No `Located`: a concatenated list has no single source location.
+            quote! { #field_ty }
         } else {
             quote! { <#field_ty as hearthd_config::HasPartialConfig>::PartialConfig }
         };
@@ -283,6 +291,10 @@ fn generate_root_merge_impl(
                     quote! {
                         let mut #var_name: std::collections::HashMap<(), std::collections::HashMap<String, hearthd_config::MergeConflictLocation>> = std::collections::HashMap::new();
                     }
+                }
+                FieldType::List(_) => {
+                    // Lists concatenate; no conflict location to track.
+                    quote! {}
                 }
                 _ => {
                     let var_name = format_ident!("{}_loc", name);
@@ -593,6 +605,11 @@ fn generate_sub_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenS
                 }
             })
         }
+        FieldType::List(_) => Ok(quote! {
+            if let Some(list) = std::mem::take(&mut other.#name) {
+                self.#name.get_or_insert_with(Vec::new).extend(list);
+            }
+        }),
     }
 }
 
@@ -756,6 +773,11 @@ fn generate_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenStrea
                 }
             })
         }
+        FieldType::List(_) => Ok(quote! {
+            if let Some(list) = config.#name {
+                result.#name.get_or_insert_with(Vec::new).extend(list);
+            }
+        }),
     }
 }
 
@@ -843,6 +865,9 @@ fn generate_attach_source_impl(
                         nested.attach_source_info(source.clone());
                     }
                 });
+            }
+            FieldType::List(_) => {
+                // No `Located` to attach source information to.
             }
         }
     }
@@ -934,6 +959,15 @@ fn generate_load_impl(config_name: &Ident) -> Result<TokenStream> {
             }
         }
     })
+}
+
+fn is_vec(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            return segment.ident == "Vec";
+        }
+    }
+    false
 }
 
 fn is_hashmap(ty: &Type) -> bool {
@@ -1102,6 +1136,8 @@ pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
             } else {
                 FieldType::Nested(field_ty.clone())
             }
+        } else if is_vec(field_ty) {
+            FieldType::List(field_ty.clone())
         } else {
             FieldType::Nested(field_ty.clone())
         };
@@ -1335,6 +1371,19 @@ fn generate_try_from_partial_conversions(
                             }
                             None => <#ty>::default(),
                         };
+                    }
+                }
+            }
+            FieldType::List(_) => {
+                if let Some(default_fn_name) = &field_info.default_fn {
+                    let default_fn_ident =
+                        syn::Ident::new(default_fn_name, proc_macro2::Span::call_site());
+                    quote! {
+                        let #name = partial.#name.unwrap_or_else(|| #default_fn_ident());
+                    }
+                } else {
+                    quote! {
+                        let #name = partial.#name.unwrap_or_default();
                     }
                 }
             }

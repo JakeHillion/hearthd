@@ -34,7 +34,9 @@ pub use clusters::BatChargeLevel;
 pub use clusters::BatChargeState;
 pub use clusters::BooleanStateCluster;
 pub use clusters::CLUSTER_ID_BOOLEAN_STATE;
+pub use clusters::CLUSTER_ID_CLOUD_COVER;
 pub use clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
+pub use clusters::CLUSTER_ID_DEW_POINT;
 pub use clusters::CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT;
 pub use clusters::CLUSTER_ID_FAN_CONTROL;
 pub use clusters::CLUSTER_ID_LEVEL_CONTROL;
@@ -42,12 +44,19 @@ pub use clusters::CLUSTER_ID_MODE_SELECT;
 pub use clusters::CLUSTER_ID_OCCUPANCY_SENSING;
 pub use clusters::CLUSTER_ID_ON_OFF;
 pub use clusters::CLUSTER_ID_POWER_SOURCE;
+pub use clusters::CLUSTER_ID_PRECIPITATION;
+pub use clusters::CLUSTER_ID_PRESSURE_MEASUREMENT;
 pub use clusters::CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT;
 pub use clusters::CLUSTER_ID_TEMPERATURE_MEASUREMENT;
 pub use clusters::CLUSTER_ID_THERMOSTAT;
 pub use clusters::CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
+pub use clusters::CLUSTER_ID_UV_INDEX;
+pub use clusters::CLUSTER_ID_WEATHER_CONDITION;
+pub use clusters::CLUSTER_ID_WIND_MEASUREMENT;
 pub use clusters::CLUSTER_NAME_BOOLEAN_STATE;
+pub use clusters::CLUSTER_NAME_CLOUD_COVER;
 pub use clusters::CLUSTER_NAME_DEHUMIDIFICATION_CONTROL;
+pub use clusters::CLUSTER_NAME_DEW_POINT;
 pub use clusters::CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT;
 pub use clusters::CLUSTER_NAME_FAN_CONTROL;
 pub use clusters::CLUSTER_NAME_LEVEL_CONTROL;
@@ -55,12 +64,19 @@ pub use clusters::CLUSTER_NAME_MODE_SELECT;
 pub use clusters::CLUSTER_NAME_OCCUPANCY_SENSING;
 pub use clusters::CLUSTER_NAME_ON_OFF;
 pub use clusters::CLUSTER_NAME_POWER_SOURCE;
+pub use clusters::CLUSTER_NAME_PRECIPITATION;
+pub use clusters::CLUSTER_NAME_PRESSURE_MEASUREMENT;
 pub use clusters::CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT;
 pub use clusters::CLUSTER_NAME_TEMPERATURE_MEASUREMENT;
 pub use clusters::CLUSTER_NAME_THERMOSTAT;
 pub use clusters::CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
+pub use clusters::CLUSTER_NAME_UV_INDEX;
+pub use clusters::CLUSTER_NAME_WEATHER_CONDITION;
+pub use clusters::CLUSTER_NAME_WIND_MEASUREMENT;
+pub use clusters::CloudCoverCluster;
 pub use clusters::ControlSequenceOfOperation;
 pub use clusters::DehumidificationControlCluster;
+pub use clusters::DewPointCluster;
 pub use clusters::ElectricalPowerMeasurementCluster;
 pub use clusters::FanControlCluster;
 pub use clusters::FanMode;
@@ -73,12 +89,18 @@ pub use clusters::OnOffCluster;
 pub use clusters::PowerMode;
 pub use clusters::PowerSourceCluster;
 pub use clusters::PowerSourceStatus;
+pub use clusters::PrecipitationCluster;
+pub use clusters::PressureMeasurementCluster;
 pub use clusters::RelativeHumidityMeasurementCluster;
 pub use clusters::SystemMode;
 pub use clusters::TemperatureDisplayMode;
 pub use clusters::TemperatureMeasurementCluster;
 pub use clusters::ThermostatCluster;
 pub use clusters::ThermostatUserInterfaceConfigurationCluster;
+pub use clusters::UvIndexCluster;
+pub use clusters::WeatherCondition;
+pub use clusters::WeatherConditionCluster;
+pub use clusters::WindMeasurementCluster;
 pub use commands::ClusterCommand;
 pub use commands::DehumidificationControlCommand;
 pub use commands::FanControlCommand;
@@ -110,6 +132,13 @@ pub enum Cluster {
     PowerSource(PowerSourceCluster),
     ElectricalPowerMeasurement(ElectricalPowerMeasurementCluster),
     ModeSelect(ModeSelectCluster),
+    PressureMeasurement(PressureMeasurementCluster),
+    WindMeasurement(WindMeasurementCluster),
+    CloudCover(CloudCoverCluster),
+    DewPoint(DewPointCluster),
+    UvIndex(UvIndexCluster),
+    Precipitation(PrecipitationCluster),
+    WeatherCondition(WeatherConditionCluster),
 }
 
 impl Cluster {
@@ -131,6 +160,13 @@ impl Cluster {
             Cluster::PowerSource(_) => CLUSTER_ID_POWER_SOURCE,
             Cluster::ElectricalPowerMeasurement(_) => CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT,
             Cluster::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
+            Cluster::PressureMeasurement(_) => CLUSTER_ID_PRESSURE_MEASUREMENT,
+            Cluster::WindMeasurement(_) => CLUSTER_ID_WIND_MEASUREMENT,
+            Cluster::CloudCover(_) => CLUSTER_ID_CLOUD_COVER,
+            Cluster::DewPoint(_) => CLUSTER_ID_DEW_POINT,
+            Cluster::UvIndex(_) => CLUSTER_ID_UV_INDEX,
+            Cluster::Precipitation(_) => CLUSTER_ID_PRECIPITATION,
+            Cluster::WeatherCondition(_) => CLUSTER_ID_WEATHER_CONDITION,
         }
     }
 
@@ -152,6 +188,13 @@ impl Cluster {
             Cluster::PowerSource(_) => CLUSTER_NAME_POWER_SOURCE,
             Cluster::ElectricalPowerMeasurement(_) => CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT,
             Cluster::ModeSelect(_) => CLUSTER_NAME_MODE_SELECT,
+            Cluster::PressureMeasurement(_) => CLUSTER_NAME_PRESSURE_MEASUREMENT,
+            Cluster::WindMeasurement(_) => CLUSTER_NAME_WIND_MEASUREMENT,
+            Cluster::CloudCover(_) => CLUSTER_NAME_CLOUD_COVER,
+            Cluster::DewPoint(_) => CLUSTER_NAME_DEW_POINT,
+            Cluster::UvIndex(_) => CLUSTER_NAME_UV_INDEX,
+            Cluster::Precipitation(_) => CLUSTER_NAME_PRECIPITATION,
+            Cluster::WeatherCondition(_) => CLUSTER_NAME_WEATHER_CONDITION,
         }
     }
 }

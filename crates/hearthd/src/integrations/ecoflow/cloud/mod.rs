@@ -9,6 +9,5 @@
 
 pub mod auth;
 pub mod session;
-pub mod tls;
 pub mod topics;
 pub mod transport;

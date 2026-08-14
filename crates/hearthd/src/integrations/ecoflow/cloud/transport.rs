@@ -131,7 +131,7 @@ impl Transport for RumqttcTransport {
         options.set_keep_alive(KEEPALIVE);
         options.set_clean_session(true);
         options.set_transport(rumqttc::Transport::Tls(TlsConfiguration::Rustls(
-            super::tls::client_config().map_err(TransportError)?,
+            crate::tls::client_config().map_err(TransportError)?,
         )));
 
         let (client, mut event_loop) = AsyncClient::new(options, 32);
