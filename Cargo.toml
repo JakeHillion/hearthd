@@ -23,7 +23,7 @@ clap = { version = "4", features = ["derive"] }
 hostname = "0.4"
 insta = "1.40"
 linkme = "0.3.35"
-rumqttc = "0.24"
+rumqttc = { version = "0.25", default-features = false }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 tempfile = "3.14"
