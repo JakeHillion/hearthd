@@ -97,7 +97,7 @@ async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     (StatusCode::OK, Json(snapshot))
 }
 
-/// Handler for POST /v1/entities/:id/command
+/// Handler for POST /v1/entities/{id}/command
 #[tracing::instrument(skip(state))]
 async fn send_entity_command(
     State(state): State<Arc<AppState>>,
@@ -154,7 +154,7 @@ fn create_router(state: Arc<AppState>) -> Router {
         .route("/v1/ping", get(ping))
         .route("/v1/info", get(info))
         .route("/v1/state", get(get_state))
-        .route("/v1/entities/:id/command", post(send_entity_command))
+        .route("/v1/entities/{id}/command", post(send_entity_command))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
