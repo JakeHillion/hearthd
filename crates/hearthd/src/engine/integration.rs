@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use super::message::FromIntegrationMessage;
 use super::message::ToIntegrationMessage;
+use super::node_id::NodeIdAllocator;
 use crate::config::Config;
 
 /// Channel types for messages FROM integrations TO the engine
@@ -35,8 +36,15 @@ pub trait Integration: Send + Sync {
     /// Set up the integration - subscribe to topics, initialize state, etc.
     ///
     /// The integration receives a sender to report events back to the engine
-    /// (discovery, state changes, etc.)
-    async fn setup(&mut self, tx: FromIntegrationSender) -> Result<(), Box<dyn Error + Send>>;
+    /// (discovery, state changes, etc.) and an allocator for the node ids it
+    /// declares. Ids must come from that allocator: the keyspace is shared
+    /// with every other integration, and one it picks itself will eventually
+    /// collide with one of theirs.
+    async fn setup(
+        &mut self,
+        tx: FromIntegrationSender,
+        node_ids: NodeIdAllocator,
+    ) -> Result<(), Box<dyn Error + Send>>;
 
     /// Handle a command from the engine
     ///

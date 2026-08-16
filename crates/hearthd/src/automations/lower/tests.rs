@@ -193,17 +193,17 @@ fn test_lower_list_comprehension() {
         Params:
           %0: state [State]
         bb0:
-          %1 = field %0.nodes [Map<Int, Node>]
+          %1 = field %0.nodes [Map<NodeId, Node>]
           %2 = const_bool true [Bool]
           return %2
       body:
         Params:
           %0: state [State]
         bb0:
-          %1 = field %0.nodes [Map<Int, Node>]
+          %1 = field %0.nodes [Map<NodeId, Node>]
           %2 = empty_list [[<error>]]
-          %3 = call keys(%1) [[Int]]
-          %4 = iter_init %3 [[Int]]
+          %3 = call keys(%1) [[NodeId]]
+          %4 = iter_init %3 [[NodeId]]
           jump -> bb1
         bb1:
           iter_next %4 -> %5, bb2, bb3
@@ -476,14 +476,14 @@ fn test_lower_field_access() {
         Params:
           %0: state [State]
         bb0:
-          %1 = field %0.nodes [Map<Int, Node>]
+          %1 = field %0.nodes [Map<NodeId, Node>]
           %2 = const_bool true [Bool]
           return %2
       body:
         Params:
           %0: state [State]
         bb0:
-          %1 = field %0.nodes [Map<Int, Node>]
+          %1 = field %0.nodes [Map<NodeId, Node>]
           %2 = empty_list [[<error>]]
           return %2
     ");
@@ -708,17 +708,17 @@ fn test_lower_list_comprehension_with_filter() {
         Params:
           %0: state [State]
         bb0:
-          %1 = field %0.nodes [Map<Int, Node>]
+          %1 = field %0.nodes [Map<NodeId, Node>]
           %2 = const_bool true [Bool]
           return %2
       body:
         Params:
           %0: state [State]
         bb0:
-          %1 = field %0.nodes [Map<Int, Node>]
+          %1 = field %0.nodes [Map<NodeId, Node>]
           %2 = empty_list [[<error>]]
-          %3 = call keys(%1) [[Int]]
-          %4 = iter_init %3 [[Int]]
+          %3 = call keys(%1) [[NodeId]]
+          %4 = iter_init %3 [[NodeId]]
           jump -> bb1
         bb1:
           iter_next %4 -> %5, bb2, bb3
@@ -768,8 +768,8 @@ fn test_lower_nested_pattern() {
           %0: event [Event]
           %1: state [State]
         bb0:
-          %2 = field %1.nodes [Map<Int, Node>]
-          %3 = field %1.by_entity_id [Map<String, Int>]
+          %2 = field %1.nodes [Map<NodeId, Node>]
+          %3 = field %1.by_entity_id [Map<String, NodeId>]
           %4 = const_bool true [Bool]
           return %4
       body:
@@ -777,8 +777,8 @@ fn test_lower_nested_pattern() {
           %0: event [Event]
           %1: state [State]
         bb0:
-          %2 = field %1.nodes [Map<Int, Node>]
-          %3 = field %1.by_entity_id [Map<String, Int>]
+          %2 = field %1.nodes [Map<NodeId, Node>]
+          %3 = field %1.by_entity_id [Map<String, NodeId>]
           %4 = empty_list [[<error>]]
           return %4
     ");
@@ -808,7 +808,7 @@ fn test_lower_lights_off_observer() {
           %0: event [Event]
           %1: state [State]
         bb0:
-          %2 = field %1.nodes [Map<Int, Node>]
+          %2 = field %1.nodes [Map<NodeId, Node>]
           %3 = const_bool true [Bool]
           return %3
       body:
@@ -816,10 +816,10 @@ fn test_lower_lights_off_observer() {
           %0: event [Event]
           %1: state [State]
         bb0:
-          %2 = field %1.nodes [Map<Int, Node>]
+          %2 = field %1.nodes [Map<NodeId, Node>]
           %3 = empty_list [[<error>]]
-          %4 = call keys(%2) [[Int]]
-          %5 = iter_init %4 [[Int]]
+          %4 = call keys(%2) [[NodeId]]
+          %5 = iter_init %4 [[NodeId]]
           jump -> bb1
         bb1:
           iter_next %5 -> %6, bb2, bb3
@@ -901,7 +901,7 @@ fn test_lower_observer_if_else_with_events() {
           %0: event [Event]
           %1: state [State]
         bb0:
-          %2 = field %1.nodes [Map<Int, Node>]
+          %2 = field %1.nodes [Map<NodeId, Node>]
           %3 = const_bool true [Bool]
           return %3
       body:
@@ -909,13 +909,13 @@ fn test_lower_observer_if_else_with_events() {
           %0: event [Event]
           %1: state [State]
         bb0:
-          %2 = field %1.nodes [Map<Int, Node>]
+          %2 = field %1.nodes [Map<NodeId, Node>]
           %4 = const_bool true [Bool]
           branch %4 -> bb1, bb2
         bb1:
           %5 = empty_list [[<error>]]
-          %6 = call keys(%2) [[Int]]
-          %7 = iter_init %6 [[Int]]
+          %6 = call keys(%2) [[NodeId]]
+          %7 = iter_init %6 [[NodeId]]
           jump -> bb4
         bb2:
           %11 = empty_list [[<error>]]

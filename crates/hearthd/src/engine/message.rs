@@ -7,11 +7,11 @@
 //! Both directions speak the Matter data model defined in `crate::matter`.
 //! Integrations translate their native representation at their boundary.
 
+use crate::engine::NodeId;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
 use crate::matter::Node;
-use crate::matter::NodeId;
 
 /// Messages FROM integrations TO the engine (events/state updates)
 #[derive(Debug, Clone)]

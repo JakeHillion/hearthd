@@ -1,6 +1,6 @@
+use crate::engine::NodeId;
 use crate::matter::EndpointId;
 use crate::matter::LevelControlCluster;
-use crate::matter::NodeId;
 use crate::matter::OccupancySensingCluster;
 use crate::matter::OnOffCluster;
 use crate::matter::RelativeHumidityMeasurementCluster;
