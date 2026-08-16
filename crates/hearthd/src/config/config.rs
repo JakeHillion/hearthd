@@ -102,6 +102,9 @@ impl Default for HttpConfig {
 pub struct IntegrationsConfig {
     #[cfg(feature = "integration_mqtt")]
     pub mqtt: Option<crate::integrations::mqtt::MqttConfig>,
+
+    #[cfg(feature = "integration_ecoflow")]
+    pub ecoflow: Option<crate::integrations::ecoflow::EcoFlowConfig>,
 }
 
 #[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]

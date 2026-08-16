@@ -166,6 +166,16 @@ impl Light {
                 }
                 serde_json::json!({ "state": "ON", "brightness": level })
             }
+            // A Z2M light node only ever carries OnOff and LevelControl, so
+            // any other cluster is a routing mistake rather than a gap here.
+            other => {
+                return Err(format!(
+                    "Light {} does not expose cluster 0x{:04X}",
+                    self.entity_id,
+                    other.cluster_id()
+                )
+                .into());
+            }
         };
 
         Ok(serde_json::to_vec(&payload)?)

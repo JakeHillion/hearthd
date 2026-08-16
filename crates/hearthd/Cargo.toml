@@ -5,8 +5,17 @@ edition = "2021"
 license.workspace = true
 
 [features]
-default = ["integration_mqtt"]
+default = ["integration_mqtt", "integration_ecoflow"]
 integration_mqtt = ["dep:rumqttc"]
+integration_ecoflow = [
+  "dep:base64",
+  "dep:rand",
+  "dep:reqwest",
+  "dep:rumqttc",
+  "dep:rustls",
+  "dep:webpki-roots",
+  "rumqttc/use-rustls-no-provider",
+]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -30,8 +39,13 @@ chumsky = { workspace = true }
 facet = { workspace = true }
 strum = { workspace = true }
 
-# MQTT integration dependencies (optional, enabled by feature)
+# Integration dependencies (optional, enabled by feature)
 rumqttc = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }

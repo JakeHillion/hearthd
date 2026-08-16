@@ -128,6 +128,26 @@ impl TypeRegistry {
             "OnOffCluster" => Some(crate::matter::OnOffCluster::SHAPE),
             "LevelControlCluster" => Some(crate::matter::LevelControlCluster::SHAPE),
             "OccupancySensingCluster" => Some(crate::matter::OccupancySensingCluster::SHAPE),
+            "TemperatureMeasurementCluster" => {
+                Some(crate::matter::TemperatureMeasurementCluster::SHAPE)
+            }
+            "RelativeHumidityMeasurementCluster" => {
+                Some(crate::matter::RelativeHumidityMeasurementCluster::SHAPE)
+            }
+            "BooleanStateCluster" => Some(crate::matter::BooleanStateCluster::SHAPE),
+            "ThermostatCluster" => Some(crate::matter::ThermostatCluster::SHAPE),
+            "FanControlCluster" => Some(crate::matter::FanControlCluster::SHAPE),
+            "DehumidificationControlCluster" => {
+                Some(crate::matter::DehumidificationControlCluster::SHAPE)
+            }
+            "ThermostatUserInterfaceConfigurationCluster" => {
+                Some(crate::matter::ThermostatUserInterfaceConfigurationCluster::SHAPE)
+            }
+            "PowerSourceCluster" => Some(crate::matter::PowerSourceCluster::SHAPE),
+            "ElectricalPowerMeasurementCluster" => {
+                Some(crate::matter::ElectricalPowerMeasurementCluster::SHAPE)
+            }
+            "ModeSelectCluster" => Some(crate::matter::ModeSelectCluster::SHAPE),
             "Endpoint" => Some(crate::matter::Endpoint::SHAPE),
             "Node" => Some(crate::matter::Node::SHAPE),
             _ => None,

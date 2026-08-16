@@ -1,6 +1,8 @@
 /target
 /result
-/.cargo
+/.cargo/*
+# Advisory exclusions are project policy, not local configuration.
+!/.cargo/audit.toml
 /vendor
 *.local.toml
 *.pending-snap
