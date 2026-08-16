@@ -1,0 +1,19 @@
+[advisories]
+# rustls-webpki 0.102.8 reaches the tree only through rumqttc 0.25.1, which
+# pins ^0.102 and whose sole use of it is `WebPki(#[from] webpki::Error)` — an
+# error-enum variant. hearthd passes TlsConfiguration::Rustls(ClientConfig), so
+# rumqttc clones that config straight into the connector and certificate
+# verification runs through rustls 0.23's own verifier, backed by
+# rustls-webpki 0.103.14. All four advisories are in CRL parsing and
+# name-constraint checking, which these connections never enter.
+#
+# rumqttc 0.25.1 is the latest release and there is no 0.102.x with the fixes,
+# so there is nothing to upgrade to. Delete these entries once rumqttc ships a
+# release built on rustls-webpki 0.103, and re-check reachability before adding
+# any new ID to this list.
+ignore = [
+    "RUSTSEC-2026-0049", # CRL distribution-point matching
+    "RUSTSEC-2026-0098", # URI name constraints
+    "RUSTSEC-2026-0099", # wildcard name constraints
+    "RUSTSEC-2026-0104", # panic in CRL parsing
+]

@@ -49,6 +49,22 @@ fn struct_fields_for_type(name: &str) -> HashMap<String, Ty> {
         "OnOffCluster" => crate::matter::OnOffCluster::SHAPE,
         "LevelControlCluster" => crate::matter::LevelControlCluster::SHAPE,
         "OccupancySensingCluster" => crate::matter::OccupancySensingCluster::SHAPE,
+        "TemperatureMeasurementCluster" => crate::matter::TemperatureMeasurementCluster::SHAPE,
+        "RelativeHumidityMeasurementCluster" => {
+            crate::matter::RelativeHumidityMeasurementCluster::SHAPE
+        }
+        "BooleanStateCluster" => crate::matter::BooleanStateCluster::SHAPE,
+        "ThermostatCluster" => crate::matter::ThermostatCluster::SHAPE,
+        "FanControlCluster" => crate::matter::FanControlCluster::SHAPE,
+        "DehumidificationControlCluster" => crate::matter::DehumidificationControlCluster::SHAPE,
+        "ThermostatUserInterfaceConfigurationCluster" => {
+            crate::matter::ThermostatUserInterfaceConfigurationCluster::SHAPE
+        }
+        "PowerSourceCluster" => crate::matter::PowerSourceCluster::SHAPE,
+        "ElectricalPowerMeasurementCluster" => {
+            crate::matter::ElectricalPowerMeasurementCluster::SHAPE
+        }
+        "ModeSelectCluster" => crate::matter::ModeSelectCluster::SHAPE,
         "Endpoint" => crate::matter::Endpoint::SHAPE,
         "Node" => crate::matter::Node::SHAPE,
         _ => return HashMap::new(),

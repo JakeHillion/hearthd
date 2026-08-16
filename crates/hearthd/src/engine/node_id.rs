@@ -69,6 +69,16 @@ impl NodeIdAllocator {
     pub fn allocate(&self) -> NodeId {
         NodeId(self.next.fetch_add(1, Ordering::Relaxed))
     }
+
+    /// An allocator for tests that drive an integration without an engine.
+    ///
+    /// Test-only: outside tests, a second allocator would count from 1 again
+    /// and hand out ids the real one has already given away, which is the
+    /// collision this type exists to prevent.
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

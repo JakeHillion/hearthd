@@ -299,6 +299,52 @@ impl Engine {
                         endpoint_id,
                         attributes,
                     },
+                    Cluster::BooleanState(attributes) => Event::BooleanStateChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::Thermostat(attributes) => Event::ThermostatChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::FanControl(attributes) => Event::FanControlChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::DehumidificationControl(attributes) => {
+                        Event::DehumidificationControlChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::ThermostatUserInterfaceConfiguration(attributes) => {
+                        Event::ThermostatUserInterfaceConfigurationChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::PowerSource(attributes) => Event::PowerSourceChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::ElectricalPowerMeasurement(attributes) => {
+                        Event::ElectricalPowerMeasurementChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::ModeSelect(attributes) => Event::ModeSelectChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
                 };
                 // TODO: Trigger automations based on attribute-changed event
             }

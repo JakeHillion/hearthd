@@ -4,66 +4,93 @@
 //! defines a hand-rolled subset of the Matter data model (clusters,
 //! attributes, commands, endpoints, nodes) for the device features we
 //! currently support. Integration backends translate between their native
-//! representations (e.g. Zigbee2MQTT JSON) and these types at their
-//! boundary; everything inside hearthd speaks Matter.
+//! representations (e.g. Zigbee2MQTT JSON, EcoFlow protobuf) and these types
+//! at their boundary; everything inside hearthd speaks Matter.
+//!
+//! # Endpoints
+//!
+//! Matter identifies a cluster instance by the pair (endpoint ID, cluster ID);
+//! there is no instance discriminator. A device with several sensors of the
+//! same kind therefore has to spread them across several endpoints — six
+//! thermistors means six endpoints, each carrying one
+//! `TemperatureMeasurementCluster`. That is the specification's rule, not a
+//! hearthd limitation, and it is why integrations for physically rich devices
+//! produce endpoint counts in the dozens. Endpoint IDs are `u16` with 0
+//! reserved for the root node, so there is ample room.
+//!
+//! `Endpoint::clusters` is keyed by `Cluster::name()` rather than by cluster
+//! ID. That is looser than Matter — it makes a display name load-bearing — but
+//! it enforces the same one-instance-per-endpoint invariant.
 
 use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde::Serialize;
 
+mod clusters;
+mod commands;
+
+pub use clusters::BatChargeLevel;
+pub use clusters::BatChargeState;
+pub use clusters::BooleanStateCluster;
+pub use clusters::CLUSTER_ID_BOOLEAN_STATE;
+pub use clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
+pub use clusters::CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT;
+pub use clusters::CLUSTER_ID_FAN_CONTROL;
+pub use clusters::CLUSTER_ID_LEVEL_CONTROL;
+pub use clusters::CLUSTER_ID_MODE_SELECT;
+pub use clusters::CLUSTER_ID_OCCUPANCY_SENSING;
+pub use clusters::CLUSTER_ID_ON_OFF;
+pub use clusters::CLUSTER_ID_POWER_SOURCE;
+pub use clusters::CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT;
+pub use clusters::CLUSTER_ID_TEMPERATURE_MEASUREMENT;
+pub use clusters::CLUSTER_ID_THERMOSTAT;
+pub use clusters::CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
+pub use clusters::CLUSTER_NAME_BOOLEAN_STATE;
+pub use clusters::CLUSTER_NAME_DEHUMIDIFICATION_CONTROL;
+pub use clusters::CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT;
+pub use clusters::CLUSTER_NAME_FAN_CONTROL;
+pub use clusters::CLUSTER_NAME_LEVEL_CONTROL;
+pub use clusters::CLUSTER_NAME_MODE_SELECT;
+pub use clusters::CLUSTER_NAME_OCCUPANCY_SENSING;
+pub use clusters::CLUSTER_NAME_ON_OFF;
+pub use clusters::CLUSTER_NAME_POWER_SOURCE;
+pub use clusters::CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT;
+pub use clusters::CLUSTER_NAME_TEMPERATURE_MEASUREMENT;
+pub use clusters::CLUSTER_NAME_THERMOSTAT;
+pub use clusters::CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
+pub use clusters::ControlSequenceOfOperation;
+pub use clusters::DehumidificationControlCluster;
+pub use clusters::ElectricalPowerMeasurementCluster;
+pub use clusters::FanControlCluster;
+pub use clusters::FanMode;
+pub use clusters::FanModeSequence;
+pub use clusters::LevelControlCluster;
+pub use clusters::ModeOption;
+pub use clusters::ModeSelectCluster;
+pub use clusters::OccupancySensingCluster;
+pub use clusters::OnOffCluster;
+pub use clusters::PowerMode;
+pub use clusters::PowerSourceCluster;
+pub use clusters::PowerSourceStatus;
+pub use clusters::RelativeHumidityMeasurementCluster;
+pub use clusters::SystemMode;
+pub use clusters::TemperatureDisplayMode;
+pub use clusters::TemperatureMeasurementCluster;
+pub use clusters::ThermostatCluster;
+pub use clusters::ThermostatUserInterfaceConfigurationCluster;
+pub use commands::ClusterCommand;
+pub use commands::DehumidificationControlCommand;
+pub use commands::FanControlCommand;
+pub use commands::LevelControlCommand;
+pub use commands::ModeSelectCommand;
+pub use commands::OnOffCommand;
+pub use commands::SetpointMode;
+pub use commands::ThermostatCommand;
+pub use commands::ThermostatUserInterfaceConfigurationCommand;
+
 /// Endpoint identifier within a node (Matter endpoints are u16).
 pub type EndpointId = u16;
-
-// Cluster IDs from the Matter Application Cluster Specification.
-pub const CLUSTER_ID_ON_OFF: u32 = 0x0006;
-pub const CLUSTER_ID_LEVEL_CONTROL: u32 = 0x0008;
-pub const CLUSTER_ID_TEMPERATURE_MEASUREMENT: u32 = 0x0402;
-pub const CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT: u32 = 0x0405;
-pub const CLUSTER_ID_OCCUPANCY_SENSING: u32 = 0x0406;
-
-pub const CLUSTER_NAME_ON_OFF: &str = "OnOff";
-pub const CLUSTER_NAME_LEVEL_CONTROL: &str = "LevelControl";
-pub const CLUSTER_NAME_TEMPERATURE_MEASUREMENT: &str = "TemperatureMeasurement";
-pub const CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT: &str = "RelativeHumidityMeasurement";
-pub const CLUSTER_NAME_OCCUPANCY_SENSING: &str = "OccupancySensing";
-
-/// On/Off cluster (0x0006).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
-pub struct OnOffCluster {
-    /// Attribute 0x0000 `OnOff`.
-    pub on_off: bool,
-}
-
-/// Level Control cluster (0x0008).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
-pub struct LevelControlCluster {
-    /// Attribute 0x0000 `CurrentLevel` (0-254, null if unknown).
-    pub current_level: Option<u8>,
-}
-
-/// Temperature Measurement cluster (0x0402).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
-pub struct TemperatureMeasurementCluster {
-    /// Attribute 0x0000 `MeasuredValue` (int16, hundredths of a degree
-    /// Celsius, null if unknown).
-    pub measured_value: Option<i16>,
-}
-
-/// Relative Humidity Measurement cluster (0x0405).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
-pub struct RelativeHumidityMeasurementCluster {
-    /// Attribute 0x0000 `MeasuredValue` (uint16, hundredths of a percent,
-    /// null if unknown).
-    pub measured_value: Option<u16>,
-}
-
-/// Occupancy Sensing cluster (0x0406).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
-pub struct OccupancySensingCluster {
-    /// Attribute 0x0000 `Occupancy` (bit 0 = occupied).
-    pub occupancy: bool,
-}
 
 /// A Matter cluster instance carrying its current attribute values.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, facet::Facet)]
@@ -75,6 +102,14 @@ pub enum Cluster {
     TemperatureMeasurement(TemperatureMeasurementCluster),
     RelativeHumidityMeasurement(RelativeHumidityMeasurementCluster),
     OccupancySensing(OccupancySensingCluster),
+    BooleanState(BooleanStateCluster),
+    Thermostat(ThermostatCluster),
+    FanControl(FanControlCluster),
+    DehumidificationControl(DehumidificationControlCluster),
+    ThermostatUserInterfaceConfiguration(ThermostatUserInterfaceConfigurationCluster),
+    PowerSource(PowerSourceCluster),
+    ElectricalPowerMeasurement(ElectricalPowerMeasurementCluster),
+    ModeSelect(ModeSelectCluster),
 }
 
 impl Cluster {
@@ -86,6 +121,16 @@ impl Cluster {
             Cluster::TemperatureMeasurement(_) => CLUSTER_ID_TEMPERATURE_MEASUREMENT,
             Cluster::RelativeHumidityMeasurement(_) => CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT,
             Cluster::OccupancySensing(_) => CLUSTER_ID_OCCUPANCY_SENSING,
+            Cluster::BooleanState(_) => CLUSTER_ID_BOOLEAN_STATE,
+            Cluster::Thermostat(_) => CLUSTER_ID_THERMOSTAT,
+            Cluster::FanControl(_) => CLUSTER_ID_FAN_CONTROL,
+            Cluster::DehumidificationControl(_) => CLUSTER_ID_DEHUMIDIFICATION_CONTROL,
+            Cluster::ThermostatUserInterfaceConfiguration(_) => {
+                CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION
+            }
+            Cluster::PowerSource(_) => CLUSTER_ID_POWER_SOURCE,
+            Cluster::ElectricalPowerMeasurement(_) => CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT,
+            Cluster::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
         }
     }
 
@@ -97,6 +142,16 @@ impl Cluster {
             Cluster::TemperatureMeasurement(_) => CLUSTER_NAME_TEMPERATURE_MEASUREMENT,
             Cluster::RelativeHumidityMeasurement(_) => CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT,
             Cluster::OccupancySensing(_) => CLUSTER_NAME_OCCUPANCY_SENSING,
+            Cluster::BooleanState(_) => CLUSTER_NAME_BOOLEAN_STATE,
+            Cluster::Thermostat(_) => CLUSTER_NAME_THERMOSTAT,
+            Cluster::FanControl(_) => CLUSTER_NAME_FAN_CONTROL,
+            Cluster::DehumidificationControl(_) => CLUSTER_NAME_DEHUMIDIFICATION_CONTROL,
+            Cluster::ThermostatUserInterfaceConfiguration(_) => {
+                CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION
+            }
+            Cluster::PowerSource(_) => CLUSTER_NAME_POWER_SOURCE,
+            Cluster::ElectricalPowerMeasurement(_) => CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT,
+            Cluster::ModeSelect(_) => CLUSTER_NAME_MODE_SELECT,
         }
     }
 }
@@ -106,6 +161,18 @@ impl Cluster {
 pub struct Endpoint {
     /// Clusters keyed by `Cluster::name()`.
     pub clusters: HashMap<String, Cluster>,
+}
+
+impl Endpoint {
+    /// Build an endpoint from a list of clusters, keying each by its name.
+    pub fn from_clusters(clusters: impl IntoIterator<Item = Cluster>) -> Self {
+        Self {
+            clusters: clusters
+                .into_iter()
+                .map(|c| (c.name().to_string(), c))
+                .collect(),
+        }
+    }
 }
 
 /// A Matter node: a physical device addressable on the fabric.
@@ -122,45 +189,4 @@ pub struct Node {
 
     /// Endpoints, keyed by endpoint ID.
     pub endpoints: HashMap<EndpointId, Endpoint>,
-}
-
-/// OnOff cluster (0x0006) commands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum OnOffCommand {
-    /// Command 0x00.
-    Off,
-    /// Command 0x01.
-    On,
-    /// Command 0x02.
-    Toggle,
-}
-
-/// LevelControl cluster (0x0008) commands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum LevelControlCommand {
-    /// Command 0x00 `MoveToLevel`.
-    MoveToLevel {
-        level: u8,
-        transition_time: Option<u16>,
-    },
-}
-
-/// A command to invoke on a cluster. JSON representation:
-///   `{"cluster": "OnOff", "command": "On"}`
-///   `{"cluster": "LevelControl", "command": {"MoveToLevel": {"level": 200, "transition_time": null}}}`
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "cluster", content = "command")]
-pub enum ClusterCommand {
-    OnOff(OnOffCommand),
-    LevelControl(LevelControlCommand),
-}
-
-impl ClusterCommand {
-    /// Cluster this command targets.
-    pub fn cluster_id(&self) -> u32 {
-        match self {
-            ClusterCommand::OnOff(_) => CLUSTER_ID_ON_OFF,
-            ClusterCommand::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
-        }
-    }
 }
