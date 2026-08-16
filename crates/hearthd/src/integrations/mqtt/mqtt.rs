@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -24,11 +22,12 @@ use super::sensor::Sensor;
 use crate::engine::FromIntegrationMessage;
 use crate::engine::FromIntegrationSender;
 use crate::engine::Integration;
+use crate::engine::NodeId;
+use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
-use crate::matter::NodeId;
 
 /// Integration name reported to the engine.
 const INTEGRATION_NAME: &str = "mqtt";
@@ -61,7 +60,6 @@ pub struct MqttIntegration<C: MqttClient> {
     client: Arc<Mutex<C>>,
     config: MqttConfig,
     inner: SharedInner,
-    next_node_id: Arc<AtomicU64>,
     to_engine: Option<FromIntegrationSender>,
     /// Handle to the background message processing task
     _message_task: Option<JoinHandle<()>>,
@@ -74,7 +72,6 @@ impl<C: MqttClient> MqttIntegration<C> {
             client: Arc::new(Mutex::new(client)),
             config: config.clone(),
             inner: Arc::new(Mutex::new(Inner::default())),
-            next_node_id: Arc::new(AtomicU64::new(1)),
             to_engine: None,
             _message_task: None,
         }
@@ -85,7 +82,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: Arc<Mutex<C>>,
         config: MqttConfig,
         inner: SharedInner,
-        next_node_id: Arc<AtomicU64>,
+        node_ids: NodeIdAllocator,
         to_engine: FromIntegrationSender,
     ) {
         loop {
@@ -105,12 +102,7 @@ impl<C: MqttClient> MqttIntegration<C> {
 
                     if msg.topic.ends_with("/config") {
                         if let Err(e) = Self::handle_discovery(
-                            &msg,
-                            &config,
-                            &client,
-                            &inner,
-                            &next_node_id,
-                            &to_engine,
+                            &msg, &config, &client, &inner, &node_ids, &to_engine,
                         )
                         .await
                         {
@@ -133,7 +125,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         config: &MqttConfig,
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
-        next_node_id: &AtomicU64,
+        node_ids: &NodeIdAllocator,
         to_engine: &FromIntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
         let (component, node_id_str, object_id) =
@@ -153,22 +145,15 @@ impl<C: MqttClient> MqttIntegration<C> {
 
         match component.as_str() {
             "light" => {
-                Self::handle_light_discovery(
-                    msg,
-                    client,
-                    inner,
-                    next_node_id,
-                    to_engine,
-                    &node_id_str,
-                )
-                .await
+                Self::handle_light_discovery(msg, client, inner, node_ids, to_engine, &node_id_str)
+                    .await
             }
             "binary_sensor" => {
                 Self::handle_binary_sensor_discovery(
                     msg,
                     client,
                     inner,
-                    next_node_id,
+                    node_ids,
                     to_engine,
                     &node_id_str,
                 )
@@ -178,15 +163,8 @@ impl<C: MqttClient> MqttIntegration<C> {
                 // TODO: Z2M also publishes auxiliary `sensor` components
                 // (battery, linkquality, illuminance) that should become
                 // their own Matter clusters.
-                Self::handle_sensor_discovery(
-                    msg,
-                    client,
-                    inner,
-                    next_node_id,
-                    to_engine,
-                    &node_id_str,
-                )
-                .await
+                Self::handle_sensor_discovery(msg, client, inner, node_ids, to_engine, &node_id_str)
+                    .await
             }
             _ => {
                 debug!("Ignoring unsupported component: {}", component);
@@ -199,7 +177,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         msg: &MqttMessage,
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
-        next_node_id: &AtomicU64,
+        node_ids: &NodeIdAllocator,
         to_engine: &FromIntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
@@ -235,7 +213,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         let node = light.to_node(INTEGRATION_NAME);
         info!("Discovered light entity: {} ({})", light.name, entity_id);
 
-        let node_id = next_node_id.fetch_add(1, Ordering::Relaxed);
+        let node_id = node_ids.allocate();
         let light_arc = Arc::new(Mutex::new(light));
 
         {
@@ -260,7 +238,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         msg: &MqttMessage,
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
-        next_node_id: &AtomicU64,
+        node_ids: &NodeIdAllocator,
         to_engine: &FromIntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
@@ -313,7 +291,7 @@ impl<C: MqttClient> MqttIntegration<C> {
             sensor.name, entity_id
         );
 
-        let node_id = next_node_id.fetch_add(1, Ordering::Relaxed);
+        let node_id = node_ids.allocate();
         let sensor_arc = Arc::new(Mutex::new(sensor));
 
         {
@@ -339,7 +317,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         msg: &MqttMessage,
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
-        next_node_id: &AtomicU64,
+        node_ids: &NodeIdAllocator,
         to_engine: &FromIntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
@@ -418,7 +396,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         let node = sensor.to_node(INTEGRATION_NAME);
         info!("Discovered sensor entity: {} ({})", sensor.name, entity_id);
 
-        let node_id = next_node_id.fetch_add(1, Ordering::Relaxed);
+        let node_id = node_ids.allocate();
         let sensor_arc = Arc::new(Mutex::new(sensor));
 
         {
@@ -642,7 +620,11 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
         INTEGRATION_NAME
     }
 
-    async fn setup(&mut self, tx: FromIntegrationSender) -> Result<(), Box<dyn Error + Send>> {
+    async fn setup(
+        &mut self,
+        tx: FromIntegrationSender,
+        node_ids: NodeIdAllocator,
+    ) -> Result<(), Box<dyn Error + Send>> {
         self.to_engine = Some(tx.clone());
 
         info!(
@@ -675,10 +657,9 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
         let client = self.client.clone();
         let config = self.config.clone();
         let inner = self.inner.clone();
-        let next_node_id = self.next_node_id.clone();
 
         let task = tokio::spawn(async move {
-            Self::process_messages_task(client, config, inner, next_node_id, tx).await;
+            Self::process_messages_task(client, config, inner, node_ids, tx).await;
         });
         self._message_task = Some(task);
 

@@ -329,9 +329,9 @@ fn test_check_pattern_nested() {
         Bool: true [type: Bool]
       Body:
         ExprStmt:
-          Ident: nodes [type: Map<Int, Node>]
+          Ident: nodes [type: Map<NodeId, Node>]
     Errors:
-      type error at 50..55: observer body must return [Event], found Map<Int, Node>
+      type error at 50..55: observer body must return [Event], found Map<NodeId, Node>
     ");
 }
 
@@ -353,9 +353,9 @@ fn test_check_pattern_with_two_fields() {
         Bool: true [type: Bool]
       Body:
         ExprStmt:
-          Ident: nodes [type: Map<Int, Node>]
+          Ident: nodes [type: Map<NodeId, Node>]
     Errors:
-      type error at 64..69: observer body must return [Event], found Map<Int, Node>
+      type error at 64..69: observer body must return [Event], found Map<NodeId, Node>
     ");
 }
 
@@ -376,10 +376,10 @@ fn test_check_field_access() {
         Bool: true [type: Bool]
       Body:
         ExprStmt:
-          Field: .nodes [type: Map<Int, Node>]
+          Field: .nodes [type: Map<NodeId, Node>]
             Ident: state [type: State]
     Errors:
-      type error at 33..44: observer body must return [Event], found Map<Int, Node>
+      type error at 33..44: observer body must return [Event], found Map<NodeId, Node>
     ");
 }
 
@@ -442,12 +442,12 @@ fn test_check_builtin_keys() {
         Bool: true [type: Bool]
       Body:
         ExprStmt:
-          Call: [type: [Int]]
+          Call: [type: [NodeId]]
             Ident: keys [type: <error>]
             Args:
-              Ident: nodes [type: Map<Int, Node>]
+              Ident: nodes [type: Map<NodeId, Node>]
     Errors:
-      type error at 50..61: observer body must return [Event], found [Int]
+      type error at 50..61: observer body must return [Event], found [NodeId]
     ");
 }
 
@@ -581,10 +581,10 @@ fn test_check_list_comp() {
               For:
                 Var: l
                 Iter:
-                  Call: [type: [Int]]
+                  Call: [type: [NodeId]]
                     Ident: keys [type: <error>]
                     Args:
-                      Ident: nodes [type: Map<Int, Node>]
+                      Ident: nodes [type: Map<NodeId, Node>]
                 Body:
                   Push: __result0
                     Call: [type: Event]
@@ -592,7 +592,7 @@ fn test_check_list_comp() {
                         Segment: Event
                         Segment: OnOffChanged
                       Args:
-                        Ident: l [type: Int]
+                        Ident: l [type: NodeId]
             Result:
               Ident: __result0 [type: [Event]]
     ");
@@ -739,10 +739,10 @@ fn test_check_lights_off_automation() {
               For:
                 Var: l
                 Iter:
-                  Call: [type: [Int]]
+                  Call: [type: [NodeId]]
                     Ident: keys [type: <error>]
                     Args:
-                      Ident: nodes [type: Map<Int, Node>]
+                      Ident: nodes [type: Map<NodeId, Node>]
                 Body:
                   Push: __result0
                     Call: [type: Event]
@@ -750,7 +750,7 @@ fn test_check_lights_off_automation() {
                         Segment: Event
                         Segment: OnOffChanged
                       Args:
-                        Ident: l [type: Int]
+                        Ident: l [type: NodeId]
             Result:
               Ident: __result0 [type: [Event]]
     ");

@@ -19,10 +19,11 @@ use super::message::FromIntegrationMessage;
 use super::message::ToIntegrationMessage;
 use super::state::State;
 use crate::engine::IntegrationContext;
+use crate::engine::NodeId;
+use crate::engine::NodeIdAllocator;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
-use crate::matter::NodeId;
 
 /// hearthd engine
 ///
@@ -46,6 +47,10 @@ pub struct Engine {
 
     /// Handles for integration tasks
     integration_handles: Vec<JoinHandle<()>>,
+
+    /// Source of node ids for every integration, so that no two can name the
+    /// same node.
+    node_ids: NodeIdAllocator,
 }
 
 /// Capacity for the integration→engine message channel
@@ -63,6 +68,7 @@ impl Engine {
             message_rx: Mutex::new(message_rx),
             message_tx,
             integration_handles: Vec::new(),
+            node_ids: NodeIdAllocator::new(),
         }
     }
 
@@ -98,6 +104,7 @@ impl Engine {
     pub fn register_integration(&mut self, name: String, mut integration: Box<dyn Integration>) {
         let (to_integration_tx, mut to_integration_rx) = mpsc::unbounded_channel();
         let from_integration_tx = self.message_tx.clone();
+        let node_ids = self.node_ids.clone();
 
         self.integration_channels
             .insert(name.clone(), to_integration_tx);
@@ -105,7 +112,7 @@ impl Engine {
         // Spawn integration task
         let handle = tokio::spawn(async move {
             // Setup integration (gives it the sender for events)
-            if let Err(e) = integration.setup(from_integration_tx).await {
+            if let Err(e) = integration.setup(from_integration_tx, node_ids).await {
                 warn!("Integration '{}' setup failed: {}", name, e);
                 return;
             }

@@ -12,9 +12,6 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// Locally assigned Matter node identifier.
-pub type NodeId = u64;
-
 /// Endpoint identifier within a node (Matter endpoints are u16).
 pub type EndpointId = u16;
 

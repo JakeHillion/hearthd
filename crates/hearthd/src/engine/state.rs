@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::engine::NodeId;
 use crate::matter::Node;
-use crate::matter::NodeId;
 
 /// Centralized snapshot of the entire engine state.
 ///
