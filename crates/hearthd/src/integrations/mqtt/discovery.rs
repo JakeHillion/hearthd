@@ -142,6 +142,19 @@ pub struct DiscoveryMessage {
     /// Schema type (default is "default")
     pub schema: Option<String>,
 
+    /// Supported color modes for lights (e.g. "hs", "xy", "color_temp").
+    #[serde(default)]
+    pub supported_color_modes: Vec<String>,
+
+    /// Active color mode reported by a light ("hs", "xy", or "color_temp").
+    pub color_mode: Option<String>,
+
+    /// Minimum color temperature in mireds.
+    pub min_mireds: Option<u16>,
+
+    /// Maximum color temperature in mireds.
+    pub max_mireds: Option<u16>,
+
     /// Device class (e.g., "motion", "door", "window") for binary sensors
     pub device_class: Option<String>,
 

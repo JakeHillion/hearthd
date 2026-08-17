@@ -1,6 +1,7 @@
 use crate::engine::NodeId;
 use crate::matter::BooleanStateCluster;
 use crate::matter::CloudCoverCluster;
+use crate::matter::ColorControlCluster;
 use crate::matter::DehumidificationControlCluster;
 use crate::matter::DewPointCluster;
 use crate::matter::ElectricalPowerMeasurementCluster;
@@ -38,6 +39,11 @@ pub enum Event {
         node_id: NodeId,
         endpoint_id: EndpointId,
         attributes: LevelControlCluster,
+    },
+    ColorControlChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: ColorControlCluster,
     },
     TemperatureMeasurementChanged {
         node_id: NodeId,

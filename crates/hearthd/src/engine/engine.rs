@@ -280,6 +280,11 @@ impl Engine {
                         endpoint_id,
                         attributes,
                     },
+                    Cluster::ColorControl(attributes) => Event::ColorControlChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
                     Cluster::TemperatureMeasurement(attributes) => {
                         Event::TemperatureMeasurementChanged {
                             node_id,
