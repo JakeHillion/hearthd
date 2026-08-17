@@ -20,6 +20,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use super::clusters::CLUSTER_ID_COLOR_CONTROL;
 use super::clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
 use super::clusters::CLUSTER_ID_FAN_CONTROL;
 use super::clusters::CLUSTER_ID_LEVEL_CONTROL;
@@ -48,6 +49,42 @@ pub enum LevelControlCommand {
     /// Command 0x00 `MoveToLevel`.
     MoveToLevel {
         level: u8,
+        transition_time: Option<u16>,
+    },
+}
+
+/// Color Control cluster (0x0300) commands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ColorControlCommand {
+    /// Command 0x00 `MoveToHue`.
+    MoveToHue {
+        hue: u8,
+        transition_time: Option<u16>,
+    },
+
+    /// Command 0x01 `MoveToSaturation`.
+    MoveToSaturation {
+        saturation: u8,
+        transition_time: Option<u16>,
+    },
+
+    /// Command 0x06 `MoveToHueAndSaturation`.
+    MoveToHueAndSaturation {
+        hue: u8,
+        saturation: u8,
+        transition_time: Option<u16>,
+    },
+
+    /// Command 0x07 `MoveToColor`.
+    MoveToColor {
+        x: u16,
+        y: u16,
+        transition_time: Option<u16>,
+    },
+
+    /// Command 0x0A `MoveToColorTemperature`.
+    MoveToColorTemperature {
+        color_temperature_mireds: u16,
         transition_time: Option<u16>,
     },
 }
@@ -123,6 +160,7 @@ pub enum ModeSelectCommand {
 pub enum ClusterCommand {
     OnOff(OnOffCommand),
     LevelControl(LevelControlCommand),
+    ColorControl(ColorControlCommand),
     Thermostat(ThermostatCommand),
     FanControl(FanControlCommand),
     DehumidificationControl(DehumidificationControlCommand),
@@ -136,6 +174,7 @@ impl ClusterCommand {
         match self {
             ClusterCommand::OnOff(_) => CLUSTER_ID_ON_OFF,
             ClusterCommand::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
+            ClusterCommand::ColorControl(_) => CLUSTER_ID_COLOR_CONTROL,
             ClusterCommand::Thermostat(_) => CLUSTER_ID_THERMOSTAT,
             ClusterCommand::FanControl(_) => CLUSTER_ID_FAN_CONTROL,
             ClusterCommand::DehumidificationControl(_) => CLUSTER_ID_DEHUMIDIFICATION_CONTROL,

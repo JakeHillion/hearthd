@@ -20,6 +20,7 @@ use serde::Serialize;
 // Cluster IDs from the Matter Application Cluster Specification.
 pub const CLUSTER_ID_ON_OFF: u32 = 0x0006;
 pub const CLUSTER_ID_LEVEL_CONTROL: u32 = 0x0008;
+pub const CLUSTER_ID_COLOR_CONTROL: u32 = 0x0300;
 pub const CLUSTER_ID_POWER_SOURCE: u32 = 0x002F;
 pub const CLUSTER_ID_BOOLEAN_STATE: u32 = 0x0045;
 pub const CLUSTER_ID_MODE_SELECT: u32 = 0x0050;
@@ -46,6 +47,7 @@ pub const CLUSTER_ID_WEATHER_CONDITION: u32 = 0xFC05;
 
 pub const CLUSTER_NAME_ON_OFF: &str = "OnOff";
 pub const CLUSTER_NAME_LEVEL_CONTROL: &str = "LevelControl";
+pub const CLUSTER_NAME_COLOR_CONTROL: &str = "ColorControl";
 pub const CLUSTER_NAME_POWER_SOURCE: &str = "PowerSource";
 pub const CLUSTER_NAME_BOOLEAN_STATE: &str = "BooleanState";
 pub const CLUSTER_NAME_MODE_SELECT: &str = "ModeSelect";
@@ -78,6 +80,57 @@ pub struct OnOffCluster {
 pub struct LevelControlCluster {
     /// Attribute 0x0000 `CurrentLevel` (0-254, null if unknown).
     pub current_level: Option<u8>,
+}
+
+/// Color Control `ColorMode` (attribute 0x0008) values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, facet::Facet)]
+#[repr(u8)]
+pub enum ColorMode {
+    /// Hue/Saturation mode.
+    HueSaturation = 0,
+    /// CIE XY mode.
+    Xy = 1,
+    /// Color Temperature mode.
+    ColorTemperature = 2,
+}
+
+/// Color Control `Options` (attribute 0x000F) bitmap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, facet::Facet)]
+#[repr(u8)]
+pub enum ColorControlOptions {
+    /// Default: no options set.
+    #[default]
+    None = 0,
+}
+
+/// Color Control cluster (0x0300).
+///
+/// Only the attributes Zigbee2MQTT actually reports are modelled. Values are
+/// kept as `None` when the device does not expose the corresponding colour
+/// mode, so the cluster snapshot truthfully reflects what the hardware
+/// supports.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct ColorControlCluster {
+    /// Attribute 0x0000 `CurrentHue` (0-254, null if unknown).
+    pub current_hue: Option<u8>,
+
+    /// Attribute 0x0001 `CurrentSaturation` (0-254, null if unknown).
+    pub current_saturation: Option<u8>,
+
+    /// Attribute 0x0003 `CurrentX` (0-65279, null if unknown).
+    pub current_x: Option<u16>,
+
+    /// Attribute 0x0004 `CurrentY` (0-65279, null if unknown).
+    pub current_y: Option<u16>,
+
+    /// Attribute 0x0007 `ColorTemperatureMireds` (null if unknown).
+    pub color_temperature_mireds: Option<u16>,
+
+    /// Attribute 0x0008 `ColorMode`.
+    pub color_mode: Option<ColorMode>,
+
+    /// Attribute 0x000F `Options`.
+    pub options: ColorControlOptions,
 }
 
 /// Temperature Measurement cluster (0x0402).

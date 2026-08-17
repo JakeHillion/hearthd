@@ -245,6 +245,10 @@ mod tests {
             payload_off: None,
             brightness: None,
             schema: None,
+            supported_color_modes: Vec::new(),
+            color_mode: None,
+            min_mireds: None,
+            max_mireds: None,
             device_class: Some(device_class.to_string()),
             value_template: Some(template.to_string()),
         }

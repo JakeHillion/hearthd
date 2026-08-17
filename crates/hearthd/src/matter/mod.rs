@@ -35,6 +35,7 @@ pub use clusters::BatChargeState;
 pub use clusters::BooleanStateCluster;
 pub use clusters::CLUSTER_ID_BOOLEAN_STATE;
 pub use clusters::CLUSTER_ID_CLOUD_COVER;
+pub use clusters::CLUSTER_ID_COLOR_CONTROL;
 pub use clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
 pub use clusters::CLUSTER_ID_DEW_POINT;
 pub use clusters::CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT;
@@ -55,6 +56,7 @@ pub use clusters::CLUSTER_ID_WEATHER_CONDITION;
 pub use clusters::CLUSTER_ID_WIND_MEASUREMENT;
 pub use clusters::CLUSTER_NAME_BOOLEAN_STATE;
 pub use clusters::CLUSTER_NAME_CLOUD_COVER;
+pub use clusters::CLUSTER_NAME_COLOR_CONTROL;
 pub use clusters::CLUSTER_NAME_DEHUMIDIFICATION_CONTROL;
 pub use clusters::CLUSTER_NAME_DEW_POINT;
 pub use clusters::CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT;
@@ -74,6 +76,9 @@ pub use clusters::CLUSTER_NAME_UV_INDEX;
 pub use clusters::CLUSTER_NAME_WEATHER_CONDITION;
 pub use clusters::CLUSTER_NAME_WIND_MEASUREMENT;
 pub use clusters::CloudCoverCluster;
+pub use clusters::ColorControlCluster;
+pub use clusters::ColorControlOptions;
+pub use clusters::ColorMode;
 pub use clusters::ControlSequenceOfOperation;
 pub use clusters::DehumidificationControlCluster;
 pub use clusters::DewPointCluster;
@@ -102,6 +107,7 @@ pub use clusters::WeatherCondition;
 pub use clusters::WeatherConditionCluster;
 pub use clusters::WindMeasurementCluster;
 pub use commands::ClusterCommand;
+pub use commands::ColorControlCommand;
 pub use commands::DehumidificationControlCommand;
 pub use commands::FanControlCommand;
 pub use commands::LevelControlCommand;
@@ -121,6 +127,7 @@ pub type EndpointId = u16;
 pub enum Cluster {
     OnOff(OnOffCluster),
     LevelControl(LevelControlCluster),
+    ColorControl(ColorControlCluster),
     TemperatureMeasurement(TemperatureMeasurementCluster),
     RelativeHumidityMeasurement(RelativeHumidityMeasurementCluster),
     OccupancySensing(OccupancySensingCluster),
@@ -147,6 +154,7 @@ impl Cluster {
         match self {
             Cluster::OnOff(_) => CLUSTER_ID_ON_OFF,
             Cluster::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
+            Cluster::ColorControl(_) => CLUSTER_ID_COLOR_CONTROL,
             Cluster::TemperatureMeasurement(_) => CLUSTER_ID_TEMPERATURE_MEASUREMENT,
             Cluster::RelativeHumidityMeasurement(_) => CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT,
             Cluster::OccupancySensing(_) => CLUSTER_ID_OCCUPANCY_SENSING,
@@ -175,6 +183,7 @@ impl Cluster {
         match self {
             Cluster::OnOff(_) => CLUSTER_NAME_ON_OFF,
             Cluster::LevelControl(_) => CLUSTER_NAME_LEVEL_CONTROL,
+            Cluster::ColorControl(_) => CLUSTER_NAME_COLOR_CONTROL,
             Cluster::TemperatureMeasurement(_) => CLUSTER_NAME_TEMPERATURE_MEASUREMENT,
             Cluster::RelativeHumidityMeasurement(_) => CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT,
             Cluster::OccupancySensing(_) => CLUSTER_NAME_OCCUPANCY_SENSING,
