@@ -10,6 +10,7 @@
 use crate::engine::NodeId;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
+use crate::matter::ClusterWrite;
 use crate::matter::EndpointId;
 use crate::matter::Node;
 
@@ -34,13 +35,23 @@ pub enum FromIntegrationMessage {
     },
 }
 
-/// Messages FROM the engine TO integrations (commands)
+/// Messages FROM the engine TO integrations (commands or attribute writes)
 #[derive(Debug, Clone)]
 pub enum ToIntegrationMessage {
-    /// Invoke a Matter cluster command on the given endpoint.
+    /// Invoke a real Matter cluster command on the given endpoint.
     InvokeCommand {
         node_id: NodeId,
         endpoint_id: EndpointId,
         command: ClusterCommand,
+    },
+
+    /// Write one or more cluster attributes on the given endpoint.
+    ///
+    /// This is the Matter `WriteAttribute` interaction: each `ClusterWrite`
+    /// targets a single cluster and carries only the attributes to change.
+    WriteAttributes {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        writes: Vec<ClusterWrite>,
     },
 }

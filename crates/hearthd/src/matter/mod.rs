@@ -29,6 +29,7 @@ use serde::Serialize;
 
 mod clusters;
 mod commands;
+mod writes;
 
 pub use clusters::BatChargeLevel;
 pub use clusters::BatChargeState;
@@ -110,6 +111,8 @@ pub use commands::OnOffCommand;
 pub use commands::SetpointMode;
 pub use commands::ThermostatCommand;
 pub use commands::ThermostatUserInterfaceConfigurationCommand;
+pub use writes::ClusterWrite;
+pub use writes::ThermostatWrite;
 
 /// Endpoint identifier within a node (Matter endpoints are u16).
 pub type EndpointId = u16;

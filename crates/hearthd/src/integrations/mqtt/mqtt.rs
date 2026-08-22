@@ -683,6 +683,19 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
                 );
                 self.invoke_command(node_id, endpoint_id, command).await?;
             }
+            ToIntegrationMessage::WriteAttributes {
+                node_id,
+                endpoint_id,
+                writes,
+            } => {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "MQTT node {} endpoint {} does not support attribute writes: {:?}",
+                        node_id, endpoint_id, writes
+                    ),
+                )));
+            }
         }
         Ok(())
     }

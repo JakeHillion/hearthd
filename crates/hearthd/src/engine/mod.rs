@@ -2,6 +2,7 @@ mod engine;
 mod event;
 mod integration;
 mod message;
+mod mutation;
 mod node_id;
 pub mod state;
 
