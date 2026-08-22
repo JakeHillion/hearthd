@@ -50,6 +50,7 @@ use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
+use crate::matter::ClusterWrite;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
 use crate::matter::Node;
@@ -514,11 +515,63 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
             (device.serial.clone(), write)
         };
 
+        self.publish_and_apply(node_id, &serial, &write, || {
+            format!("sent EcoFlow command to node {node_id} endpoint {endpoint_id}: {command:?}")
+        })
+        .await
+    }
+
+    /// Translate a set of attribute writes and publish them.
+    async fn write_attributes(
+        &self,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        writes: Vec<ClusterWrite>,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        let (serial, write) = {
+            let guard = self.inner.lock().await;
+            let device = guard
+                .devices
+                .get(&node_id)
+                .ok_or_else(|| -> Box<dyn Error + Send> {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("unknown node: {node_id}"),
+                    ))
+                })?;
+
+            let write = wave3_matter::writes_to_config_write(&device.state, endpoint_id, &writes)
+                .map_err(|e| -> Box<dyn Error + Send> {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    e.to_string(),
+                ))
+            })?;
+
+            (device.serial.clone(), write)
+        };
+
+        self.publish_and_apply(node_id, &serial, &write, || {
+            format!(
+                "sent EcoFlow attribute write to node {node_id} endpoint {endpoint_id}: {writes:?}"
+            )
+        })
+        .await
+    }
+
+    /// Publish a config write and apply it optimistically.
+    async fn publish_and_apply<F: FnOnce() -> String>(
+        &self,
+        node_id: NodeId,
+        serial: &str,
+        write: &ConfigWrite,
+        log_msg: F,
+    ) -> Result<(), Box<dyn Error + Send>> {
         if write.is_empty() {
             return Ok(());
         }
 
-        // The command topic is user-scoped, so a command can only be sent
+        // The command topic is user-scoped, so a message can only be sent
         // while a session is up.
         let user_id = match self.current_user_id().await {
             Some(user_id) => user_id,
@@ -530,22 +583,22 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
             }
         };
 
-        Self::publish_config_write(&self.transport, &user_id, &serial, &write)
+        Self::publish_config_write(&self.transport, &user_id, serial, write)
             .await
             .map_err(|e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        info!("sent EcoFlow command to node {node_id} endpoint {endpoint_id}: {command:?}");
+        info!("{}", log_msg());
 
-        // Apply the commanded values immediately so readers do not lag a full
+        // Apply the written values immediately so readers do not lag a full
         // upload period. The next report overwrites them; if none ever
-        // confirms or contradicts them, the command was probably lost.
+        // confirms or contradicts them, the write was probably lost.
         let changed = {
             let mut guard = self.inner.lock().await;
             match guard.devices.get_mut(&node_id) {
                 Some(device) => {
-                    device.state.apply_optimistic(&write);
+                    device.state.apply_optimistic(write);
                     Self::take_changed_clusters(device)
                 }
                 None => Vec::new(),
@@ -655,6 +708,11 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
                 endpoint_id,
                 command,
             } => self.invoke_command(node_id, endpoint_id, command).await,
+            ToIntegrationMessage::WriteAttributes {
+                node_id,
+                endpoint_id,
+                writes,
+            } => self.write_attributes(node_id, endpoint_id, writes).await,
         }
     }
 
