@@ -2,6 +2,7 @@ use std::error::Error;
 
 use crate::integrations::mqtt::discovery::DeviceInfo;
 use crate::integrations::mqtt::discovery::DiscoveryMessage;
+use crate::integrations::mqtt::discovery::entity_name;
 use crate::integrations::mqtt::discovery::parse_value_template_key;
 use crate::integrations::mqtt::light::Z2M_ENDPOINT;
 use crate::matter::Cluster;
@@ -86,10 +87,7 @@ impl Sensor {
             .clone()
             .unwrap_or_else(|| format!("{}_sensor", node_id));
 
-        let name = discovery
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("Sensor {}", node_id));
+        let name = entity_name(&discovery, || format!("Sensor {}", node_id));
 
         let state_topic = discovery
             .state_topic

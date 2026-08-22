@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::integrations::mqtt::discovery::DeviceInfo;
 use crate::integrations::mqtt::discovery::DiscoveryMessage;
+use crate::integrations::mqtt::discovery::entity_name;
 use crate::integrations::mqtt::discovery::parse_value_template_key;
 use crate::integrations::mqtt::light::Z2M_ENDPOINT;
 use crate::matter::Cluster;
@@ -129,11 +130,11 @@ impl BinarySensor {
     ) -> Result<Self, Box<dyn Error>> {
         let unique_id = discovery
             .unique_id
+            .as_ref()
+            .map(|id| id.to_string())
             .unwrap_or_else(|| format!("{}_binary_sensor", node_id));
 
-        let name = discovery
-            .name
-            .unwrap_or_else(|| format!("Binary Sensor {}", node_id));
+        let name = entity_name(&discovery, || format!("Binary Sensor {}", node_id));
 
         let state_topic = discovery
             .state_topic

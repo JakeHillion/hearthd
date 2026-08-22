@@ -105,9 +105,10 @@ where
 ///
 /// This struct represents the JSON payload sent by Zigbee2MQTT on discovery topics.
 /// Based on Home Assistant's MQTT discovery protocol.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct DiscoveryMessage {
     /// Human-readable name of the entity
+    #[serde(default)]
     pub name: Option<String>,
 
     /// Unique identifier for this entity
@@ -185,6 +186,22 @@ pub struct DeviceInfo {
     /// Hardware version (can be string or integer in Zigbee2MQTT)
     #[serde(default, deserialize_with = "deserialize_string_or_int")]
     pub hw_version: Option<String>,
+}
+
+/// Choose the best human-readable name for an entity from a discovery message.
+///
+/// Zigbee2MQTT usually leaves the per-component `name` field empty and puts
+/// the friendly device name in `device.name`. Fall back to the provided
+/// fallback only when neither source is available.
+pub fn entity_name(discovery: &DiscoveryMessage, fallback: impl FnOnce() -> String) -> String {
+    discovery
+        .name
+        .as_ref()
+        .map(|n| n.trim())
+        .filter(|n| !n.is_empty())
+        .map(|n| n.to_string())
+        .or_else(|| discovery.device.as_ref().map(|d| d.name.clone()))
+        .unwrap_or_else(fallback)
 }
 
 /// Extract the JSON key name from a Zigbee2MQTT value template.
@@ -279,6 +296,79 @@ mod tests {
                 "0x00124b001234abcd".to_string(),
                 "occupancy".to_string()
             ))
+        );
+    }
+
+    #[test]
+    fn entity_name_prefers_component_name() {
+        let discovery = DiscoveryMessage {
+            name: Some("Component Name".to_string()),
+            device: Some(DeviceInfo {
+                name: "Device Name".to_string(),
+                identifiers: vec!["id".to_string()],
+                manufacturer: None,
+                model: None,
+                sw_version: None,
+                hw_version: None,
+            }),
+            ..DiscoveryMessage::default()
+        };
+        assert_eq!(
+            entity_name(&discovery, || "fallback".to_string()),
+            "Component Name"
+        );
+    }
+
+    #[test]
+    fn entity_name_falls_back_to_device_name() {
+        let discovery = DiscoveryMessage {
+            name: None,
+            device: Some(DeviceInfo {
+                name: "Device Name".to_string(),
+                identifiers: vec!["id".to_string()],
+                manufacturer: None,
+                model: None,
+                sw_version: None,
+                hw_version: None,
+            }),
+            ..DiscoveryMessage::default()
+        };
+        assert_eq!(
+            entity_name(&discovery, || "fallback".to_string()),
+            "Device Name"
+        );
+    }
+
+    #[test]
+    fn entity_name_ignores_empty_component_name() {
+        let discovery = DiscoveryMessage {
+            name: Some("".to_string()),
+            device: Some(DeviceInfo {
+                name: "Device Name".to_string(),
+                identifiers: vec!["id".to_string()],
+                manufacturer: None,
+                model: None,
+                sw_version: None,
+                hw_version: None,
+            }),
+            ..DiscoveryMessage::default()
+        };
+        assert_eq!(
+            entity_name(&discovery, || "fallback".to_string()),
+            "Device Name"
+        );
+    }
+
+    #[test]
+    fn entity_name_uses_fallback_when_no_name_available() {
+        let discovery = DiscoveryMessage {
+            name: None,
+            device: None,
+            ..DiscoveryMessage::default()
+        };
+        assert_eq!(
+            entity_name(&discovery, || "fallback".to_string()),
+            "fallback"
         );
     }
 }
