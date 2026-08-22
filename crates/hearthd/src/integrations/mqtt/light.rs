@@ -3,6 +3,7 @@ use std::error::Error;
 
 use crate::integrations::mqtt::discovery::DeviceInfo;
 use crate::integrations::mqtt::discovery::DiscoveryMessage;
+use crate::integrations::mqtt::discovery::entity_name;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::ColorControlCluster;
@@ -58,11 +59,11 @@ impl Light {
     ) -> Result<Self, Box<dyn Error>> {
         let unique_id = discovery
             .unique_id
+            .as_ref()
+            .map(|id| id.to_string())
             .unwrap_or_else(|| format!("{}_light", node_id));
 
-        let name = discovery
-            .name
-            .unwrap_or_else(|| format!("Light {}", node_id));
+        let name = entity_name(&discovery, || format!("Light {}", node_id));
 
         let state_topic = discovery
             .state_topic
