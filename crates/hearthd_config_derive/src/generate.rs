@@ -90,7 +90,7 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
         });
 
         // Parse default function if present
-        let default_fn = parse_default_fn(field);
+        let default_fn = parse_default_fn(field)?;
 
         let field_type = if is_hashmap(field_ty) {
             let (key_type, value_type) = extract_hashmap_types(field_ty)?;
@@ -1041,24 +1041,30 @@ fn is_simple_type(ty: &Type) -> bool {
     false
 }
 
-/// Parse #[config(default = "function_name")] attribute from a field
-fn parse_default_fn(field: &Field) -> Option<String> {
+/// Parse #[config(default = "function_name")] attribute from a field.
+///
+/// Emits a compile error if `default` is provided with a value that is not a
+/// string literal naming a function.
+fn parse_default_fn(field: &Field) -> Result<Option<String>> {
     for attr in &field.attrs {
         if attr.path().is_ident("config") {
             if let Ok(syn::Meta::NameValue(nv)) = attr.parse_args::<syn::Meta>() {
                 if nv.path.is_ident("default") {
-                    if let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(lit_str),
-                        ..
-                    }) = &nv.value
-                    {
-                        return Some(lit_str.value());
-                    }
+                    return match &nv.value {
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(lit_str),
+                            ..
+                        }) => Ok(Some(lit_str.value())),
+                        _ => Err(Error::new_spanned(
+                            &nv.value,
+                            "#[config(default = \"...\")] must be a string literal naming a function",
+                        )),
+                    };
                 }
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// Generate TryFromPartial implementation for a config struct
@@ -1113,7 +1119,7 @@ pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
         });
 
         // Parse default function if present
-        let default_fn = parse_default_fn(field);
+        let default_fn = parse_default_fn(field)?;
 
         let field_type = if is_hashmap(field_ty) {
             let (key_type, value_type) = extract_hashmap_types(field_ty)?;
@@ -1412,4 +1418,31 @@ fn get_default_value(ty: &Type) -> TokenStream {
     }
     // Default to Default::default() for other types
     quote! { Default::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_string_default_attribute_is_rejected() {
+        let input: DeriveInput = syn::parse_str(
+            r#"
+            #[derive(TryFromPartial, SubConfig)]
+            #[config(no_span)]
+            struct BadConfig {
+                #[config(default = 5000_u64)]
+                port: u64,
+            }
+            "#,
+        )
+        .unwrap();
+
+        let err = expand_try_from_partial(input).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must be a string literal naming a function"),
+            "expected specific error message, got: {msg}"
+        );
+    }
 }
