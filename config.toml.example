@@ -52,3 +52,21 @@ longitude = 10.7579
 # [integrations.ecoflow.devices.bedroom]
 # serial = "HW51ZAS4..."
 # name = "Bedroom air conditioner"  # optional, defaults to the key
+
+# Snapcast, over a Snapserver's control protocol. Groups and clients are
+# discovered from the server, so only the server itself is configured here.
+#
+# Each group becomes a "media_player." entity and each client a "speaker."
+# entity, named after the group or client name set in Snapcast and falling
+# back to the device id where that name is empty.
+#
+# [integrations.snapcast]
+# host = "snapserver.example.com"
+#
+# port is the JSON-RPC control port, not the 1704 stream port.
+# port = 1705
+#
+# How long to wait before reconnecting after the control connection drops.
+# The integration resynchronises its whole view on every reconnect, so
+# nothing is lost by waiting.
+# reconnect_interval_ms = 5000

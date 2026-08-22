@@ -5,7 +5,7 @@ edition = "2021"
 license.workspace = true
 
 [features]
-default = ["integration_mqtt", "integration_ecoflow", "integration_metno"]
+default = ["integration_mqtt", "integration_ecoflow", "integration_metno", "integration_snapcast"]
 integration_mqtt = ["dep:rumqttc"]
 integration_ecoflow = [
   "dep:base64",
@@ -17,6 +17,7 @@ integration_ecoflow = [
   "rumqttc/use-rustls-no-provider",
 ]
 integration_metno = ["dep:reqwest", "dep:rustls", "dep:webpki-roots"]
+integration_snapcast = []
 
 [dependencies]
 anyhow = { workspace = true }
@@ -39,6 +40,7 @@ ariadne = { workspace = true }
 chumsky = { workspace = true }
 facet = { workspace = true }
 strum = { workspace = true }
+thiserror = { workspace = true }
 
 # Integration dependencies (optional, enabled by feature)
 rumqttc = { workspace = true, optional = true }
