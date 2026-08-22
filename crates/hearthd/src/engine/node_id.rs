@@ -8,10 +8,10 @@
 //! delivered to whichever integration registered last.
 //!
 //! So an id is not an integer an integration can choose. [`NodeId`] holds its
-//! value privately and the only way to obtain one is
-//! [`NodeIdAllocator::allocate`], which the engine hands to each integration as
-//! it registers it. The type is otherwise ordinary — `Copy`, comparable and
-//! hashable — so passing ids around costs nothing.
+//! value privately, and the allocator that mints one is reachable only from
+//! [`NodeRegistry`](super::registry::NodeRegistry), which hands ids out as
+//! part of registering a node. The type is otherwise ordinary — `Copy`,
+//! comparable and hashable — so passing ids around costs nothing.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -22,10 +22,9 @@ use serde::Serialize;
 
 /// Locally assigned Matter node identifier.
 ///
-/// Obtainable only from [`NodeIdAllocator::allocate`]. `Deserialize` is the
-/// one exception and exists because the engine's state snapshot round trips
-/// through serde; it is not a way for an integration to name a node it does
-/// not own.
+/// Obtainable only by registering a node. `Deserialize` is the one exception
+/// and exists because the engine's state snapshot round trips through serde;
+/// it is not a way for an integration to name a node it does not own.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, facet::Facet,
 )]
@@ -49,16 +48,15 @@ impl NodeId {
 
 /// Hands out node ids that are unique across every integration.
 ///
-/// Cloning shares the counter rather than restarting it, so every integration
-/// draws from one sequence.
-#[derive(Debug, Clone)]
-pub struct NodeIdAllocator {
+/// Engine-internal, and owned by the registry rather than exposed to
+/// integrations: an id is only meaningful alongside the name and ownership
+/// recorded with it, so the two are allocated together or not at all.
+#[derive(Debug)]
+pub(super) struct NodeIdAllocator {
     next: Arc<AtomicU64>,
 }
 
 impl NodeIdAllocator {
-    /// Create the allocator. Engine-internal: having exactly one per engine is
-    /// what makes the ids unique.
     pub(super) fn new() -> Self {
         Self {
             next: Arc::new(AtomicU64::new(1)),
@@ -66,18 +64,8 @@ impl NodeIdAllocator {
     }
 
     /// Take the next unused identifier.
-    pub fn allocate(&self) -> NodeId {
+    pub(super) fn allocate(&self) -> NodeId {
         NodeId(self.next.fetch_add(1, Ordering::Relaxed))
-    }
-
-    /// An allocator for tests that drive an integration without an engine.
-    ///
-    /// Test-only: outside tests, a second allocator would count from 1 again
-    /// and hand out ids the real one has already given away, which is the
-    /// collision this type exists to prevent.
-    #[cfg(test)]
-    pub(crate) fn for_test() -> Self {
-        Self::new()
     }
 }
 
@@ -86,19 +74,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clones_of_the_allocator_share_one_sequence() {
-        // Each integration holds its own handle. Without the sharing, two
-        // integrations both counting from 1 hand the same id to different
-        // devices.
-        let engine = NodeIdAllocator::new();
-        let first = engine.clone();
-        let second = engine.clone();
+    fn allocation_never_repeats() {
+        let allocator = NodeIdAllocator::new();
 
         let ids = [
-            first.allocate(),
-            second.allocate(),
-            first.allocate(),
-            second.allocate(),
+            allocator.allocate(),
+            allocator.allocate(),
+            allocator.allocate(),
+            allocator.allocate(),
         ];
 
         let mut unique = ids.to_vec();

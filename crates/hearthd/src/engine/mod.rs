@@ -3,6 +3,7 @@ mod event;
 mod integration;
 mod message;
 mod node_id;
+mod registry;
 pub mod state;
 
 pub use engine::Engine;
@@ -15,5 +16,7 @@ pub use integration::REGISTRY as INTEGRATION_REGISTRY;
 pub use message::FromIntegrationMessage;
 pub use message::ToIntegrationMessage;
 pub use node_id::NodeId;
-pub use node_id::NodeIdAllocator;
+pub use registry::CollisionPolicy;
+pub use registry::IntegrationRegistry;
+pub use registry::RegisteredNode;
 pub use state::State;

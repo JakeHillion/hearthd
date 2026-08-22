@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("hearthd starting");
-    let mut engine = hearthd::Engine::new();
+    let mut engine = hearthd::Engine::new(cfg.engine.duplicate_entity_ids.into());
 
     // Register integrations from config
     engine.register_integrations_from_config(&cfg)?;

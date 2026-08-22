@@ -57,6 +57,8 @@ pub mod wave3;
 #[allow(clippy::module_inception)]
 mod ecoflow;
 
+use std::collections::HashMap;
+
 use anyhow::Context;
 pub use config::Config as EcoFlowConfig;
 pub use ecoflow::EcoFlowIntegration;
@@ -78,6 +80,19 @@ fn init_ecoflow(ctx: &engine::IntegrationContext) -> engine::IntegrationFactoryR
         anyhow::bail!("EcoFlow is configured but declares no devices");
     }
 
+    // Two config keys naming one serial are two nodes fed by one device: the
+    // entity ids differ, so registration cannot catch it, and the telemetry
+    // reverse index would silently keep only one of them.
+    let mut by_serial: HashMap<&str, &str> = HashMap::with_capacity(config.devices.len());
+    for (name, device) in &config.devices {
+        if let Some(existing) = by_serial.insert(&device.serial, name) {
+            anyhow::bail!(
+                "EcoFlow devices '{existing}' and '{name}' both declare serial '{}'",
+                device.serial
+            );
+        }
+    }
+
     let api = cloud::auth::HttpApi::new(config.api_host.clone())
         .context("failed to create the EcoFlow API client")?;
     let transport = cloud::transport::RumqttcTransport::new();
@@ -85,4 +100,57 @@ fn init_ecoflow(ctx: &engine::IntegrationContext) -> engine::IntegrationFactoryR
     Ok(Some(Box::new(EcoFlowIntegration::new(
         api, transport, config,
     ))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::integrations::ecoflow::config::DeviceConfig;
+
+    fn config_with(devices: Vec<(&str, &str)>) -> Config {
+        let mut config = Config::default();
+        config.integrations.ecoflow = Some(EcoFlowConfig {
+            api_host: "example.invalid".to_string(),
+            email: "someone@example.invalid".to_string(),
+            password: "hunter2".to_string(),
+            devices: devices
+                .into_iter()
+                .map(|(name, serial)| {
+                    (
+                        name.to_string(),
+                        DeviceConfig {
+                            serial: serial.to_string(),
+                            name: None,
+                        },
+                    )
+                })
+                .collect(),
+        });
+        config
+    }
+
+    /// Two keys for one serial give two nodes with distinct entity ids, so
+    /// registration cannot catch it: both would register, and the serial
+    /// reverse index would then feed telemetry to only one of them.
+    #[test]
+    fn two_devices_declaring_one_serial_are_rejected() {
+        let config = config_with(vec![("bedroom", "AB123"), ("study", "AB123")]);
+        let err = match init_ecoflow(&engine::IntegrationContext { config: &config }) {
+            Err(err) => err,
+            Ok(_) => panic!("one device cannot back two nodes"),
+        };
+        assert!(
+            err.to_string().contains("both declare serial"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn distinct_serials_are_accepted() {
+        let config = config_with(vec![("bedroom", "AB123"), ("study", "CD456")]);
+        let integration = init_ecoflow(&engine::IntegrationContext { config: &config })
+            .unwrap_or_else(|e| panic!("distinct serials are fine: {e}"));
+        assert!(integration.is_some());
+    }
 }
