@@ -1035,6 +1035,7 @@ fn is_simple_type(ty: &Type) -> bool {
                     | "String"
                     | "str"
                     | "LogLevel" // Custom simple enum types
+                    | "DuplicateEntityIds"
             );
         }
     }

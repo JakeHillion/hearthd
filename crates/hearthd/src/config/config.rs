@@ -14,6 +14,7 @@ use tracing_subscriber::filter::LevelFilter;
 #[derive(Debug, Default, TryFromPartial, MergeableConfig)]
 pub struct Config {
     pub logging: LoggingConfig,
+    pub engine: EngineConfig,
     pub locations: LocationsConfig,
     pub http: HttpConfig,
     pub integrations: IntegrationsConfig,
@@ -49,6 +50,38 @@ pub struct LoggingConfig {
     pub level: LogLevel,
 
     pub overrides: HashMap<String, LogLevel>,
+}
+
+/// What to do when two nodes ask to be registered under one `entity_id`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateEntityIds {
+    /// Admit the second one under a numbered name (`light.kitchen_2`), logged
+    /// at warn level. The default.
+    ///
+    /// Which node keeps the bare name follows registration order either way,
+    /// so rejecting would not make addressing more predictable — it would
+    /// only drop the node. Keeping it means the device is still reachable.
+    #[default]
+    Suffix,
+
+    /// Refuse the second registration and log it.
+    Reject,
+}
+
+impl From<DuplicateEntityIds> for crate::engine::CollisionPolicy {
+    fn from(value: DuplicateEntityIds) -> Self {
+        match value {
+            DuplicateEntityIds::Reject => Self::Reject,
+            DuplicateEntityIds::Suffix => Self::Suffix,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+pub struct EngineConfig {
+    /// How to resolve two nodes claiming the same `entity_id`.
+    pub duplicate_entity_ids: DuplicateEntityIds,
 }
 
 #[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
