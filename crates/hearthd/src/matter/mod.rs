@@ -41,6 +41,8 @@ pub use clusters::CLUSTER_ID_DEW_POINT;
 pub use clusters::CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT;
 pub use clusters::CLUSTER_ID_FAN_CONTROL;
 pub use clusters::CLUSTER_ID_LEVEL_CONTROL;
+pub use clusters::CLUSTER_ID_MEDIA_INPUT;
+pub use clusters::CLUSTER_ID_MEDIA_PLAYBACK;
 pub use clusters::CLUSTER_ID_MODE_SELECT;
 pub use clusters::CLUSTER_ID_OCCUPANCY_SENSING;
 pub use clusters::CLUSTER_ID_ON_OFF;
@@ -62,6 +64,8 @@ pub use clusters::CLUSTER_NAME_DEW_POINT;
 pub use clusters::CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT;
 pub use clusters::CLUSTER_NAME_FAN_CONTROL;
 pub use clusters::CLUSTER_NAME_LEVEL_CONTROL;
+pub use clusters::CLUSTER_NAME_MEDIA_INPUT;
+pub use clusters::CLUSTER_NAME_MEDIA_PLAYBACK;
 pub use clusters::CLUSTER_NAME_MODE_SELECT;
 pub use clusters::CLUSTER_NAME_OCCUPANCY_SENSING;
 pub use clusters::CLUSTER_NAME_ON_OFF;
@@ -86,11 +90,16 @@ pub use clusters::ElectricalPowerMeasurementCluster;
 pub use clusters::FanControlCluster;
 pub use clusters::FanMode;
 pub use clusters::FanModeSequence;
+pub use clusters::InputInfo;
+pub use clusters::InputType;
 pub use clusters::LevelControlCluster;
+pub use clusters::MediaInputCluster;
+pub use clusters::MediaPlaybackCluster;
 pub use clusters::ModeOption;
 pub use clusters::ModeSelectCluster;
 pub use clusters::OccupancySensingCluster;
 pub use clusters::OnOffCluster;
+pub use clusters::PlaybackState;
 pub use clusters::PowerMode;
 pub use clusters::PowerSourceCluster;
 pub use clusters::PowerSourceStatus;
@@ -111,6 +120,8 @@ pub use commands::ColorControlCommand;
 pub use commands::DehumidificationControlCommand;
 pub use commands::FanControlCommand;
 pub use commands::LevelControlCommand;
+pub use commands::MediaInputCommand;
+pub use commands::MediaPlaybackCommand;
 pub use commands::ModeSelectCommand;
 pub use commands::OnOffCommand;
 pub use commands::SetpointMode;
@@ -140,6 +151,8 @@ pub enum Cluster {
     ElectricalPowerMeasurement(ElectricalPowerMeasurementCluster),
     ModeSelect(ModeSelectCluster),
     PressureMeasurement(PressureMeasurementCluster),
+    MediaPlayback(MediaPlaybackCluster),
+    MediaInput(MediaInputCluster),
     WindMeasurement(WindMeasurementCluster),
     CloudCover(CloudCoverCluster),
     DewPoint(DewPointCluster),
@@ -169,6 +182,8 @@ impl Cluster {
             Cluster::ElectricalPowerMeasurement(_) => CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT,
             Cluster::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
             Cluster::PressureMeasurement(_) => CLUSTER_ID_PRESSURE_MEASUREMENT,
+            Cluster::MediaPlayback(_) => CLUSTER_ID_MEDIA_PLAYBACK,
+            Cluster::MediaInput(_) => CLUSTER_ID_MEDIA_INPUT,
             Cluster::WindMeasurement(_) => CLUSTER_ID_WIND_MEASUREMENT,
             Cluster::CloudCover(_) => CLUSTER_ID_CLOUD_COVER,
             Cluster::DewPoint(_) => CLUSTER_ID_DEW_POINT,
@@ -198,6 +213,8 @@ impl Cluster {
             Cluster::ElectricalPowerMeasurement(_) => CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT,
             Cluster::ModeSelect(_) => CLUSTER_NAME_MODE_SELECT,
             Cluster::PressureMeasurement(_) => CLUSTER_NAME_PRESSURE_MEASUREMENT,
+            Cluster::MediaPlayback(_) => CLUSTER_NAME_MEDIA_PLAYBACK,
+            Cluster::MediaInput(_) => CLUSTER_NAME_MEDIA_INPUT,
             Cluster::WindMeasurement(_) => CLUSTER_NAME_WIND_MEASUREMENT,
             Cluster::CloudCover(_) => CLUSTER_NAME_CLOUD_COVER,
             Cluster::DewPoint(_) => CLUSTER_NAME_DEW_POINT,
