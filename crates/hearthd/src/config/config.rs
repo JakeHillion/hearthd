@@ -108,6 +108,9 @@ pub struct IntegrationsConfig {
 
     #[cfg(feature = "integration_metno")]
     pub metno: Option<crate::integrations::metno::MetnoConfig>,
+
+    #[cfg(feature = "integration_snapcast")]
+    pub snapcast: Option<crate::integrations::snapcast::SnapcastConfig>,
 }
 
 #[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]

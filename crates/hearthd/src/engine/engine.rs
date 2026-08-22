@@ -226,6 +226,16 @@ impl Engine {
 
                 {
                     let mut state = State::clone(&self.state.load());
+                    // Re-announcing an existing node is how an integration
+                    // reports a rename, so drop the name it used to answer to
+                    // rather than leaving a second alias that outlives the
+                    // node and survives its removal.
+                    if let Some(previous) = state.nodes.get(&node_id) {
+                        if previous.entity_id != node.entity_id {
+                            let previous_entity_id = previous.entity_id.clone();
+                            state.by_entity_id.remove(&previous_entity_id);
+                        }
+                    }
                     state.by_entity_id.insert(node.entity_id.clone(), node_id);
                     state.nodes.insert(node_id, node);
                     self.state.store(Arc::new(state));
@@ -351,6 +361,16 @@ impl Engine {
                         }
                     }
                     Cluster::ModeSelect(attributes) => Event::ModeSelectChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::MediaPlayback(attributes) => Event::MediaPlaybackChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::MediaInput(attributes) => Event::MediaInputChanged {
                         node_id,
                         endpoint_id,
                         attributes,
