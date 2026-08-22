@@ -8,6 +8,8 @@ use crate::matter::ElectricalPowerMeasurementCluster;
 use crate::matter::EndpointId;
 use crate::matter::FanControlCluster;
 use crate::matter::LevelControlCluster;
+use crate::matter::MediaInputCluster;
+use crate::matter::MediaPlaybackCluster;
 use crate::matter::ModeSelectCluster;
 use crate::matter::OccupancySensingCluster;
 use crate::matter::OnOffCluster;
@@ -104,6 +106,16 @@ pub enum Event {
         node_id: NodeId,
         endpoint_id: EndpointId,
         attributes: ModeSelectCluster,
+    },
+    MediaPlaybackChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: MediaPlaybackCluster,
+    },
+    MediaInputChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: MediaInputCluster,
     },
     WindMeasurementChanged {
         node_id: NodeId,

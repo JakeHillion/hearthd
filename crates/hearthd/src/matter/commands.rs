@@ -24,6 +24,8 @@ use super::clusters::CLUSTER_ID_COLOR_CONTROL;
 use super::clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
 use super::clusters::CLUSTER_ID_FAN_CONTROL;
 use super::clusters::CLUSTER_ID_LEVEL_CONTROL;
+use super::clusters::CLUSTER_ID_MEDIA_INPUT;
+use super::clusters::CLUSTER_ID_MEDIA_PLAYBACK;
 use super::clusters::CLUSTER_ID_MODE_SELECT;
 use super::clusters::CLUSTER_ID_ON_OFF;
 use super::clusters::CLUSTER_ID_THERMOSTAT;
@@ -152,6 +154,38 @@ pub enum ModeSelectCommand {
     ChangeToMode { new_mode: u8 },
 }
 
+/// Media Playback cluster (0x0506) commands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MediaPlaybackCommand {
+    /// Command 0x00 `Play`.
+    Play,
+
+    /// Command 0x01 `Pause`.
+    Pause,
+
+    /// Command 0x02 `Stop`.
+    Stop,
+
+    /// Command 0x03 `FastForward`.
+    FastForward,
+
+    /// Command 0x04 `Rewind`.
+    Rewind,
+
+    /// Command 0x05 `SkipForward` / `Next`.
+    Next,
+
+    /// Command 0x06 `SkipBackward` / `Previous`.
+    Previous,
+}
+
+/// Media Input cluster (0x0507) commands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MediaInputCommand {
+    /// Command 0x00 `SelectInput`.
+    SelectInput { index: u8 },
+}
+
 /// A command to invoke on a cluster. JSON representation:
 ///   `{"cluster": "OnOff", "command": "On"}`
 ///   `{"cluster": "LevelControl", "command": {"MoveToLevel": {"level": 200, "transition_time": null}}}`
@@ -166,6 +200,8 @@ pub enum ClusterCommand {
     DehumidificationControl(DehumidificationControlCommand),
     ThermostatUserInterfaceConfiguration(ThermostatUserInterfaceConfigurationCommand),
     ModeSelect(ModeSelectCommand),
+    MediaPlayback(MediaPlaybackCommand),
+    MediaInput(MediaInputCommand),
 }
 
 impl ClusterCommand {
@@ -182,6 +218,8 @@ impl ClusterCommand {
                 CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION
             }
             ClusterCommand::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
+            ClusterCommand::MediaPlayback(_) => CLUSTER_ID_MEDIA_PLAYBACK,
+            ClusterCommand::MediaInput(_) => CLUSTER_ID_MEDIA_INPUT,
         }
     }
 }

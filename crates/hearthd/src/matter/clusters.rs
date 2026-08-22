@@ -34,6 +34,10 @@ pub const CLUSTER_ID_PRESSURE_MEASUREMENT: u32 = 0x0403;
 pub const CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT: u32 = 0x0405;
 pub const CLUSTER_ID_OCCUPANCY_SENSING: u32 = 0x0406;
 
+// Media clusters from the Matter Application Cluster Specification.
+pub const CLUSTER_ID_MEDIA_PLAYBACK: u32 = 0x0506;
+pub const CLUSTER_ID_MEDIA_INPUT: u32 = 0x0507;
+
 // hearthd-local clusters for meteorological quantities Matter does not (yet)
 // model as standard clusters. IDs live in the manufacturer-specific range
 // (0xFC00-0xFFFE); if Matter later standardises any of these, swap the
@@ -61,6 +65,8 @@ pub const CLUSTER_NAME_TEMPERATURE_MEASUREMENT: &str = "TemperatureMeasurement";
 pub const CLUSTER_NAME_PRESSURE_MEASUREMENT: &str = "PressureMeasurement";
 pub const CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT: &str = "RelativeHumidityMeasurement";
 pub const CLUSTER_NAME_OCCUPANCY_SENSING: &str = "OccupancySensing";
+pub const CLUSTER_NAME_MEDIA_PLAYBACK: &str = "MediaPlayback";
+pub const CLUSTER_NAME_MEDIA_INPUT: &str = "MediaInput";
 pub const CLUSTER_NAME_WIND_MEASUREMENT: &str = "WindMeasurement";
 pub const CLUSTER_NAME_CLOUD_COVER: &str = "CloudCover";
 pub const CLUSTER_NAME_DEW_POINT: &str = "DewPoint";
@@ -455,6 +461,85 @@ pub struct ModeSelectCluster {
     /// Attribute 0x0003 `CurrentMode`. `None` until the device reports one, or
     /// when it reports a value absent from `supported_modes`.
     pub current_mode: Option<u8>,
+}
+
+/// Media Playback `PlaybackState` values (attribute 0x0000 `CurrentState`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, facet::Facet)]
+#[repr(u8)]
+pub enum PlaybackState {
+    #[default]
+    Playing = 0,
+    Paused = 1,
+    NotPlaying = 2,
+    Buffering = 3,
+}
+
+/// Media Playback cluster (0x0506).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct MediaPlaybackCluster {
+    /// Attribute 0x0000 `CurrentState`.
+    pub current_state: PlaybackState,
+
+    /// Attribute 0x0001 `StartTime` (epoch microseconds, null if unknown).
+    pub start_time: Option<u64>,
+
+    /// Attribute 0x0002 `Duration` (seconds, null if unknown).
+    pub duration: Option<u64>,
+
+    /// Attribute 0x0004 `PlaybackSpeed` (1.0 = normal speed).
+    pub playback_speed: Option<f32>,
+
+    /// Attribute 0x0007 `ActiveAudioTrack` simplified to track title.
+    pub track_title: Option<String>,
+
+    /// Attribute 0x000B `ContentInfo` simplified to artist name.
+    pub artist: Option<String>,
+}
+
+/// Media Input `InputType` values (field of `InputInfoStruct`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, facet::Facet)]
+#[repr(u8)]
+pub enum InputType {
+    #[default]
+    Internal = 0,
+    Auxiliary = 1,
+    Coax = 2,
+    Composite = 3,
+    Hdmi = 4,
+    Lfe = 5,
+    LineIn = 6,
+    Optical = 7,
+    Video = 8,
+    Scart = 9,
+    Usb = 10,
+    Bluetooth = 11,
+    Network = 12,
+}
+
+/// One entry of Media Input's `InputList` (attribute 0x0000).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct InputInfo {
+    /// Index used with `SelectInput`.
+    pub index: u8,
+
+    /// `InputType` for this input.
+    pub input_type: InputType,
+
+    /// Human-readable name of the input.
+    pub name: String,
+
+    /// Human-readable description of the input.
+    pub description: String,
+}
+
+/// Media Input cluster (0x0507).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct MediaInputCluster {
+    /// Attribute 0x0000 `InputList`.
+    pub input_list: Vec<InputInfo>,
+
+    /// Attribute 0x0001 `CurrentInput`.
+    pub current_input: u8,
 }
 
 /// Wind measurement (hearthd-local, 0xFC00).
