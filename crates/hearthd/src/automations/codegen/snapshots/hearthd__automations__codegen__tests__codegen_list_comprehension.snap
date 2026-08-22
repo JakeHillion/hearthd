@@ -1,0 +1,67 @@
+---
+source: crates/hearthd/src/automations/codegen/tests.rs
+expression: result
+---
+Input:
+observer {
+  state = { lights, ... },
+  ...
+} /true/ {
+  [ Event::LightStateChanged(l) for l in keys(lights) ]
+}
+
+---
+HIR:
+Automation: observer
+  Params:
+    %0: state [State]
+  bb0:
+    %1 = field %0.lights [Map<String, LightState>]
+    %2 = const_bool true [Bool]
+    branch %2 -> bb1, bb2
+  bb1:
+    %4 = empty_list [[<error>]]
+    %5 = call keys(%1) [[String]]
+    %6 = iter_init %5 [[String]]
+    jump -> bb3
+  bb2:
+    %3 = empty_list [[Event]]
+    return %3
+  bb3:
+    iter_next %6 -> %7, bb4, bb5
+  bb4:
+    %8 = variant Event::LightStateChanged(%7) [Event]
+    %9 = list_push %4, %8 [()]
+    jump -> bb3
+  bb5:
+    return %4
+
+---
+LIR:
+Constants:
+  c0 = bool(true)
+Symbols:
+  s0 = "lights"
+  s1 = "keys"
+  s2 = "Event"
+  s3 = "LightStateChanged"
+  s4 = "state"
+Automation: observer
+  Params:
+    r0: s4
+  Registers: 10
+  Instructions:
+    0000: r1 = field r0.s0
+    0001: r2 = load_const c0
+    0002: branch r2 -> 0003, 0007
+    0003: r4 = empty_list
+    0004: r5 = call s1(r1)
+    0005: r6 = iter_init r5
+    0006: jump -> 0009
+    0007: r3 = empty_list
+    0008: return r3
+    0009: iter_next r6 -> r7, 0010, 0013
+    0010: r8 = variant s2::s3(r7)
+    0011: r9 = list_push r4, r8
+    0012: jump -> 0009
+    0013: return r4

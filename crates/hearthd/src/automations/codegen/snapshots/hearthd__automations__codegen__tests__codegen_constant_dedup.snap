@@ -1,0 +1,40 @@
+---
+source: crates/hearthd/src/automations/codegen/tests.rs
+expression: result
+---
+Input:
+observer {} /true/ { let a = 42; let b = 42; [] }
+
+---
+HIR:
+Automation: observer
+  bb0:
+    %0 = const_bool true [Bool]
+    branch %0 -> bb1, bb2
+  bb1:
+    %2 = const_int 42 [Int]
+    %3 = const_int 42 [Int]
+    %4 = empty_list [[<error>]]
+    return %4
+  bb2:
+    %1 = empty_list [[Event]]
+    return %1
+
+---
+LIR:
+Constants:
+  c0 = bool(true)
+  c1 = int(42)
+Symbols:
+  (none)
+Automation: observer
+  Registers: 5
+  Instructions:
+    0000: r0 = load_const c0
+    0001: branch r0 -> 0002, 0006
+    0002: r2 = load_const c1
+    0003: r3 = load_const c1
+    0004: r4 = empty_list
+    0005: return r4
+    0006: r1 = empty_list
+    0007: return r1
