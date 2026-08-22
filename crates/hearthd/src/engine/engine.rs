@@ -350,6 +350,16 @@ impl Engine {
                         endpoint_id,
                         attributes,
                     },
+                    Cluster::MediaPlayback(attributes) => Event::MediaPlaybackChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::MediaInput(attributes) => Event::MediaInputChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
                     Cluster::WindMeasurement(attributes) => Event::WindMeasurementChanged {
                         node_id,
                         endpoint_id,
