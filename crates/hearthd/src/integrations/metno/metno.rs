@@ -15,8 +15,9 @@ use super::forecast::ForecastResponse;
 use crate::engine::FromIntegrationMessage;
 use crate::engine::FromIntegrationSender;
 use crate::engine::Integration;
+use crate::engine::IntegrationRegistry;
 use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
+use crate::engine::RegisteredNode;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::Endpoint;
@@ -50,7 +51,9 @@ fn user_agent() -> String {
 
 /// Live per-site state owned by the polling task.
 struct SiteState {
-    node_id: NodeId,
+    /// Holds the node registration for as long as the site is polled;
+    /// dropping it gives up the name.
+    node: RegisteredNode,
     site: Site,
     /// Last cluster snapshot published to the engine, keyed by cluster name.
     last: HashMap<String, Cluster>,
@@ -155,7 +158,8 @@ impl MetnoIntegration {
                                 continue;
                             }
                             state.last.insert(name.to_string(), cluster.clone());
-                            Self::send_attribute_changed(state.node_id, cluster, &to_engine).await;
+                            Self::send_attribute_changed(state.node.node_id(), cluster, &to_engine)
+                                .await;
                         }
                     }
                     Err(e) => {
@@ -163,15 +167,6 @@ impl MetnoIntegration {
                     }
                 }
             }
-        }
-    }
-
-    async fn send_node_added(node_id: NodeId, node: Node, to_engine: &FromIntegrationSender) {
-        if let Err(e) = to_engine
-            .send(FromIntegrationMessage::NodeAdded { node_id, node })
-            .await
-        {
-            warn!("metno: failed to send NodeAdded: {}", e);
         }
     }
 
@@ -202,7 +197,7 @@ impl Integration for MetnoIntegration {
     async fn setup(
         &mut self,
         tx: FromIntegrationSender,
-        node_ids: NodeIdAllocator,
+        nodes: IntegrationRegistry,
     ) -> Result<(), Box<dyn Error + Send>> {
         // Left to itself reqwest has no crypto provider at all under
         // `rustls-no-provider`, and builds its roots from the host's trust
@@ -222,17 +217,29 @@ impl Integration for MetnoIntegration {
 
         let mut sites = Vec::with_capacity(self.sites.len());
         for site in self.sites.drain(..) {
-            let entity_id = format!("weather.{}", site.name);
-            let node_id = node_ids.allocate();
-            let node = Self::build_node(&site.name, &entity_id);
+            let requested = format!("weather.{}", site.name);
+            let declared = Self::build_node(&site.name, &requested);
             // Seed the diff baseline with the same clusters we announce.
-            let last = node.endpoints[&METNO_ENDPOINT].clusters.clone();
+            let last = declared.endpoints[&METNO_ENDPOINT].clusters.clone();
 
-            info!("metno: discovered weather node {} ({})", entity_id, node_id);
-            Self::send_node_added(node_id, node, &tx).await;
+            // A rejected site is skipped rather than failing setup: the other
+            // configured locations are unaffected by one bad name.
+            let node = match nodes.register(declared).await {
+                Ok(node) => node,
+                Err(e) => {
+                    warn!("metno: cannot register a node for '{}': {}", site.name, e);
+                    continue;
+                }
+            };
+
+            info!(
+                "metno: discovered weather node {} ({})",
+                node.entity_id(),
+                node.node_id()
+            );
 
             sites.push(SiteState {
-                node_id,
+                node,
                 site,
                 last,
                 last_modified: None,
@@ -287,14 +294,15 @@ mod tests {
     /// explicit provider panics rather than failing: setup has to supply one.
     #[tokio::test]
     async fn setup_builds_a_client() {
-        use crate::engine::NodeIdAllocator;
-
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         // No sites: the poll task starts but makes no requests.
         let mut integration = MetnoIntegration::new(Vec::new());
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .expect("setup should build a client");
     }

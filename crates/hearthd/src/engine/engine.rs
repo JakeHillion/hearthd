@@ -20,7 +20,8 @@ use super::message::ToIntegrationMessage;
 use super::state::State;
 use crate::engine::IntegrationContext;
 use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
+use crate::engine::registry::CollisionPolicy;
+use crate::engine::registry::NodeRegistry;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
@@ -32,9 +33,6 @@ use crate::matter::EndpointId;
 pub struct Engine {
     /// Centralized state snapshot (readers load the Arc, writer stores a new one)
     state: ArcSwap<State>,
-
-    /// Map of NodeId -> integration name for routing commands.
-    node_integration_map: std::sync::Mutex<HashMap<NodeId, String>>,
 
     /// Communication channels to integrations (for commands)
     integration_channels: HashMap<String, ToIntegrationSender>,
@@ -48,9 +46,10 @@ pub struct Engine {
     /// Handles for integration tasks
     integration_handles: Vec<JoinHandle<()>>,
 
-    /// Source of node ids for every integration, so that no two can name the
-    /// same node.
-    node_ids: NodeIdAllocator,
+    /// Source of node identity for every integration: node ids, entity ids
+    /// and the record of who owns what. One per engine, which is what makes
+    /// all three unique.
+    nodes: NodeRegistry,
 }
 
 /// Capacity for the integration→engine message channel
@@ -58,17 +57,20 @@ pub struct Engine {
 const FROM_INTEGRATION_CHANNEL_SIZE: usize = 1024;
 
 impl Engine {
-    /// Create a new Engine instance
-    pub fn new() -> Self {
+    /// Create a new Engine instance.
+    ///
+    /// `policy` decides what happens when two nodes ask for one entity_id;
+    /// see [`CollisionPolicy`]. It is fixed for the life of the engine so that
+    /// no node can be registered before the rule that governs it is known.
+    pub fn new(policy: CollisionPolicy) -> Self {
         let (message_tx, message_rx) = mpsc::channel(FROM_INTEGRATION_CHANNEL_SIZE);
         Self {
             state: ArcSwap::new(Arc::default()),
-            node_integration_map: std::sync::Mutex::new(HashMap::new()),
             integration_channels: HashMap::new(),
             message_rx: Mutex::new(message_rx),
+            nodes: NodeRegistry::new(message_tx.clone(), policy),
             message_tx,
             integration_handles: Vec::new(),
-            node_ids: NodeIdAllocator::new(),
         }
     }
 
@@ -104,7 +106,7 @@ impl Engine {
     pub fn register_integration(&mut self, name: String, mut integration: Box<dyn Integration>) {
         let (to_integration_tx, mut to_integration_rx) = mpsc::unbounded_channel();
         let from_integration_tx = self.message_tx.clone();
-        let node_ids = self.node_ids.clone();
+        let nodes = self.nodes.for_integration(&name);
 
         self.integration_channels
             .insert(name.clone(), to_integration_tx);
@@ -112,7 +114,7 @@ impl Engine {
         // Spawn integration task
         let handle = tokio::spawn(async move {
             // Setup integration (gives it the sender for events)
-            if let Err(e) = integration.setup(from_integration_tx, node_ids).await {
+            if let Err(e) = integration.setup(from_integration_tx, nodes).await {
                 warn!("Integration '{}' setup failed: {}", name, e);
                 return;
             }
@@ -140,28 +142,25 @@ impl Engine {
             ToIntegrationMessage::InvokeCommand { node_id, .. } => *node_id,
         };
 
-        let map = self
-            .node_integration_map
-            .lock()
-            .map_err(|e| -> Box<dyn Error + Send> {
-                Box::new(std::io::Error::other(e.to_string()))
-            })?;
+        let integration_name =
+            self.nodes
+                .owner(node_id)
+                .ok_or_else(|| -> Box<dyn Error + Send> {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("No integration found for node: {}", node_id),
+                    ))
+                })?;
 
-        let integration_name = map.get(&node_id).ok_or_else(|| -> Box<dyn Error + Send> {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("No integration found for node: {}", node_id),
-            ))
-        })?;
-
-        let tx = self.integration_channels.get(integration_name).ok_or_else(
-            || -> Box<dyn Error + Send> {
+        let tx = self
+            .integration_channels
+            .get(&*integration_name)
+            .ok_or_else(|| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     format!("Integration channel not found: {}", integration_name),
                 ))
-            },
-        )?;
+            })?;
 
         tx.send(msg)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })
@@ -214,15 +213,14 @@ impl Engine {
     /// Handle an event from an integration
     async fn handle_event(&self, msg: FromIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
         match msg {
+            // Both node messages are projections of decisions the registry has
+            // already made: it assigned the id, the name and the owner before
+            // the message was sent, so nothing here chooses anything.
             FromIntegrationMessage::NodeAdded { node_id, node } => {
                 info!(
                     "Node added: {} ({}) from {}",
                     node_id, node.entity_id, node.integration
                 );
-
-                if let Ok(mut map) = self.node_integration_map.lock() {
-                    map.insert(node_id, node.integration.clone());
-                }
 
                 {
                     let mut state = State::clone(&self.state.load());
@@ -237,13 +235,15 @@ impl Engine {
                 {
                     let mut state = State::clone(&self.state.load());
                     if let Some(node) = state.nodes.remove(&node_id) {
-                        state.by_entity_id.remove(&node.entity_id);
+                        // Only if the name still resolves to the node being
+                        // removed. A node that was removed and re-registered
+                        // under the same name would otherwise have its
+                        // successor unindexed by this late removal.
+                        if state.by_entity_id.get(&node.entity_id) == Some(&node_id) {
+                            state.by_entity_id.remove(&node.entity_id);
+                        }
                     }
                     self.state.store(Arc::new(state));
-                }
-
-                if let Ok(mut map) = self.node_integration_map.lock() {
-                    map.remove(&node_id);
                 }
             }
             FromIntegrationMessage::AttributeChanged {
@@ -395,6 +395,50 @@ impl Engine {
 
 impl Default for Engine {
     fn default() -> Self {
-        Self::new()
+        Self::new(CollisionPolicy::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::matter::Node;
+
+    fn node(entity_id: &str) -> Node {
+        Node {
+            entity_id: entity_id.to_string(),
+            integration: "mqtt".to_string(),
+            name: None,
+            endpoints: HashMap::new(),
+        }
+    }
+
+    /// The registry frees a name as soon as its holder is deregistered, so a
+    /// re-registration can reach the engine before the `NodeRemoved` that
+    /// freed the name does. The removal must not then unindex a name that now
+    /// belongs to someone else — that leaves a live node addressable by
+    /// nothing.
+    #[tokio::test]
+    async fn a_late_removal_does_not_unindex_a_name_it_no_longer_holds() {
+        let engine = Engine::new(CollisionPolicy::Reject);
+        let first = NodeId::from_raw(1);
+        let second = NodeId::from_raw(2);
+
+        for msg in [
+            FromIntegrationMessage::NodeAdded {
+                node_id: first,
+                node: node("light.a"),
+            },
+            FromIntegrationMessage::NodeAdded {
+                node_id: second,
+                node: node("light.a"),
+            },
+            FromIntegrationMessage::NodeRemoved { node_id: first },
+        ] {
+            engine.handle_event(msg).await.expect("event should apply");
+        }
+
+        assert_eq!(engine.resolve_entity_id("light.a"), Some(second));
+        assert!(engine.state_snapshot().nodes.contains_key(&second));
     }
 }
