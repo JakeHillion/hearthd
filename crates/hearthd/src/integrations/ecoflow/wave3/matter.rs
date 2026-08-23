@@ -242,6 +242,7 @@ fn fan_control(state: &DeviceState) -> FanControlCluster {
         speed_max: Some(semantics::FAN_STEP_MAX),
         speed_setting: step,
         speed_current: step,
+        airflow_direction: None,
     }
 }
 
@@ -800,6 +801,11 @@ fn fan_command(command: &FanControlCommand) -> Result<ConfigWrite, CommandError>
                 ));
             }
         },
+        FanControlCommand::SetAirflowDirection { .. } => {
+            return Err(CommandError::Unsupported(
+                "the Wave 3 has no airflow direction control",
+            ));
+        }
     };
 
     let percent = semantics::fan_step_to_percent(step).ok_or(CommandError::Unsupported(
@@ -1296,7 +1302,7 @@ mod tests {
 
         insta::assert_snapshot!(rendered, @r#"
          1 DehumidificationControl: {"cluster":"DehumidificationControl","relative_humidity":55,"rh_dehumidification_setpoint":null}
-         1 FanControl: {"cluster":"FanControl","fan_mode":"Medium","fan_mode_sequence":"OffLowMedHigh","percent_setting":40,"percent_current":40,"speed_max":5,"speed_setting":2,"speed_current":2}
+         1 FanControl: {"cluster":"FanControl","fan_mode":"Medium","fan_mode_sequence":"OffLowMedHigh","percent_setting":40,"percent_current":40,"speed_max":5,"speed_setting":2,"speed_current":2,"airflow_direction":null}
          1 ModeSelect: {"cluster":"ModeSelect","description":"Preset","supported_modes":[{"label":"Normal","mode":0},{"label":"Boost","mode":2},{"label":"Eco","mode":4},{"label":"Sleep","mode":3}],"current_mode":0}
          1 OnOff: {"cluster":"OnOff","on_off":true}
          1 RelativeHumidityMeasurement: {"cluster":"RelativeHumidityMeasurement","measured_value":5525}

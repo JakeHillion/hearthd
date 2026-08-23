@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
+use clap::Subcommand;
 use tokio::signal::unix::SignalKind;
 use tokio::signal::unix::signal;
 use tracing::debug;
@@ -14,23 +15,80 @@ use tracing_subscriber::prelude::*;
 #[command(name = "hearthd")]
 #[command(about = "Home automation made declarative", long_about = None)]
 struct Cli {
-    /// Path to configuration file(s). Can be specified multiple times to merge configs.
-    /// Example: --config base.toml --config secrets.toml
-    #[arg(
-        short,
-        long,
-        value_name = "FILE",
-        default_value = "/etc/hearthd/config.toml"
-    )]
-    config: Vec<PathBuf>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run the hearthd daemon (default behavior).
+    Run {
+        /// Path to configuration file(s). Can be specified multiple times to merge configs.
+        /// Example: --config base.toml --config secrets.toml
+        #[arg(
+            short,
+            long,
+            value_name = "FILE",
+            default_value = "/etc/hearthd/config.toml"
+        )]
+        config: Vec<PathBuf>,
+    },
+
+    /// Integration-specific helper commands.
+    Integration {
+        #[command(subcommand)]
+        command: IntegrationCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum IntegrationCommand {
+    /// Dyson-specific helpers.
+    Dyson {
+        #[command(subcommand)]
+        command: DysonCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum DysonCommand {
+    /// Log in to a Dyson cloud account and print a TOML snippet with the
+    /// credentials needed to control each device locally.
+    Login {
+        /// Dyson account email address.
+        #[arg(short, long)]
+        email: String,
+
+        /// Two-letter country/region code for the account.
+        #[arg(short, long, value_parser = clap::builder::PossibleValuesParser::new(hearthd::integrations::dyson::cloud::ACCOUNT_REGIONS))]
+        region: String,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
+    match cli.command {
+        Command::Run { config } => run_daemon(config).await,
+        Command::Integration {
+            command: IntegrationCommand::Dyson { command },
+        } => run_dyson_command(command).await,
+    }
+}
+
+async fn run_dyson_command(command: DysonCommand) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        DysonCommand::Login { email, region } => {
+            hearthd::integrations::dyson::login::run_login_interactive(&email, &region).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn run_daemon(config: Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     // Load and parse the configuration files
-    let (cfg, diagnostics) = match hearthd::Config::from_files(&cli.config) {
+    let (cfg, diagnostics) = match hearthd::Config::from_files(&config) {
         Ok(result) => result,
         Err(e) => {
             eprintln!("{}", e);

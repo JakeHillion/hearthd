@@ -5,7 +5,7 @@ edition = "2021"
 license.workspace = true
 
 [features]
-default = ["integration_mqtt", "integration_ecoflow", "integration_metno"]
+default = ["integration_mqtt", "integration_ecoflow", "integration_metno", "integration_dyson"]
 integration_mqtt = ["dep:rumqttc"]
 integration_ecoflow = [
   "dep:base64",
@@ -17,6 +17,7 @@ integration_ecoflow = [
   "rumqttc/use-rustls-no-provider",
 ]
 integration_metno = ["dep:reqwest", "dep:rustls", "dep:webpki-roots"]
+integration_dyson = ["dep:reqwest", "dep:rumqttc", "dep:rustls", "dep:webpki-roots", "dep:base64", "dep:aes", "dep:cbc", "dep:rpassword", "rumqttc/use-rustls-no-provider"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -47,6 +48,9 @@ rand = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
+aes = { workspace = true, optional = true }
+cbc = { workspace = true, optional = true }
+rpassword = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }

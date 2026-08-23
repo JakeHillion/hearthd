@@ -44,6 +44,9 @@ pub const CLUSTER_ID_DEW_POINT: u32 = 0xFC02;
 pub const CLUSTER_ID_UV_INDEX: u32 = 0xFC03;
 pub const CLUSTER_ID_PRECIPITATION: u32 = 0xFC04;
 pub const CLUSTER_ID_WEATHER_CONDITION: u32 = 0xFC05;
+pub const CLUSTER_ID_AIR_QUALITY: u32 = 0xFC06;
+pub const CLUSTER_ID_PERCENTAGE_MEASUREMENT: u32 = 0xFC07;
+pub const CLUSTER_ID_COUNTDOWN_TIMER: u32 = 0xFC08;
 
 pub const CLUSTER_NAME_ON_OFF: &str = "OnOff";
 pub const CLUSTER_NAME_LEVEL_CONTROL: &str = "LevelControl";
@@ -67,6 +70,9 @@ pub const CLUSTER_NAME_DEW_POINT: &str = "DewPoint";
 pub const CLUSTER_NAME_UV_INDEX: &str = "UvIndex";
 pub const CLUSTER_NAME_PRECIPITATION: &str = "Precipitation";
 pub const CLUSTER_NAME_WEATHER_CONDITION: &str = "WeatherCondition";
+pub const CLUSTER_NAME_AIR_QUALITY: &str = "AirQuality";
+pub const CLUSTER_NAME_PERCENTAGE_MEASUREMENT: &str = "PercentageMeasurement";
+pub const CLUSTER_NAME_COUNTDOWN_TIMER: &str = "CountdownTimer";
 
 /// On/Off cluster (0x0006).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
@@ -297,6 +303,9 @@ pub struct FanControlCluster {
 
     /// Attribute 0x0006 `SpeedCurrent`.
     pub speed_current: Option<u8>,
+
+    /// Attribute 0x000A `AirflowDirection` (null if unknown/unreported).
+    pub airflow_direction: Option<AirflowDirection>,
 }
 
 /// Dehumidification Control cluster (0x0203).
@@ -528,4 +537,50 @@ pub enum WeatherCondition {
 pub struct WeatherConditionCluster {
     /// Current normalised condition (null if unknown).
     pub condition: Option<WeatherCondition>,
+}
+
+/// Air quality readings (hearthd-local, 0xFC06).
+///
+/// Matter does not yet standardise clusters for these common purifier
+/// readings, so this is a manufacturer-specific cluster holding the values
+/// the TP07 reports.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct AirQualityCluster {
+    /// PM2.5 in micrograms per cubic metre (null if unknown).
+    pub pm2_5: Option<u16>,
+
+    /// PM10 in micrograms per cubic metre (null if unknown).
+    pub pm10: Option<u16>,
+
+    /// NO2 in micrograms per cubic metre (null if unknown).
+    pub no2: Option<u16>,
+
+    /// Volatile organic compounds in micrograms per cubic metre (null if unknown).
+    pub voc: Option<u16>,
+}
+
+/// Airflow direction (`FanControlCluster.airflow_direction`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, facet::Facet)]
+#[repr(u8)]
+pub enum AirflowDirection {
+    Forward = 0,
+    Reverse = 1,
+}
+
+/// Percentage measurement (hearthd-local, 0xFC07).
+///
+/// A generic "percent remaining/reported" reading, used here for filter life.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct PercentageMeasurementCluster {
+    /// Percentage 0-100, null if unknown.
+    pub measured_value: Option<u8>,
+}
+
+/// Countdown timer (hearthd-local, 0xFC08).
+///
+/// A generic countdown timer, used here for a Dyson sleep timer.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct CountdownTimerCluster {
+    /// Seconds remaining, or `None` when the timer is off/unset.
+    pub seconds_remaining: Option<u32>,
 }

@@ -385,6 +385,23 @@ impl Engine {
                         endpoint_id,
                         attributes,
                     },
+                    Cluster::AirQuality(attributes) => Event::AirQualityChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::PercentageMeasurement(attributes) => {
+                        Event::PercentageMeasurementChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::CountdownTimer(attributes) => Event::CountdownTimerChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
                 };
                 // TODO: Trigger automations based on attribute-changed event
             }

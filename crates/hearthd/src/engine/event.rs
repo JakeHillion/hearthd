@@ -1,7 +1,9 @@
 use crate::engine::NodeId;
+use crate::matter::AirQualityCluster;
 use crate::matter::BooleanStateCluster;
 use crate::matter::CloudCoverCluster;
 use crate::matter::ColorControlCluster;
+use crate::matter::CountdownTimerCluster;
 use crate::matter::DehumidificationControlCluster;
 use crate::matter::DewPointCluster;
 use crate::matter::ElectricalPowerMeasurementCluster;
@@ -11,6 +13,7 @@ use crate::matter::LevelControlCluster;
 use crate::matter::ModeSelectCluster;
 use crate::matter::OccupancySensingCluster;
 use crate::matter::OnOffCluster;
+use crate::matter::PercentageMeasurementCluster;
 use crate::matter::PowerSourceCluster;
 use crate::matter::PrecipitationCluster;
 use crate::matter::PressureMeasurementCluster;
@@ -134,5 +137,20 @@ pub enum Event {
         node_id: NodeId,
         endpoint_id: EndpointId,
         attributes: WeatherConditionCluster,
+    },
+    AirQualityChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: AirQualityCluster,
+    },
+    PercentageMeasurementChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: PercentageMeasurementCluster,
+    },
+    CountdownTimerChanged {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        attributes: CountdownTimerCluster,
     },
 }
