@@ -1,0 +1,51 @@
+---
+source: crates/hearthd/src/automations/codegen/tests.rs
+expression: result
+---
+Input:
+mutator {
+  event,
+  ...
+} /true/ {
+  let brightness = 100;
+  Event {
+    inherit brightness;
+    ...event
+  }
+}
+
+---
+HIR:
+Automation: mutator
+  Params:
+    %0: event [Event]
+  bb0:
+    %1 = const_bool true [Bool]
+    branch %1 -> bb1, bb2
+  bb1:
+    %2 = const_int 100 [Int]
+    %3 = struct Event { brightness: %2, ...%0 } [Event]
+    return %3
+  bb2:
+    return %0
+
+---
+LIR:
+Constants:
+  c0 = bool(true)
+  c1 = int(100)
+Symbols:
+  s0 = "Event"
+  s1 = "brightness"
+  s2 = "event"
+Automation: mutator
+  Params:
+    r0: s2
+  Registers: 4
+  Instructions:
+    0000: r1 = load_const c0
+    0001: branch r1 -> 0002, 0005
+    0002: r2 = load_const c1
+    0003: r3 = struct s0 { s1: r2, ...r0 }
+    0004: return r3
+    0005: return r0
