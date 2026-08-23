@@ -20,7 +20,9 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use super::clusters::AirflowDirection;
 use super::clusters::CLUSTER_ID_COLOR_CONTROL;
+use super::clusters::CLUSTER_ID_COUNTDOWN_TIMER;
 use super::clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
 use super::clusters::CLUSTER_ID_FAN_CONTROL;
 use super::clusters::CLUSTER_ID_LEVEL_CONTROL;
@@ -128,6 +130,9 @@ pub enum FanControlCommand {
 
     /// Write to attribute 0x0005 `SpeedSetting` (0 = off, up to `SpeedMax`).
     SetSpeedSetting { speed: u8 },
+
+    /// Write to attribute 0x000A `AirflowDirection`.
+    SetAirflowDirection { direction: AirflowDirection },
 }
 
 /// DehumidificationControl cluster (0x0203) commands.
@@ -152,6 +157,13 @@ pub enum ModeSelectCommand {
     ChangeToMode { new_mode: u8 },
 }
 
+/// CountdownTimer cluster (hearthd-local, 0xFC08) commands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CountdownTimerCommand {
+    /// Set the countdown in seconds; 0 disables it.
+    SetCountdown { seconds: u32 },
+}
+
 /// A command to invoke on a cluster. JSON representation:
 ///   `{"cluster": "OnOff", "command": "On"}`
 ///   `{"cluster": "LevelControl", "command": {"MoveToLevel": {"level": 200, "transition_time": null}}}`
@@ -166,6 +178,7 @@ pub enum ClusterCommand {
     DehumidificationControl(DehumidificationControlCommand),
     ThermostatUserInterfaceConfiguration(ThermostatUserInterfaceConfigurationCommand),
     ModeSelect(ModeSelectCommand),
+    CountdownTimer(CountdownTimerCommand),
 }
 
 impl ClusterCommand {
@@ -182,6 +195,7 @@ impl ClusterCommand {
                 CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION
             }
             ClusterCommand::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
+            ClusterCommand::CountdownTimer(_) => CLUSTER_ID_COUNTDOWN_TIMER,
         }
     }
 }

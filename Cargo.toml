@@ -45,3 +45,8 @@ facet = "0.46"
 strum = { version = "0.28", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+# Dyson cloud credential decryption and password masking.
+aes = "0.8"
+cbc = "0.1"
+rpassword = "7"
