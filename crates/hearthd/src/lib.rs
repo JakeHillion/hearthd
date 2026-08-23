@@ -2,9 +2,13 @@ pub mod api;
 pub mod automations;
 pub mod config;
 mod engine;
-mod integrations;
+pub mod integrations;
 pub mod matter;
-#[cfg(any(feature = "integration_ecoflow", feature = "integration_metno"))]
+#[cfg(any(
+    feature = "integration_ecoflow",
+    feature = "integration_metno",
+    feature = "integration_dyson"
+))]
 mod tls;
 
 #[cfg(doc)]

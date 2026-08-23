@@ -30,12 +30,16 @@ use serde::Serialize;
 mod clusters;
 mod commands;
 
+pub use clusters::AirQualityCluster;
+pub use clusters::AirflowDirection;
 pub use clusters::BatChargeLevel;
 pub use clusters::BatChargeState;
 pub use clusters::BooleanStateCluster;
+pub use clusters::CLUSTER_ID_AIR_QUALITY;
 pub use clusters::CLUSTER_ID_BOOLEAN_STATE;
 pub use clusters::CLUSTER_ID_CLOUD_COVER;
 pub use clusters::CLUSTER_ID_COLOR_CONTROL;
+pub use clusters::CLUSTER_ID_COUNTDOWN_TIMER;
 pub use clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
 pub use clusters::CLUSTER_ID_DEW_POINT;
 pub use clusters::CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT;
@@ -44,6 +48,7 @@ pub use clusters::CLUSTER_ID_LEVEL_CONTROL;
 pub use clusters::CLUSTER_ID_MODE_SELECT;
 pub use clusters::CLUSTER_ID_OCCUPANCY_SENSING;
 pub use clusters::CLUSTER_ID_ON_OFF;
+pub use clusters::CLUSTER_ID_PERCENTAGE_MEASUREMENT;
 pub use clusters::CLUSTER_ID_POWER_SOURCE;
 pub use clusters::CLUSTER_ID_PRECIPITATION;
 pub use clusters::CLUSTER_ID_PRESSURE_MEASUREMENT;
@@ -54,9 +59,11 @@ pub use clusters::CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
 pub use clusters::CLUSTER_ID_UV_INDEX;
 pub use clusters::CLUSTER_ID_WEATHER_CONDITION;
 pub use clusters::CLUSTER_ID_WIND_MEASUREMENT;
+pub use clusters::CLUSTER_NAME_AIR_QUALITY;
 pub use clusters::CLUSTER_NAME_BOOLEAN_STATE;
 pub use clusters::CLUSTER_NAME_CLOUD_COVER;
 pub use clusters::CLUSTER_NAME_COLOR_CONTROL;
+pub use clusters::CLUSTER_NAME_COUNTDOWN_TIMER;
 pub use clusters::CLUSTER_NAME_DEHUMIDIFICATION_CONTROL;
 pub use clusters::CLUSTER_NAME_DEW_POINT;
 pub use clusters::CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT;
@@ -65,6 +72,7 @@ pub use clusters::CLUSTER_NAME_LEVEL_CONTROL;
 pub use clusters::CLUSTER_NAME_MODE_SELECT;
 pub use clusters::CLUSTER_NAME_OCCUPANCY_SENSING;
 pub use clusters::CLUSTER_NAME_ON_OFF;
+pub use clusters::CLUSTER_NAME_PERCENTAGE_MEASUREMENT;
 pub use clusters::CLUSTER_NAME_POWER_SOURCE;
 pub use clusters::CLUSTER_NAME_PRECIPITATION;
 pub use clusters::CLUSTER_NAME_PRESSURE_MEASUREMENT;
@@ -80,6 +88,7 @@ pub use clusters::ColorControlCluster;
 pub use clusters::ColorControlOptions;
 pub use clusters::ColorMode;
 pub use clusters::ControlSequenceOfOperation;
+pub use clusters::CountdownTimerCluster;
 pub use clusters::DehumidificationControlCluster;
 pub use clusters::DewPointCluster;
 pub use clusters::ElectricalPowerMeasurementCluster;
@@ -91,6 +100,7 @@ pub use clusters::ModeOption;
 pub use clusters::ModeSelectCluster;
 pub use clusters::OccupancySensingCluster;
 pub use clusters::OnOffCluster;
+pub use clusters::PercentageMeasurementCluster;
 pub use clusters::PowerMode;
 pub use clusters::PowerSourceCluster;
 pub use clusters::PowerSourceStatus;
@@ -108,6 +118,7 @@ pub use clusters::WeatherConditionCluster;
 pub use clusters::WindMeasurementCluster;
 pub use commands::ClusterCommand;
 pub use commands::ColorControlCommand;
+pub use commands::CountdownTimerCommand;
 pub use commands::DehumidificationControlCommand;
 pub use commands::FanControlCommand;
 pub use commands::LevelControlCommand;
@@ -146,6 +157,9 @@ pub enum Cluster {
     UvIndex(UvIndexCluster),
     Precipitation(PrecipitationCluster),
     WeatherCondition(WeatherConditionCluster),
+    AirQuality(AirQualityCluster),
+    PercentageMeasurement(PercentageMeasurementCluster),
+    CountdownTimer(CountdownTimerCluster),
 }
 
 impl Cluster {
@@ -175,6 +189,9 @@ impl Cluster {
             Cluster::UvIndex(_) => CLUSTER_ID_UV_INDEX,
             Cluster::Precipitation(_) => CLUSTER_ID_PRECIPITATION,
             Cluster::WeatherCondition(_) => CLUSTER_ID_WEATHER_CONDITION,
+            Cluster::AirQuality(_) => CLUSTER_ID_AIR_QUALITY,
+            Cluster::PercentageMeasurement(_) => CLUSTER_ID_PERCENTAGE_MEASUREMENT,
+            Cluster::CountdownTimer(_) => CLUSTER_ID_COUNTDOWN_TIMER,
         }
     }
 
@@ -204,6 +221,9 @@ impl Cluster {
             Cluster::UvIndex(_) => CLUSTER_NAME_UV_INDEX,
             Cluster::Precipitation(_) => CLUSTER_NAME_PRECIPITATION,
             Cluster::WeatherCondition(_) => CLUSTER_NAME_WEATHER_CONDITION,
+            Cluster::AirQuality(_) => CLUSTER_NAME_AIR_QUALITY,
+            Cluster::PercentageMeasurement(_) => CLUSTER_NAME_PERCENTAGE_MEASUREMENT,
+            Cluster::CountdownTimer(_) => CLUSTER_NAME_COUNTDOWN_TIMER,
         }
     }
 }
@@ -216,7 +236,8 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    /// Build an endpoint from a list of clusters, keying each by its name.
+    /// Build an endpoint from a list of clusters, keying each by its stable
+    /// name.
     pub fn from_clusters(clusters: impl IntoIterator<Item = Cluster>) -> Self {
         Self {
             clusters: clusters
