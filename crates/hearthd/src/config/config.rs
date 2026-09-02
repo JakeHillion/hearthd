@@ -103,8 +103,17 @@ pub struct IntegrationsConfig {
     #[cfg(feature = "integration_mqtt")]
     pub mqtt: Option<crate::integrations::mqtt::MqttConfig>,
 
+    #[cfg(feature = "integration_ecoflow")]
+    pub ecoflow: Option<crate::integrations::ecoflow::EcoFlowConfig>,
+
     #[cfg(feature = "integration_ha")]
     pub ha: Option<crate::integrations::ha::HaConfig>,
+
+    #[cfg(feature = "integration_metno")]
+    pub metno: Option<crate::integrations::metno::MetnoConfig>,
+
+    #[cfg(feature = "integration_snapcast")]
+    pub snapcast: Option<crate::integrations::snapcast::SnapcastConfig>,
 }
 
 #[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
@@ -956,6 +965,34 @@ longitude = 11.0
         assert_eq!(merged.host.unwrap(), "localhost");
 
         fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_list_fields_merge_across_files() {
+        use hearthd_config::MergeableConfig;
+        use serde::Deserialize;
+        use tempfile::TempDir;
+
+        #[derive(MergeableConfig, Deserialize, Debug)]
+        #[allow(dead_code)]
+        struct TestConfig {
+            items: Vec<String>,
+        }
+
+        let temp_dir = TempDir::new().unwrap();
+        let a_path = temp_dir.path().join("a.toml");
+        fs::write(&a_path, "items = [\"one\", \"two\"]\n").unwrap();
+        let b_path = temp_dir.path().join("b.toml");
+        fs::write(&b_path, "items = [\"three\"]\n").unwrap();
+
+        let configs = PartialTestConfig::load_with_imports(&[a_path, b_path]).unwrap();
+        let (merged, diagnostics) = PartialTestConfig::merge(configs);
+
+        assert_eq!(diagnostics.len(), 0);
+        assert_eq!(
+            merged.items.unwrap(),
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]
+        );
     }
 
     #[test]

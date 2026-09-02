@@ -4,17 +4,21 @@
 //! the file descriptor to the Python process via environment variable.
 //! No filesystem paths are used.
 
-use super::protocol::{Message, Response};
-use super::Error;
-use super::Result;
-
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-use tokio::process::{Child, Command};
-
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::process::Stdio;
+
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
+use tokio::net::UnixStream;
+use tokio::process::Child;
+use tokio::process::Command;
+
+use super::Error;
+use super::Result;
+use super::protocol::Message;
+use super::protocol::Response;
 
 #[derive(Debug)]
 pub struct SandboxBuilder {
@@ -53,7 +57,12 @@ impl SandboxBuilder {
             .env("HEARTHD_HA_SOURCE", &self.ha_source_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // The sandbox owns the interpreter: when the integration shuts
+            // down and drops the `Sandbox`, the Python process must go with
+            // it rather than being orphaned holding the other end of the
+            // socketpair.
+            .kill_on_drop(true);
 
         // Clear FD_CLOEXEC flag so socket survives exec
         unsafe {
@@ -120,7 +129,7 @@ impl SandboxBuilder {
         Ok(Sandbox {
             name: self.name.clone(),
             stream: BufReader::new(rust_stream),
-            child,
+            _child: child,
         })
     }
 
@@ -141,8 +150,9 @@ pub struct Sandbox {
     /// Tokio Unix stream for communication with Python
     stream: BufReader<UnixStream>,
 
-    /// Child process handle
-    child: Child,
+    /// The Python interpreter. Held, not read: dropping it is what stops the
+    /// process, via `kill_on_drop` set when it was spawned.
+    _child: Child,
 }
 
 impl Sandbox {

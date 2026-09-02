@@ -9,8 +9,10 @@
 //! - JSON over Unix socket: Newline-delimited JSON messages
 //! - Request-response: Some operations need correlation via IDs
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Messages sent from Python to Rust
 #[derive(Debug, Clone, Serialize, Deserialize)]

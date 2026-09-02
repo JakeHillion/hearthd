@@ -11,7 +11,9 @@ use super::repr::ast::Expr;
 use super::repr::ast::Stmt;
 use super::repr::ast::StructField;
 use super::repr::lowered::LoweredArg;
+use super::repr::lowered::LoweredAutomation;
 use super::repr::lowered::LoweredExpr;
+use super::repr::lowered::LoweredProgram;
 use super::repr::lowered::LoweredStmt;
 use super::repr::lowered::LoweredStructField;
 use super::repr::lowered::Origin;
@@ -41,6 +43,37 @@ impl Desugarer {
         let name = format!("__{}{}", prefix, self.counter);
         self.counter += 1;
         name
+    }
+
+    /// Desugar an automation, lowering its filter and body expressions.
+    pub fn desugar_automation(&mut self, auto: ast::Automation) -> LoweredAutomation {
+        LoweredAutomation {
+            kind: auto.kind,
+            pattern: auto.pattern,
+            filter: auto.filter.map(|f| self.desugar_expr(f)),
+            body: auto
+                .body
+                .into_iter()
+                .map(|s| self.desugar_stmt(s))
+                .collect(),
+        }
+    }
+
+    /// Desugar a complete program.
+    pub fn desugar_program(&mut self, program: ast::Spanned<ast::Program>) -> LoweredProgram {
+        match program.node {
+            ast::Program::Automation(auto) => {
+                LoweredProgram::Automation(self.desugar_automation(auto))
+            }
+            ast::Program::Template(tmpl) => LoweredProgram::Template {
+                params: tmpl.params,
+                automations: tmpl
+                    .automations
+                    .into_iter()
+                    .map(|a| self.desugar_automation(a.node))
+                    .collect(),
+            },
+        }
     }
 
     /// Desugar an expression from AST to LoweredAST.
@@ -434,4 +467,9 @@ impl Desugarer {
 /// Convenience function to desugar an expression.
 pub fn desugar(expr: ast::Spanned<Expr>) -> Spanned<LoweredExpr> {
     Desugarer::new().desugar_expr(expr)
+}
+
+/// Convenience function to desugar a complete program.
+pub fn desugar_program(program: ast::Spanned<ast::Program>) -> LoweredProgram {
+    Desugarer::new().desugar_program(program)
 }

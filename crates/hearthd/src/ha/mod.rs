@@ -13,6 +13,7 @@ pub use sandbox::SandboxBuilder;
 mod integration;
 mod protocol;
 mod registry;
+mod weather;
 
 use integration::Integration;
 
@@ -21,10 +22,12 @@ pub enum Error {
     #[error("Ser/De error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    /// The payload is boxed because it dwarfs every other variant, and this
+    /// error is the `Err` of a `Result` returned throughout the module.
     #[error("invalid message, expected `{expected}`, but got: {received:?}")]
     InvalidMessage {
         expected: String,
-        received: protocol::Message,
+        received: Box<protocol::Message>,
     },
 
     #[error("IO error: {0}")]

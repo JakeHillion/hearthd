@@ -1,24 +1,26 @@
-use super::integration::IntegrationConfig;
+use std::collections::BTreeMap;
+
 use super::Integration;
 use super::Result;
 use super::SandboxBuilder;
-
-use std::collections::BTreeMap;
-
+use super::integration::IntegrationConfig;
 use crate::engine;
+use crate::engine::NodeIdAllocator;
 
 /// Registry for storing and managing the lifetime of running HA sandboxes.
 #[derive(Debug)]
 pub struct Registry {
     integrations: BTreeMap<String, Integration>,
     engine_tx: engine::FromIntegrationSender,
+    node_ids: NodeIdAllocator,
 }
 
 impl Registry {
-    pub fn new(engine_tx: engine::FromIntegrationSender) -> Self {
+    pub fn new(engine_tx: engine::FromIntegrationSender, node_ids: NodeIdAllocator) -> Self {
         Self {
             integrations: BTreeMap::new(),
             engine_tx,
+            node_ids,
         }
     }
 
@@ -28,7 +30,12 @@ impl Registry {
         let name = builder.name;
         self.integrations.insert(
             name,
-            Integration::with_config_and_tx(sb, config, self.engine_tx.clone()),
+            Integration::with_config_and_tx(
+                sb,
+                config,
+                self.engine_tx.clone(),
+                self.node_ids.clone(),
+            ),
         );
         Ok(())
     }

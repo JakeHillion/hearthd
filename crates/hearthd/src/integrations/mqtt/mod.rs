@@ -1,7 +1,9 @@
+mod binary_sensor;
 mod client;
 mod config;
 mod discovery;
 mod light;
+mod sensor;
 // Private module - allowed by clippy.toml allow-private-module-inception
 #[allow(clippy::module_inception)]
 mod mqtt;

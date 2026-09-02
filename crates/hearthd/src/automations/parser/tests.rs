@@ -2,6 +2,9 @@ use chumsky::prelude::*;
 
 use super::expr_parser;
 use crate::automations::lexer::Token;
+// Disambiguate `Spanned` from `chumsky::prelude::*`, which re-exports its own
+// `chumsky::span::Spanned` as of chumsky 0.13.
+use crate::automations::repr::ast::Spanned;
 use crate::automations::repr::ast::*;
 use crate::automations::repr::pretty_print::PrettyPrint;
 

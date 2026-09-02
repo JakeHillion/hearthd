@@ -33,6 +33,9 @@ enum FieldType {
         value_type: Type,
     },
     Nested(#[allow(dead_code)] Type),
+    /// A list field (`Vec<T>`), merged by concatenation across config files
+    /// rather than conflicting.
+    List(#[allow(dead_code)] Type),
 }
 
 pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<TokenStream> {
@@ -87,7 +90,7 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
         });
 
         // Parse default function if present
-        let default_fn = parse_default_fn(field);
+        let default_fn = parse_default_fn(field)?;
 
         let field_type = if is_hashmap(field_ty) {
             let (key_type, value_type) = extract_hashmap_types(field_ty)?;
@@ -113,6 +116,8 @@ pub fn expand_mergeable_config(input: DeriveInput, is_root: bool) -> Result<Toke
                 // Option<SomeStruct> is still Nested
                 FieldType::Nested(field_ty.clone())
             }
+        } else if is_vec(field_ty) {
+            FieldType::List(field_ty.clone())
         } else {
             FieldType::Nested(field_ty.clone())
         };
@@ -206,6 +211,9 @@ fn generate_partial_struct(
             } else {
                 quote! { #field_ty }
             }
+        } else if is_vec(field_ty) {
+            // No `Located`: a concatenated list has no single source location.
+            quote! { #field_ty }
         } else {
             quote! { <#field_ty as hearthd_config::HasPartialConfig>::PartialConfig }
         };
@@ -283,6 +291,10 @@ fn generate_root_merge_impl(
                     quote! {
                         let mut #var_name: std::collections::HashMap<(), std::collections::HashMap<String, hearthd_config::MergeConflictLocation>> = std::collections::HashMap::new();
                     }
+                }
+                FieldType::List(_) => {
+                    // Lists concatenate; no conflict location to track.
+                    quote! {}
                 }
                 _ => {
                     let var_name = format_ident!("{}_loc", name);
@@ -593,6 +605,11 @@ fn generate_sub_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenS
                 }
             })
         }
+        FieldType::List(_) => Ok(quote! {
+            if let Some(list) = std::mem::take(&mut other.#name) {
+                self.#name.get_or_insert_with(Vec::new).extend(list);
+            }
+        }),
     }
 }
 
@@ -756,6 +773,11 @@ fn generate_field_merge(field: &FieldInfo, use_spans: bool) -> Result<TokenStrea
                 }
             })
         }
+        FieldType::List(_) => Ok(quote! {
+            if let Some(list) = config.#name {
+                result.#name.get_or_insert_with(Vec::new).extend(list);
+            }
+        }),
     }
 }
 
@@ -843,6 +865,9 @@ fn generate_attach_source_impl(
                         nested.attach_source_info(source.clone());
                     }
                 });
+            }
+            FieldType::List(_) => {
+                // No `Located` to attach source information to.
             }
         }
     }
@@ -936,6 +961,15 @@ fn generate_load_impl(config_name: &Ident) -> Result<TokenStream> {
     })
 }
 
+fn is_vec(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            return segment.ident == "Vec";
+        }
+    }
+    false
+}
+
 fn is_hashmap(ty: &Type) -> bool {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {
@@ -1007,24 +1041,30 @@ fn is_simple_type(ty: &Type) -> bool {
     false
 }
 
-/// Parse #[config(default = "function_name")] attribute from a field
-fn parse_default_fn(field: &Field) -> Option<String> {
+/// Parse #[config(default = "function_name")] attribute from a field.
+///
+/// Emits a compile error if `default` is provided with a value that is not a
+/// string literal naming a function.
+fn parse_default_fn(field: &Field) -> Result<Option<String>> {
     for attr in &field.attrs {
         if attr.path().is_ident("config") {
             if let Ok(syn::Meta::NameValue(nv)) = attr.parse_args::<syn::Meta>() {
                 if nv.path.is_ident("default") {
-                    if let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(lit_str),
-                        ..
-                    }) = &nv.value
-                    {
-                        return Some(lit_str.value());
-                    }
+                    return match &nv.value {
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(lit_str),
+                            ..
+                        }) => Ok(Some(lit_str.value())),
+                        _ => Err(Error::new_spanned(
+                            &nv.value,
+                            "#[config(default = \"...\")] must be a string literal naming a function",
+                        )),
+                    };
                 }
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// Generate TryFromPartial implementation for a config struct
@@ -1079,7 +1119,7 @@ pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
         });
 
         // Parse default function if present
-        let default_fn = parse_default_fn(field);
+        let default_fn = parse_default_fn(field)?;
 
         let field_type = if is_hashmap(field_ty) {
             let (key_type, value_type) = extract_hashmap_types(field_ty)?;
@@ -1102,6 +1142,8 @@ pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
             } else {
                 FieldType::Nested(field_ty.clone())
             }
+        } else if is_vec(field_ty) {
+            FieldType::List(field_ty.clone())
         } else {
             FieldType::Nested(field_ty.clone())
         };
@@ -1338,6 +1380,19 @@ fn generate_try_from_partial_conversions(
                     }
                 }
             }
+            FieldType::List(_) => {
+                if let Some(default_fn_name) = &field_info.default_fn {
+                    let default_fn_ident =
+                        syn::Ident::new(default_fn_name, proc_macro2::Span::call_site());
+                    quote! {
+                        let #name = partial.#name.unwrap_or_else(|| #default_fn_ident());
+                    }
+                } else {
+                    quote! {
+                        let #name = partial.#name.unwrap_or_default();
+                    }
+                }
+            }
         };
 
         conversions.push(conversion);
@@ -1363,4 +1418,31 @@ fn get_default_value(ty: &Type) -> TokenStream {
     }
     // Default to Default::default() for other types
     quote! { Default::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_string_default_attribute_is_rejected() {
+        let input: DeriveInput = syn::parse_str(
+            r#"
+            #[derive(TryFromPartial, SubConfig)]
+            #[config(no_span)]
+            struct BadConfig {
+                #[config(default = 5000_u64)]
+                port: u64,
+            }
+            "#,
+        )
+        .unwrap();
+
+        let err = expand_try_from_partial(input).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must be a string literal naming a function"),
+            "expected specific error message, got: {msg}"
+        );
+    }
 }

@@ -1,24 +1,30 @@
-use super::protocol::Message;
-use super::protocol::Response;
-use super::Error;
-use super::Result;
-use super::Sandbox;
-
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
+
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+use super::Error;
+use super::Result;
+use super::Sandbox;
+use super::protocol::Message;
+use super::protocol::Response;
+use super::weather;
 use crate::engine;
 use crate::engine::FromIntegrationMessage;
-use crate::engine::HaDeviceInfo;
-use crate::engine::weather::Weather;
+use crate::engine::NodeId;
+use crate::engine::NodeIdAllocator;
+use crate::matter::Endpoint;
+use crate::matter::EndpointId;
+use crate::matter::Node;
+
+/// The one endpoint every weather node exposes, matching the met.no
+/// integration's layout.
+const WEATHER_ENDPOINT: EndpointId = 1;
 
 /// Configuration for setting up an integration.
 #[derive(Debug, Clone)]
@@ -62,7 +68,13 @@ pub(super) struct Integration {
     timer_tx: mpsc::Sender<TimerEvent>,
     timer_rx: mpsc::Receiver<TimerEvent>,
     /// Sender to forward messages to the engine
-    engine_tx: Option<engine::FromIntegrationSender>,
+    engine_tx: engine::FromIntegrationSender,
+    /// Source of the node ids this integration declares.
+    node_ids: NodeIdAllocator,
+    /// Node id announced for each Home Assistant entity, keyed by its entity
+    /// id. A state update for an entity absent from here has nowhere to go:
+    /// the engine keys its state by node id, not by entity id.
+    nodes: HashMap<String, NodeId>,
 }
 
 impl std::fmt::Debug for Integration {
@@ -88,6 +100,7 @@ impl Integration {
         sandbox: Sandbox,
         config: IntegrationConfig,
         engine_tx: engine::FromIntegrationSender,
+        node_ids: NodeIdAllocator,
     ) -> Self {
         let (timer_tx, timer_rx) = mpsc::channel(16);
 
@@ -99,7 +112,9 @@ impl Integration {
             timer_handles: HashMap::new(),
             timer_tx,
             timer_rx,
-            engine_tx: Some(engine_tx),
+            engine_tx,
+            node_ids,
+            nodes: HashMap::new(),
         }
     }
 
@@ -144,7 +159,7 @@ impl Integration {
             }
             m => Err(Error::InvalidMessage {
                 expected: "Ready".into(),
-                received: m,
+                received: Box::new(m),
             }),
         }
     }
@@ -153,10 +168,7 @@ impl Integration {
         loop {
             match self.sandbox.recv().await? {
                 Message::SetupComplete { name, platforms } => {
-                    info!(
-                        "[{}] SetupComplete with platforms: {:?}",
-                        name, platforms
-                    );
+                    info!("[{}] SetupComplete with platforms: {:?}", name, platforms);
                     self.platforms = platforms;
                     self.state = State::Running;
                     return Ok(());
@@ -248,38 +260,19 @@ impl Integration {
                     capabilities, device_info
                 );
 
-                if let Some(tx) = &self.engine_tx {
-                    // Create a typed entity for the platform and send EntityDiscovered
-                    if platform == "weather" {
-                        let weather = Weather::new(entity_id.clone(), name.clone());
-                        let _ = tx
-                            .send(FromIntegrationMessage::EntityDiscovered {
-                                entity_id: entity_id.clone(),
-                                entity: Arc::new(Mutex::new(weather)),
-                                integration_name: self.config.name.clone(),
-                            })
-                            .await;
-                    }
-
-                    // Send generic registration for metadata tracking
-                    let _ = tx
-                        .send(FromIntegrationMessage::HaEntityRegistered {
-                            entity_id,
-                            name,
-                            platform,
-                            device_class,
-                            capabilities,
-                            device_info: device_info.map(|di| HaDeviceInfo {
-                                identifiers: di.identifiers,
-                                name: di.name,
-                                manufacturer: di.manufacturer,
-                                model: di.model,
-                                sw_version: di.sw_version,
-                            }),
-                            integration_name: self.config.name.clone(),
-                        })
-                        .await;
+                // Only the weather platform has a Matter translation so far.
+                // Announcing a node for a platform we cannot populate would
+                // put a permanently empty node in the engine's state, so
+                // unmapped platforms are skipped until they are modelled.
+                if platform != "weather" {
+                    warn!(
+                        "[{}] Ignoring entity {}: platform '{}' has no Matter mapping",
+                        self.config.name, entity_id, platform
+                    );
+                    return Ok(());
                 }
+
+                self.announce_weather_node(entity_id, name).await;
             }
 
             Message::StateUpdate {
@@ -294,16 +287,8 @@ impl Integration {
                 );
                 debug!("  attributes={}", attributes);
 
-                if let Some(tx) = &self.engine_tx {
-                    let _ = tx
-                        .send(FromIntegrationMessage::HaStateUpdated {
-                            entity_id,
-                            state,
-                            attributes,
-                            last_updated,
-                        })
-                        .await;
-                }
+                self.publish_weather_state(&entity_id, &state, &attributes)
+                    .await;
             }
 
             Message::ScheduleUpdate {
@@ -384,7 +369,10 @@ impl Integration {
 
             // These messages shouldn't appear in Running state
             Message::Ready => {
-                warn!("[{}] Unexpected Ready message in Running state", self.config.name);
+                warn!(
+                    "[{}] Unexpected Ready message in Running state",
+                    self.config.name
+                );
             }
             Message::SetupComplete { .. } => {
                 warn!(
@@ -400,6 +388,87 @@ impl Integration {
             }
         }
         Ok(())
+    }
+
+    /// Announce a Home Assistant weather entity to the engine as a node.
+    ///
+    /// The node is published with the full set of weather clusters already
+    /// present but null, so it has its final shape before the first state
+    /// update arrives. Re-registering an entity reuses its node id, which is
+    /// how the engine is told about a rename rather than being given a second
+    /// node for the same device.
+    async fn announce_weather_node(&mut self, entity_id: String, name: String) {
+        let node_ids = &self.node_ids;
+        let node_id = *self
+            .nodes
+            .entry(entity_id.clone())
+            .or_insert_with(|| node_ids.allocate());
+
+        let clusters = weather::null_clusters()
+            .into_iter()
+            .map(|c| (c.name().to_string(), c))
+            .collect();
+
+        let mut endpoints = HashMap::new();
+        endpoints.insert(WEATHER_ENDPOINT, Endpoint { clusters });
+
+        let node = Node {
+            entity_id: entity_id.clone(),
+            integration: self.config.name.clone(),
+            name: Some(name),
+            endpoints,
+        };
+
+        info!(
+            "[{}] Announcing weather node {} ({})",
+            self.config.name, entity_id, node_id
+        );
+
+        if let Err(e) = self
+            .engine_tx
+            .send(FromIntegrationMessage::NodeAdded { node_id, node })
+            .await
+        {
+            warn!("[{}] failed to send NodeAdded: {}", self.config.name, e);
+        }
+    }
+
+    /// Translate a weather entity's state update into cluster snapshots and
+    /// publish each one to the engine.
+    async fn publish_weather_state(
+        &self,
+        entity_id: &str,
+        state: &str,
+        attributes: &serde_json::Value,
+    ) {
+        let Some(&node_id) = self.nodes.get(entity_id) else {
+            // Home Assistant can push a state update for an entity whose
+            // registration we skipped (a platform with no Matter mapping), and
+            // there is no node to attach it to.
+            debug!(
+                "[{}] Dropping state update for unannounced entity {}",
+                self.config.name, entity_id
+            );
+            return;
+        };
+
+        for cluster in weather::clusters_from_state(state, attributes) {
+            if let Err(e) = self
+                .engine_tx
+                .send(FromIntegrationMessage::AttributeChanged {
+                    node_id,
+                    endpoint_id: WEATHER_ENDPOINT,
+                    cluster,
+                })
+                .await
+            {
+                warn!(
+                    "[{}] failed to send AttributeChanged: {}",
+                    self.config.name, e
+                );
+                return;
+            }
+        }
     }
 
     /// Schedule a timer to trigger coordinator updates.

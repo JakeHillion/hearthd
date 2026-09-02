@@ -3,6 +3,9 @@ pub mod automations;
 pub mod config;
 mod engine;
 mod integrations;
+pub mod matter;
+#[cfg(any(feature = "integration_ecoflow", feature = "integration_metno"))]
+mod tls;
 
 #[cfg(feature = "integration_ha")]
 pub mod ha;
@@ -16,3 +19,5 @@ pub use config::Diagnostics;
 pub use config::LogLevel;
 pub use config::format_diagnostics;
 pub use engine::Engine;
+pub use engine::Event;
+pub use engine::State;

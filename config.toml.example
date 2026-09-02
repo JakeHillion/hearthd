@@ -24,5 +24,49 @@ longitude = 10.7579
 # elevation_m and timezone are optional and can be omitted
 
 [integrations]
-# Integrations section (currently must be empty)
-# This will be used for future integrations
+
+# EcoFlow, over EcoFlow's consumer cloud API. Currently supports the Wave 3
+# portable air conditioner.
+#
+# The consumer API cannot enumerate devices, so there is no discovery: every
+# device is declared here by the serial number printed on the unit and shown in
+# the EcoFlow app.
+#
+# [integrations.ecoflow]
+# email and password are secrets. The account password grants full control of
+# every device on the account, so keep these two in a separate, tightly
+# permissioned file and list it alongside this one:
+#
+#     hearthd --config /etc/hearthd/config.toml --config /etc/hearthd/secrets.toml
+#
+# email = "user@example.com"
+# password = "..."
+#
+# api_host defaults to api.ecoflow.com and rarely needs setting: EcoFlow routes
+# by account rather than by region. Do not point it at api-e.ecoflow.com or
+# api-a.ecoflow.com, which speak the unrelated public developer API.
+# api_host = "api.ecoflow.com"
+
+# One section per device. The key names the entity, so this becomes
+# "climate.bedroom".
+# [integrations.ecoflow.devices.bedroom]
+# serial = "HW51ZAS4..."
+# name = "Bedroom air conditioner"  # optional, defaults to the key
+
+# Snapcast, over a Snapserver's control protocol. Groups and clients are
+# discovered from the server, so only the server itself is configured here.
+#
+# Each group becomes a "media_player." entity and each client a "speaker."
+# entity, named after the group or client name set in Snapcast and falling
+# back to the device id where that name is empty.
+#
+# [integrations.snapcast]
+# host = "snapserver.example.com"
+#
+# port is the JSON-RPC control port, not the 1704 stream port.
+# port = 1705
+#
+# How long to wait before reconnecting after the control connection drops.
+# The integration resynchronises its whole view on every reconnect, so
+# nothing is lost by waiting.
+# reconnect_interval_ms = 5000

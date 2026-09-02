@@ -15,6 +15,8 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use crate::Engine;
+use crate::matter::ClusterCommand;
+use crate::matter::EndpointId;
 
 /// Response for the /v1/ping endpoint
 #[derive(Serialize)]
@@ -30,11 +32,14 @@ struct InfoResponse {
 }
 
 /// Request body for POST /v1/entities/:id/command
+///
+/// The body addresses a Matter endpoint within the resolved node and carries
+/// the cluster command to invoke. Example:
+///   { "endpoint": 1, "command": { "command": "OnOffOn" } }
 #[derive(Debug, Deserialize)]
-#[serde(tag = "command")]
-enum EntityCommandRequest {
-    #[serde(rename = "light")]
-    Light { on: bool, brightness: Option<u8> },
+struct EntityCommandRequest {
+    endpoint: EndpointId,
+    command: ClusterCommand,
 }
 
 /// Response for POST /v1/entities/:id/command
@@ -82,85 +87,64 @@ async fn info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     )
 }
 
-/// Handler for GET /v1/dump_state
+/// Handler for GET /v1/state
 #[tracing::instrument(skip(state))]
-async fn dump_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    tracing::debug!("Handling /v1/dump_state request");
+async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    tracing::debug!("Handling /v1/state request");
 
-    let entities = state.engine.get_all_entities_json().await;
+    let snapshot = state.engine.state_snapshot();
 
-    (StatusCode::OK, Json(entities))
+    (StatusCode::OK, Json(snapshot))
 }
 
-/// Handler for GET /v1/entities
-#[tracing::instrument(skip(state))]
-async fn list_entities(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    tracing::debug!("Handling /v1/entities request");
-
-    let entities = state.engine.get_all_entities_json().await;
-
-    (StatusCode::OK, Json(entities))
-}
-
-/// Handler for GET /v1/entities/:id
-#[tracing::instrument(skip(state))]
-async fn get_entity(
-    State(state): State<Arc<AppState>>,
-    Path(entity_id): Path<String>,
-) -> impl IntoResponse {
-    tracing::debug!("Handling /v1/entities/{} request", entity_id);
-
-    match state.engine.get_entity_json(&entity_id).await {
-        Some(entity) => (StatusCode::OK, Json(entity)).into_response(),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "Entity not found",
-                "entity_id": entity_id
-            })),
-        )
-            .into_response(),
-    }
-}
-
-/// Handler for POST /v1/entities/:id/command
+/// Handler for POST /v1/entities/{id}/command
 #[tracing::instrument(skip(state))]
 async fn send_entity_command(
     State(state): State<Arc<AppState>>,
     Path(entity_id): Path<String>,
     Json(request): Json<EntityCommandRequest>,
 ) -> impl IntoResponse {
-    match request {
-        EntityCommandRequest::Light { on, brightness } => {
-            tracing::debug!(
-                "Handling POST /v1/entities/{}/command: light on={} brightness={:?}",
-                entity_id,
-                on,
-                brightness
-            );
+    tracing::debug!(
+        "Handling POST /v1/entities/{}/command: endpoint={} command={:?}",
+        entity_id,
+        request.endpoint,
+        request.command
+    );
 
-            match state
-                .engine
-                .send_light_command(entity_id.clone(), on, brightness)
-            {
-                Ok(()) => (
-                    StatusCode::OK,
-                    Json(EntityCommandResponse {
-                        success: true,
-                        message: format!("Command sent to entity {}", entity_id),
-                    }),
-                )
-                    .into_response(),
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(EntityCommandResponse {
-                        success: false,
-                        message: format!("Failed to send command: {}", e),
-                    }),
-                )
-                    .into_response(),
-            }
+    let node_id = match state.engine.resolve_entity_id(&entity_id) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(EntityCommandResponse {
+                    success: false,
+                    message: format!("Unknown entity: {}", entity_id),
+                }),
+            )
+                .into_response();
         }
+    };
+
+    match state
+        .engine
+        .invoke_command(node_id, request.endpoint, request.command)
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(EntityCommandResponse {
+                success: true,
+                message: format!("Command sent to entity {}", entity_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(EntityCommandResponse {
+                success: false,
+                message: format!("Failed to send command: {}", e),
+            }),
+        )
+            .into_response(),
     }
 }
 
@@ -169,10 +153,8 @@ fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/v1/ping", get(ping))
         .route("/v1/info", get(info))
-        .route("/v1/dump_state", get(dump_state))
-        .route("/v1/entities", get(list_entities))
-        .route("/v1/entities/:id", get(get_entity))
-        .route("/v1/entities/:id/command", post(send_entity_command))
+        .route("/v1/state", get(get_state))
+        .route("/v1/entities/{id}/command", post(send_entity_command))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

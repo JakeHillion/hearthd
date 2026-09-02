@@ -6,11 +6,13 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use hearthd_config::{SubConfig, TryFromPartial};
+use hearthd_config::SubConfig;
+use hearthd_config::TryFromPartial;
 use linkme::distributed_slice;
 use serde::Deserialize;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 use crate::engine;
 use crate::ha;
@@ -57,6 +59,7 @@ impl engine::Integration for HaIntegration {
     async fn setup(
         &mut self,
         tx: engine::FromIntegrationSender,
+        node_ids: engine::NodeIdAllocator,
     ) -> Result<(), Box<dyn Error + Send>> {
         info!("[{}] Setting up Home Assistant integration", self.name);
 
@@ -66,7 +69,11 @@ impl engine::Integration for HaIntegration {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("python3"));
 
-        info!("[{}] Using Python interpreter: {}", self.name, python_path.display());
+        info!(
+            "[{}] Using Python interpreter: {}",
+            self.name,
+            python_path.display()
+        );
 
         // Use vendor/ha-core as the HA source path
         let ha_source_path = PathBuf::from("vendor/ha-core");
@@ -90,7 +97,7 @@ impl engine::Integration for HaIntegration {
         );
 
         // Create registry with engine sender and register the sandbox
-        let mut registry = ha::Registry::new(tx);
+        let mut registry = ha::Registry::new(tx, node_ids);
         registry
             .register(builder)
             .await

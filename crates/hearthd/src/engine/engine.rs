@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::Arc;
 
-use serde_json::Value as JsonValue;
+use arc_swap::ArcSwap;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -9,25 +10,31 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-use super::entity::Entity;
+use super::event::Event;
 use super::integration::FromIntegrationReceiver;
 use super::integration::FromIntegrationSender;
 use super::integration::Integration;
 use super::integration::ToIntegrationSender;
 use super::message::FromIntegrationMessage;
 use super::message::ToIntegrationMessage;
+use super::state::State;
 use crate::engine::IntegrationContext;
+use crate::engine::NodeId;
+use crate::engine::NodeIdAllocator;
+use crate::matter::Cluster;
+use crate::matter::ClusterCommand;
+use crate::matter::EndpointId;
 
 /// hearthd engine
 ///
 /// This structure handles the flow of events, applying automations to them, sending them to the
 /// correct integration, and maintaining a view of the world with State.
 pub struct Engine {
-    /// Registry of all known entities (shared with integrations via `Arc<Mutex>`)
-    entities: Mutex<HashMap<String, std::sync::Arc<Mutex<dyn Entity>>>>,
+    /// Centralized state snapshot (readers load the Arc, writer stores a new one)
+    state: ArcSwap<State>,
 
-    /// Map of entity_id -> integration name for routing messages
-    entity_integration_map: std::sync::Mutex<HashMap<String, String>>,
+    /// Map of NodeId -> integration name for routing commands.
+    node_integration_map: std::sync::Mutex<HashMap<NodeId, String>>,
 
     /// Communication channels to integrations (for commands)
     integration_channels: HashMap<String, ToIntegrationSender>,
@@ -40,6 +47,10 @@ pub struct Engine {
 
     /// Handles for integration tasks
     integration_handles: Vec<JoinHandle<()>>,
+
+    /// Source of node ids for every integration, so that no two can name the
+    /// same node.
+    node_ids: NodeIdAllocator,
 }
 
 /// Capacity for the integration→engine message channel
@@ -51,12 +62,13 @@ impl Engine {
     pub fn new() -> Self {
         let (message_tx, message_rx) = mpsc::channel(FROM_INTEGRATION_CHANNEL_SIZE);
         Self {
-            entities: Mutex::new(HashMap::new()),
-            entity_integration_map: std::sync::Mutex::new(HashMap::new()),
+            state: ArcSwap::new(Arc::default()),
+            node_integration_map: std::sync::Mutex::new(HashMap::new()),
             integration_channels: HashMap::new(),
             message_rx: Mutex::new(message_rx),
             message_tx,
             integration_handles: Vec::new(),
+            node_ids: NodeIdAllocator::new(),
         }
     }
 
@@ -92,6 +104,7 @@ impl Engine {
     pub fn register_integration(&mut self, name: String, mut integration: Box<dyn Integration>) {
         let (to_integration_tx, mut to_integration_rx) = mpsc::unbounded_channel();
         let from_integration_tx = self.message_tx.clone();
+        let node_ids = self.node_ids.clone();
 
         self.integration_channels
             .insert(name.clone(), to_integration_tx);
@@ -99,7 +112,7 @@ impl Engine {
         // Spawn integration task
         let handle = tokio::spawn(async move {
             // Setup integration (gives it the sender for events)
-            if let Err(e) = integration.setup(from_integration_tx).await {
+            if let Err(e) = integration.setup(from_integration_tx, node_ids).await {
                 warn!("Integration '{}' setup failed: {}", name, e);
                 return;
             }
@@ -119,31 +132,27 @@ impl Engine {
         self.integration_handles.push(handle);
     }
 
-    /// Send a command to an integration
+    /// Send a command to an integration.
     ///
-    /// Routes the command to the appropriate integration based on entity_id.
+    /// Routes the command to the integration that owns the target node.
     pub fn send_command(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
-        // Extract entity_id from command for routing
-        let entity_id = match &msg {
-            ToIntegrationMessage::LightCommand { entity_id, .. } => entity_id.clone(),
+        let node_id = match &msg {
+            ToIntegrationMessage::InvokeCommand { node_id, .. } => *node_id,
         };
 
-        // Route to the integration that owns this entity
         let map = self
-            .entity_integration_map
+            .node_integration_map
             .lock()
             .map_err(|e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        let integration_name = map
-            .get(&entity_id)
-            .ok_or_else(|| -> Box<dyn Error + Send> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("No integration found for entity: {}", entity_id),
-                ))
-            })?;
+        let integration_name = map.get(&node_id).ok_or_else(|| -> Box<dyn Error + Send> {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("No integration found for node: {}", node_id),
+            ))
+        })?;
 
         let tx = self.integration_channels.get(integration_name).ok_or_else(
             || -> Box<dyn Error + Send> {
@@ -176,116 +185,228 @@ impl Engine {
         Ok(())
     }
 
-    /// Get all entities as a JSON map
-    pub async fn get_all_entities_json(&self) -> JsonValue {
-        let entities = self.entities.lock().await;
-        let mut entities_map = serde_json::Map::new();
-        for (entity_id, entity_arc) in entities.iter() {
-            let entity = entity_arc.lock().await;
-            entities_map.insert(entity_id.clone(), entity.state_json());
-        }
-        JsonValue::Object(entities_map)
+    /// Get a snapshot of the current engine state.
+    ///
+    /// Clones the `Arc` (atomic refcount bump), essentially free.
+    pub fn state_snapshot(&self) -> Arc<State> {
+        self.state.load_full()
     }
 
-    /// Get a specific entity's state as JSON
-    pub async fn get_entity_json(&self, entity_id: &str) -> Option<JsonValue> {
-        let entities = self.entities.lock().await;
-        if let Some(entity_arc) = entities.get(entity_id) {
-            let entity = entity_arc.lock().await;
-            Some(entity.state_json())
-        } else {
-            None
-        }
+    /// Resolve an entity_id alias to a NodeId via the state's reverse index.
+    pub fn resolve_entity_id(&self, entity_id: &str) -> Option<NodeId> {
+        self.state.load().by_entity_id.get(entity_id).copied()
     }
 
-    /// Get count of entities
-    pub async fn entity_count(&self) -> usize {
-        self.entities.lock().await.len()
-    }
-
-    /// Send a light command to control a light entity
-    pub fn send_light_command(
+    /// Invoke a Matter cluster command on a node's endpoint.
+    pub fn invoke_command(
         &self,
-        entity_id: String,
-        on: bool,
-        brightness: Option<u8>,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        command: ClusterCommand,
     ) -> Result<(), Box<dyn Error + Send>> {
-        let cmd = ToIntegrationMessage::LightCommand {
-            entity_id,
-            on,
-            brightness,
-        };
-        self.send_command(cmd)
+        self.send_command(ToIntegrationMessage::InvokeCommand {
+            node_id,
+            endpoint_id,
+            command,
+        })
     }
 
     /// Handle an event from an integration
     async fn handle_event(&self, msg: FromIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
         match msg {
-            FromIntegrationMessage::EntityDiscovered {
-                entity_id,
-                entity,
-                integration_name,
-            } => {
+            FromIntegrationMessage::NodeAdded { node_id, node } => {
                 info!(
-                    "Entity discovered: {} (from {})",
-                    entity_id, integration_name
+                    "Node added: {} ({}) from {}",
+                    node_id, node.entity_id, node.integration
                 );
-                let mut entities = self.entities.lock().await;
-                entities.insert(entity_id.clone(), entity);
 
-                // Record which integration owns this entity for routing
-                if let Ok(mut map) = self.entity_integration_map.lock() {
-                    map.insert(entity_id, integration_name);
+                if let Ok(mut map) = self.node_integration_map.lock() {
+                    map.insert(node_id, node.integration.clone());
+                }
+
+                {
+                    let mut state = State::clone(&self.state.load());
+                    // Re-announcing an existing node is how an integration
+                    // reports a rename, so drop the name it used to answer to
+                    // rather than leaving a second alias that outlives the
+                    // node and survives its removal.
+                    if let Some(previous) = state.nodes.get(&node_id) {
+                        if previous.entity_id != node.entity_id {
+                            let previous_entity_id = previous.entity_id.clone();
+                            state.by_entity_id.remove(&previous_entity_id);
+                        }
+                    }
+                    state.by_entity_id.insert(node.entity_id.clone(), node_id);
+                    state.nodes.insert(node_id, node);
+                    self.state.store(Arc::new(state));
                 }
             }
-            FromIntegrationMessage::EntityRemoved { entity_id } => {
-                info!("Entity removed: {}", entity_id);
-                let mut entities = self.entities.lock().await;
-                entities.remove(&entity_id);
+            FromIntegrationMessage::NodeRemoved { node_id } => {
+                info!("Node removed: {}", node_id);
 
-                // Remove from routing map
-                if let Ok(mut map) = self.entity_integration_map.lock() {
-                    map.remove(&entity_id);
+                {
+                    let mut state = State::clone(&self.state.load());
+                    if let Some(node) = state.nodes.remove(&node_id) {
+                        state.by_entity_id.remove(&node.entity_id);
+                    }
+                    self.state.store(Arc::new(state));
+                }
+
+                if let Ok(mut map) = self.node_integration_map.lock() {
+                    map.remove(&node_id);
                 }
             }
-            FromIntegrationMessage::LightStateChanged {
-                entity_id,
-                on,
-                brightness,
+            FromIntegrationMessage::AttributeChanged {
+                node_id,
+                endpoint_id,
+                cluster,
             } => {
                 info!(
-                    "Light state changed: {} -> on={}, brightness={:?}",
-                    entity_id, on, brightness
+                    "Attribute changed: node={} endpoint={} cluster={}",
+                    node_id,
+                    endpoint_id,
+                    cluster.name()
                 );
-                // Entity state is already updated by the integration
-                // Engine just maintains the journal of state changes
-                // TODO: Trigger automations based on state change
-            }
-            FromIntegrationMessage::HaEntityRegistered {
-                entity_id,
-                name,
-                platform,
-                integration_name,
-                ..
-            } => {
-                info!(
-                    "HA entity registered: {} ({}) platform={} from={}",
-                    entity_id, name, platform, integration_name
-                );
-            }
-            FromIntegrationMessage::HaStateUpdated {
-                entity_id,
-                state,
-                attributes,
-                ..
-            } => {
-                info!("HA state update: {} = {}", entity_id, state);
 
-                let entities = self.entities.lock().await;
-                if let Some(entity_arc) = entities.get(&entity_id) {
-                    let mut entity = entity_arc.lock().await;
-                    entity.update_from_ha_state(&state, &attributes);
+                {
+                    let mut state = State::clone(&self.state.load());
+                    if let Some(node) = state.nodes.get_mut(&node_id) {
+                        let endpoint = node.endpoints.entry(endpoint_id).or_default();
+                        endpoint
+                            .clusters
+                            .insert(cluster.name().to_string(), cluster.clone());
+                    }
+                    self.state.store(Arc::new(state));
                 }
+
+                let _event = match cluster {
+                    Cluster::OnOff(attributes) => Event::OnOffChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::LevelControl(attributes) => Event::LevelControlChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::ColorControl(attributes) => Event::ColorControlChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::TemperatureMeasurement(attributes) => {
+                        Event::TemperatureMeasurementChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::PressureMeasurement(attributes) => Event::PressureMeasurementChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::RelativeHumidityMeasurement(attributes) => {
+                        Event::RelativeHumidityMeasurementChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::OccupancySensing(attributes) => Event::OccupancySensingChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::BooleanState(attributes) => Event::BooleanStateChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::Thermostat(attributes) => Event::ThermostatChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::FanControl(attributes) => Event::FanControlChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::DehumidificationControl(attributes) => {
+                        Event::DehumidificationControlChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::ThermostatUserInterfaceConfiguration(attributes) => {
+                        Event::ThermostatUserInterfaceConfigurationChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::PowerSource(attributes) => Event::PowerSourceChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::ElectricalPowerMeasurement(attributes) => {
+                        Event::ElectricalPowerMeasurementChanged {
+                            node_id,
+                            endpoint_id,
+                            attributes,
+                        }
+                    }
+                    Cluster::ModeSelect(attributes) => Event::ModeSelectChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::MediaPlayback(attributes) => Event::MediaPlaybackChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::MediaInput(attributes) => Event::MediaInputChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::WindMeasurement(attributes) => Event::WindMeasurementChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::CloudCover(attributes) => Event::CloudCoverChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::DewPoint(attributes) => Event::DewPointChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::UvIndex(attributes) => Event::UvIndexChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::Precipitation(attributes) => Event::PrecipitationChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                    Cluster::WeatherCondition(attributes) => Event::WeatherConditionChanged {
+                        node_id,
+                        endpoint_id,
+                        attributes,
+                    },
+                };
+                // TODO: Trigger automations based on attribute-changed event
             }
         }
         Ok(())

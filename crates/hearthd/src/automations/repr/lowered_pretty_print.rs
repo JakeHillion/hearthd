@@ -3,28 +3,8 @@
 //! Used by desugar tests to produce unambiguous snapshot output.
 
 use super::lowered::*;
-
-/// Trait for verbose, multi-line AST pretty-printing.
-pub trait PrettyPrint {
-    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
-
-    fn to_pretty_string(&self) -> String {
-        struct Wrapper<'a, T: PrettyPrint + ?Sized>(&'a T);
-        impl<T: PrettyPrint + ?Sized> std::fmt::Display for Wrapper<'_, T> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                self.0.pretty_print(0, f)
-            }
-        }
-        Wrapper(self).to_string()
-    }
-}
-
-fn write_indent(indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    for _ in 0..indent {
-        write!(f, "  ")?;
-    }
-    Ok(())
-}
+use super::pretty_print::PrettyPrint;
+use super::pretty_print::write_indent;
 
 impl PrettyPrint for Origin {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -207,6 +187,57 @@ impl PrettyPrint for LoweredArg {
                 write_indent(indent, f)?;
                 writeln!(f, "Named: {}", name)?;
                 value.pretty_print(indent + 1, f)
+            }
+        }
+    }
+}
+
+impl PrettyPrint for LoweredAutomation {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_indent(indent, f)?;
+        writeln!(f, "Automation: {}", self.kind)?;
+        write_indent(indent + 1, f)?;
+        writeln!(f, "Pattern:")?;
+        self.pattern.pretty_print(indent + 2, f)?;
+        if let Some(filter) = &self.filter {
+            write_indent(indent + 1, f)?;
+            writeln!(f, "Filter:")?;
+            filter.pretty_print(indent + 2, f)?;
+        }
+        write_indent(indent + 1, f)?;
+        if self.body.is_empty() {
+            writeln!(f, "Body: (empty)")
+        } else {
+            writeln!(f, "Body:")?;
+            for stmt in &self.body {
+                stmt.pretty_print(indent + 2, f)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+impl PrettyPrint for LoweredProgram {
+    fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoweredProgram::Automation(auto) => auto.pretty_print(indent, f),
+            LoweredProgram::Template {
+                params,
+                automations,
+            } => {
+                write_indent(indent, f)?;
+                writeln!(f, "Template:")?;
+                write_indent(indent + 1, f)?;
+                writeln!(f, "Params:")?;
+                for param in params {
+                    param.pretty_print(indent + 2, f)?;
+                }
+                write_indent(indent + 1, f)?;
+                writeln!(f, "Automations:")?;
+                for auto in automations {
+                    auto.pretty_print(indent + 2, f)?;
+                }
+                Ok(())
             }
         }
     }

@@ -148,7 +148,17 @@
             formatting = treefmtEval.config.build.check self;
 
             hearthd-audit = craneLib.cargoAudit {
-              inherit src advisory-db;
+              inherit advisory-db;
+              # Not the shared `src`: cleanCargoSource strips .cargo/audit.toml,
+              # which is where the advisory exclusions and their justifications
+              # live. cargo-audit needs only these two files.
+              src = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  ./Cargo.lock
+                  ./.cargo/audit.toml
+                ];
+              };
             };
 
             hearthd-deny = craneLib.cargoDeny {
