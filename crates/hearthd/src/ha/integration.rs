@@ -190,24 +190,17 @@ impl Integration {
                         missing_package,
                     });
                 }
-                Message::ScheduleUpdate {
-                    timer_id,
-                    name,
-                    interval_seconds,
-                } => {
-                    // Schedule coordinator updates even during setup
-                    info!(
-                        "[{}] ScheduleUpdate during setup: timer_id={} name={} interval={}s",
-                        self.config.name, timer_id, name, interval_seconds
-                    );
-                    self.schedule_timer(timer_id, name, interval_seconds);
-                }
-                m => {
-                    warn!(
-                        "[{}] Unexpected message during setup (ignoring): {:?}",
-                        self.config.name, m
-                    );
-                }
+                // Everything else is handled exactly as it would be once
+                // running.
+                //
+                // An integration does its real work inside setup: `met`
+                // schedules its coordinator, registers its entity and sends
+                // that entity's first state, all before `async_setup_entry`
+                // returns and therefore all before `setup_complete`. Dropping
+                // those because setup had not been acknowledged yet lost the
+                // entity permanently, and with it every later state update,
+                // since an update for an entity with no node has nowhere to go.
+                m => self.handle_sandbox_message(m).await?,
             }
         }
     }
