@@ -16,6 +16,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::Engine;
 use crate::matter::ClusterCommand;
+use crate::matter::ClusterWrite;
 use crate::matter::EndpointId;
 
 /// Response for the /v1/ping endpoint
@@ -47,6 +48,24 @@ struct EntityCommandRequest {
 struct EntityCommandResponse {
     success: bool,
     message: String,
+}
+
+/// Request body for POST /v1/entities/:id/attributes
+///
+/// The body addresses a Matter endpoint within the resolved node and carries
+/// a list of cluster attribute writes to apply. Each entry targets one cluster
+/// and may set any subset of that cluster's writable attributes. Example:
+///   {
+///     "endpoint": 1,
+///     "writes": [
+///       { "cluster": "Thermostat", "system_mode": "Heat" },
+///       { "cluster": "Thermostat", "occupied_heating_setpoint": 2100 }
+///     ]
+///   }
+#[derive(Debug, Deserialize)]
+struct EntityAttributesRequest {
+    endpoint: EndpointId,
+    writes: Vec<ClusterWrite>,
 }
 
 /// Shared application state
@@ -97,6 +116,23 @@ async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     (StatusCode::OK, Json(snapshot))
 }
 
+/// Resolve `entity_id` to a `NodeId`, returning a 404 response on failure.
+fn resolve_entity(
+    engine: &crate::Engine,
+    entity_id: &str,
+) -> Result<crate::engine::NodeId, (StatusCode, Json<EntityCommandResponse>)> {
+    match engine.resolve_entity_id(entity_id) {
+        Some(id) => Ok(id),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(EntityCommandResponse {
+                success: false,
+                message: format!("Unknown entity: {}", entity_id),
+            }),
+        )),
+    }
+}
+
 /// Handler for POST /v1/entities/{id}/command
 #[tracing::instrument(skip(state))]
 async fn send_entity_command(
@@ -111,18 +147,9 @@ async fn send_entity_command(
         request.command
     );
 
-    let node_id = match state.engine.resolve_entity_id(&entity_id) {
-        Some(id) => id,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(EntityCommandResponse {
-                    success: false,
-                    message: format!("Unknown entity: {}", entity_id),
-                }),
-            )
-                .into_response();
-        }
+    let node_id = match resolve_entity(&state.engine, &entity_id) {
+        Ok(id) => id,
+        Err(response) => return response.into_response(),
     };
 
     match state
@@ -137,14 +164,79 @@ async fn send_entity_command(
             }),
         )
             .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+        Err(e) => {
+            let status = if e.to_string().contains("unknown node")
+                || e.to_string().contains("has no endpoint")
+                || e.to_string().contains("does not support cluster")
+                || e.to_string().contains("is read-only")
+            {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (
+                status,
+                Json(EntityCommandResponse {
+                    success: false,
+                    message: format!("Failed to send command: {}", e),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Handler for POST /v1/entities/{id}/attributes
+#[tracing::instrument(skip(state))]
+async fn write_entity_attributes(
+    State(state): State<Arc<AppState>>,
+    Path(entity_id): Path<String>,
+    Json(request): Json<EntityAttributesRequest>,
+) -> impl IntoResponse {
+    tracing::debug!(
+        "Handling POST /v1/entities/{}/attributes: endpoint={} writes={:?}",
+        entity_id,
+        request.endpoint,
+        request.writes
+    );
+
+    let node_id = match resolve_entity(&state.engine, &entity_id) {
+        Ok(id) => id,
+        Err(response) => return response.into_response(),
+    };
+
+    match state
+        .engine
+        .write_attributes(node_id, request.endpoint, request.writes)
+    {
+        Ok(()) => (
+            StatusCode::OK,
             Json(EntityCommandResponse {
-                success: false,
-                message: format!("Failed to send command: {}", e),
+                success: true,
+                message: format!("Attributes written to entity {}", entity_id),
             }),
         )
             .into_response(),
+        Err(e) => {
+            let status = if e.to_string().contains("unknown node")
+                || e.to_string().contains("has no endpoint")
+                || e.to_string().contains("does not support cluster")
+                || e.to_string().contains("is read-only")
+                || e.to_string().contains("no fields to set")
+            {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (
+                status,
+                Json(EntityCommandResponse {
+                    success: false,
+                    message: format!("Failed to write attributes: {}", e),
+                }),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -155,6 +247,10 @@ fn create_router(state: Arc<AppState>) -> Router {
         .route("/v1/info", get(info))
         .route("/v1/state", get(get_state))
         .route("/v1/entities/{id}/command", post(send_entity_command))
+        .route(
+            "/v1/entities/{id}/attributes",
+            post(write_entity_attributes),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
