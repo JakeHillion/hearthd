@@ -15,6 +15,9 @@ mod protocol;
 mod registry;
 mod weather;
 
+#[cfg(all(test, feature = "integration_metno"))]
+mod live_tests;
+
 use integration::Integration;
 
 #[derive(Debug, thiserror::Error)]
