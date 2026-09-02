@@ -14,21 +14,19 @@
 //! # Running them
 //!
 //! They are `#[ignore]`d because they need the network, a Python interpreter
-//! with the Home Assistant dependencies, and the `vendor/ha-core` checkout:
+//! with the Home Assistant dependencies, and a Home Assistant source tree:
 //!
 //! ```text
 //! nix develop --command \
-//!   cargo test -p hearthd --lib ha::live_tests -- --ignored --test-threads=1 --nocapture
+//!   cargo test -p hearthd --lib ha::live_tests -- --ignored --nocapture
 //! ```
 //!
-//! `--test-threads=1` is not optional: the shim resolves `python/runner.py`
-//! and `vendor/ha-core` relative to the process working directory, so the test
-//! has to `chdir` to the workspace root, and that is process-global.
-//! Un-ignoring these without fixing that path handling would make the rest of
-//! the suite order-dependent.
+//! The asset locations come from [`crate::ha::paths`], which resolves them
+//! from configuration or from the paths baked in at build time. Nothing is
+//! resolved against the working directory, so this test neither `chdir`s nor
+//! needs `--test-threads=1`, and it runs the same wherever it is invoked from.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -37,6 +35,7 @@ use crate::engine::FromIntegrationMessage;
 use crate::engine::Integration as _;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
+use crate::integrations::ha::HaConfig;
 use crate::integrations::ha::HaIntegration;
 use crate::integrations::metno::MetnoIntegration;
 use crate::integrations::metno::Site;
@@ -163,29 +162,13 @@ fn wind_speed(node: &ObservedNode) -> Option<f64> {
     }
 }
 
-/// Move to the workspace root, which is where the shim expects to find
-/// `python/runner.py` and `vendor/ha-core`.
-fn chdir_to_workspace_root() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("crates/hearthd is two levels below the workspace root");
-    std::env::set_current_dir(root).expect("chdir to workspace root");
-    assert!(
-        Path::new("vendor/ha-core/homeassistant").is_dir(),
-        "vendor/ha-core is not checked out; this test cannot run without it"
-    );
-}
-
 #[tokio::test]
-#[ignore = "needs the network, HA_PYTHON_INTERPRETER and a vendor/ha-core checkout"]
+#[ignore = "needs the network, a Python interpreter and a Home Assistant source tree"]
 async fn shim_agrees_with_the_native_metno_integration() {
-    chdir_to_workspace_root();
-
     let (tx, mut rx) = mpsc::channel(1024);
     let node_ids = NodeIdAllocator::for_test();
 
-    let mut shim = HaIntegration::new("ha".to_string());
+    let mut shim = HaIntegration::new("ha".to_string(), HaConfig::default());
     shim.setup(tx.clone(), node_ids.clone())
         .await
         .expect("HA shim setup");

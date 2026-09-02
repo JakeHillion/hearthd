@@ -4,8 +4,10 @@
 //! in a sandboxed Python environment, communicating with the Rust runtime
 //! via Unix domain sockets.
 
+pub mod paths;
 pub mod sandbox;
 
+pub use paths::Paths;
 pub use registry::Registry;
 pub use sandbox::Sandbox;
 pub use sandbox::SandboxBuilder;
@@ -35,6 +37,9 @@ pub enum Error {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Paths(#[from] paths::Error),
 
     #[error("Integration setup failed: {name}: {error}")]
     SetupFailed {

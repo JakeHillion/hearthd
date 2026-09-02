@@ -3,7 +3,7 @@
 //! This module bridges the HA sandbox system with the Engine's integration trait system.
 
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::Path;
 
 use async_trait::async_trait;
 use hearthd_config::SubConfig;
@@ -23,6 +23,28 @@ pub struct HaConfig {
     /// Enable the HA integration (default: true when section is present)
     #[serde(default = "default_true")]
     pub enabled: bool,
+
+    /// Python interpreter to run integrations with. It must carry Home
+    /// Assistant's dependencies; hearthd does not install them.
+    ///
+    /// Defaults to the interpreter chosen when hearthd was built, which is how
+    /// a packaged build finds one. There is no fallback to `python3` on `PATH`:
+    /// see [`crate::ha::paths`].
+    pub python_interpreter: Option<String>,
+
+    /// Directory holding hearthd's `runner.py` and `homeassistant-shim/`.
+    ///
+    /// Defaults to the copy chosen at build time, or to this crate's source
+    /// tree for an unpackaged build.
+    pub python_assets: Option<String>,
+
+    /// Directory holding the `homeassistant` package whose `components` supply
+    /// the integrations to run.
+    pub ha_source: Option<String>,
+
+    /// `PYTHONPATH` for the child process, carrying the components'
+    /// dependencies. Unnecessary when the interpreter already bundles them.
+    pub python_path: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -31,22 +53,41 @@ fn default_true() -> bool {
 
 impl Default for HaConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            python_interpreter: None,
+            python_assets: None,
+            ha_source: None,
+            python_path: None,
+        }
     }
 }
 
 /// Home Assistant integration that runs integrations in sandboxed Python.
 pub struct HaIntegration {
     name: String,
+    config: HaConfig,
     registry_handle: Option<JoinHandle<()>>,
 }
 
 impl HaIntegration {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, config: HaConfig) -> Self {
         Self {
             name,
+            config,
             registry_handle: None,
         }
+    }
+
+    /// Where this integration's Python assets live, per configuration and the
+    /// locations baked in when hearthd was built.
+    fn paths(&self) -> Result<ha::Paths, ha::paths::Error> {
+        ha::Paths::resolve(ha::paths::Overrides {
+            interpreter: self.config.python_interpreter.as_ref().map(Path::new),
+            assets: self.config.python_assets.as_ref().map(Path::new),
+            ha_source: self.config.ha_source.as_ref().map(Path::new),
+            python_path: self.config.python_path.as_deref(),
+        })
     }
 }
 
@@ -63,37 +104,25 @@ impl engine::Integration for HaIntegration {
     ) -> Result<(), Box<dyn Error + Send>> {
         info!("[{}] Setting up Home Assistant integration", self.name);
 
-        // Determine paths
-        // Use HA_PYTHON_INTERPRETER if set (should have pymetno installed), otherwise python3
-        let python_path = std::env::var("HA_PYTHON_INTERPRETER")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("python3"));
+        let paths = self
+            .paths()
+            .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
 
         info!(
             "[{}] Using Python interpreter: {}",
             self.name,
-            python_path.display()
+            paths.interpreter.display()
         );
-
-        // Use vendor/ha-core as the HA source path
-        let ha_source_path = PathBuf::from("vendor/ha-core");
-
-        if !ha_source_path.exists() {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!(
-                    "Home Assistant source not found at: {}. \
-                    Did you initialize the git submodule? Run: git submodule update --init",
-                    ha_source_path.display()
-                ),
-            )));
-        }
+        info!(
+            "[{}] Running Home Assistant components from {}",
+            self.name,
+            paths.ha_source.display()
+        );
 
         // Create sandbox builder
         let builder = ha::SandboxBuilder::new(
             "met_oslo".to_string(), // Integration instance name
-            python_path,
-            ha_source_path,
+            paths,
         );
 
         // Create registry with engine sender and register the sandbox
@@ -158,5 +187,8 @@ fn init_ha(ctx: &engine::IntegrationContext) -> engine::IntegrationFactoryResult
     }
 
     info!("Initializing Home Assistant integration");
-    Ok(Some(Box::new(HaIntegration::new("ha".to_string()))))
+    Ok(Some(Box::new(HaIntegration::new(
+        "ha".to_string(),
+        ha_config.clone(),
+    ))))
 }

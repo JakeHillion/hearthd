@@ -53,6 +53,33 @@ longitude = 10.7579
 # serial = "HW51ZAS4..."
 # name = "Bedroom air conditioner"  # optional, defaults to the key
 
+# Home Assistant integrations, run unmodified in a Python child process and
+# translated into hearthd's own model.
+#
+# The interpreter, hearthd's Python shim and the Home Assistant source are all
+# chosen when hearthd is built, so a packaged install needs none of the paths
+# below. They exist for builds that were not packaged, and to point a
+# deployment at its own copies.
+#
+# [integrations.ha]
+# enabled = true
+#
+# Python interpreter to run integrations with. It must already carry Home
+# Assistant's dependencies; hearthd never installs them, and there is
+# deliberately no fallback to whichever python3 happens to be on PATH.
+# python_interpreter = "/run/current-system/sw/bin/python3"
+#
+# Directory holding hearthd's runner.py and homeassistant-shim/.
+# python_assets = "/usr/share/hearthd/python"
+#
+# Directory holding the "homeassistant" package whose components supply the
+# integrations to run.
+# ha_source = "/usr/lib/python3.14/site-packages"
+#
+# PYTHONPATH for the child process, carrying the components' dependencies.
+# Unnecessary when the interpreter above already bundles them.
+# python_path = "/usr/lib/python3.14/site-packages"
+
 # Snapcast, over a Snapserver's control protocol. Groups and clients are
 # discovered from the server, so only the server itself is configured here.
 #

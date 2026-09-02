@@ -5,7 +5,6 @@
 //! No filesystem paths are used.
 
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
 use std::process::Stdio;
 
 use tokio::io::AsyncBufReadExt;
@@ -16,6 +15,7 @@ use tokio::process::Child;
 use tokio::process::Command;
 
 use super::Error;
+use super::Paths;
 use super::Result;
 use super::protocol::Message;
 use super::protocol::Response;
@@ -25,11 +25,9 @@ pub struct SandboxBuilder {
     /// Entry ID for this integration instance
     pub name: String,
 
-    /// Path to the Python executable
-    pub python_path: PathBuf,
-
-    /// Path to Home Assistant source (for integrations)
-    pub ha_source_path: PathBuf,
+    /// Where the child process's interpreter, runner, shim and Home Assistant
+    /// source live. Every one is absolute; see [`super::paths`] for why.
+    pub paths: Paths,
 }
 
 impl SandboxBuilder {
@@ -48,13 +46,16 @@ impl SandboxBuilder {
             python_fd
         );
 
-        // Build command to spawn Python runner
-        let mut cmd = Command::new(&self.python_path);
+        // Build command to spawn Python runner. Every path is absolute: the
+        // child inherits hearthd's working directory, which under systemd is
+        // whatever the manager chose and never the source tree.
+        let mut cmd = Command::new(&self.paths.interpreter);
         cmd.arg("-u") // Unbuffered output
-            .arg("python/runner.py")
+            .arg(&self.paths.runner)
             .env("HEARTHD_SOCKET_FD", python_fd.to_string())
-            .env("HEARTHD_name", &self.name)
-            .env("HEARTHD_HA_SOURCE", &self.ha_source_path)
+            .env("HEARTHD_NAME", &self.name)
+            .env("HEARTHD_SHIM", &self.paths.shim)
+            .env("HEARTHD_HA_SOURCE", &self.paths.ha_source)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -63,6 +64,12 @@ impl SandboxBuilder {
             // it rather than being orphaned holding the other end of the
             // socketpair.
             .kill_on_drop(true);
+
+        // Only set when the interpreter does not already carry the components'
+        // dependencies. Setting it to an empty string would shadow them.
+        if let Some(python_path) = &self.paths.python_path {
+            cmd.env("PYTHONPATH", python_path);
+        }
 
         // Clear FD_CLOEXEC flag so socket survives exec
         unsafe {
@@ -133,12 +140,8 @@ impl SandboxBuilder {
         })
     }
 
-    pub fn new(name: String, python_path: PathBuf, ha_source_path: PathBuf) -> Self {
-        Self {
-            name,
-            python_path,
-            ha_source_path,
-        }
+    pub fn new(name: String, paths: Paths) -> Self {
+        Self { name, paths }
     }
 }
 
