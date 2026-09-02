@@ -280,6 +280,7 @@ impl Integration {
                 state,
                 attributes,
                 last_updated,
+                units,
             } => {
                 info!(
                     "[{}] StateUpdate: {} = {} (updated: {})",
@@ -287,7 +288,7 @@ impl Integration {
                 );
                 debug!("  attributes={}", attributes);
 
-                self.publish_weather_state(&entity_id, &state, &attributes)
+                self.publish_weather_state(&entity_id, &state, &attributes, &units)
                     .await;
             }
 
@@ -440,6 +441,7 @@ impl Integration {
         entity_id: &str,
         state: &str,
         attributes: &serde_json::Value,
+        units: &HashMap<String, String>,
     ) {
         let Some(&node_id) = self.nodes.get(entity_id) else {
             // Home Assistant can push a state update for an entity whose
@@ -452,7 +454,7 @@ impl Integration {
             return;
         };
 
-        for cluster in weather::clusters_from_state(state, attributes) {
+        for cluster in weather::clusters_from_state(state, attributes, units) {
             if let Err(e) = self
                 .engine_tx
                 .send(FromIntegrationMessage::AttributeChanged {

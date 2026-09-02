@@ -40,6 +40,14 @@ pub enum Message {
         state: String,
         attributes: serde_json::Value,
         last_updated: String, // ISO 8601 timestamp
+
+        /// Native unit for each numeric attribute, keyed by attribute name
+        /// (e.g. `wind_speed` -> `km/h`). Home Assistant lets every
+        /// integration report in units of its choosing, so without this the
+        /// values in `attributes` are unreadable numbers. Platforms that
+        /// declare no units send an empty map.
+        #[serde(default)]
+        units: HashMap<String, String>,
     },
 
     /// Log message from Python

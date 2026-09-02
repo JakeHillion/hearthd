@@ -192,6 +192,18 @@ class SingleCoordinatorWeatherEntity(CoordinatorEntity[T], Generic[T]):
         except Exception:
             _LOGGER.debug("Could not get condition", exc_info=True)
 
+        # The Rust side cannot convert what it cannot identify, so the
+        # entity's native units travel with the values. Home Assistant lets
+        # each integration pick its own (met.no reports wind in km/h, not
+        # m/s), and a missing unit here means the reader has to guess.
+        units = {
+            "temperature": getattr(self, "_attr_native_temperature_unit", None),
+            "pressure": getattr(self, "_attr_native_pressure_unit", None),
+            "wind_speed": getattr(self, "_attr_native_wind_speed_unit", None),
+            "precipitation": getattr(self, "_attr_native_precipitation_unit", None),
+        }
+        units = {k: str(v) for k, v in units.items() if v is not None}
+
         attrs: dict[str, Any] = {
             "condition": condition,
             "temperature": self.native_temperature,
@@ -239,5 +251,6 @@ class SingleCoordinatorWeatherEntity(CoordinatorEntity[T], Generic[T]):
             "entity_id": entity_id,
             "state": condition or "unknown",
             "attributes": attrs,
+            "units": units,
             "last_updated": datetime.now(timezone.utc).isoformat(),
         })
