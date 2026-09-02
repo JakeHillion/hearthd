@@ -3,7 +3,6 @@
 from collections.abc import Callable
 from typing import Any
 
-
 # Type alias for the callback used in async_setup_entry
 AddConfigEntryEntitiesCallback = Callable[[list[Any]], None]
 

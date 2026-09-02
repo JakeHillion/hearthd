@@ -3,18 +3,20 @@
 import asyncio
 import json
 import logging
-from pathlib import Path
-from typing import Any, Callable
+from collections.abc import Callable
 from functools import wraps
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def callback(func: Callable) -> Callable:
     """Decorator to mark a function as a callback."""
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         return func(*args, **kwargs)
+
     return wrapper
 
 
@@ -49,11 +51,11 @@ class Config:
 class ConfigEntries:
     """Config entries registry stub."""
 
-    def __init__(self, hass: "HomeAssistant"):
+    def __init__(self, hass: HomeAssistant):
         self.hass = hass
-        self._entries: dict[str, "ConfigEntry"] = {}
+        self._entries: dict[str, ConfigEntry] = {}
 
-    def async_entries(self, domain: str | None = None) -> list["ConfigEntry"]:
+    def async_entries(self, domain: str | None = None) -> list[ConfigEntry]:
         """Get all config entries or filter by domain."""
         if domain is None:
             return list(self._entries.values())
@@ -61,20 +63,22 @@ class ConfigEntries:
 
     async def async_forward_entry_setups(
         self,
-        entry: "ConfigEntry",
+        entry: ConfigEntry,
         platforms: list[str],
     ) -> bool:
         """Forward setup of platforms for a config entry."""
         from homeassistant.config_entries import async_forward_entry_setups
+
         return await async_forward_entry_setups(self.hass, entry, platforms)
 
     async def async_unload_platforms(
         self,
-        entry: "ConfigEntry",
+        entry: ConfigEntry,
         platforms: list[str],
     ) -> bool:
         """Unload platforms for a config entry."""
         from homeassistant.config_entries import async_unload_platforms
+
         return await async_unload_platforms(self.hass, entry, platforms)
 
 
@@ -178,12 +182,14 @@ class StateRegistry:
             "attributes": attributes or {},
         }
 
-        await self.hass._send_message({
-            "type": "state_update",
-            "entity_id": entity_id,
-            "state": state,
-            "attributes": attributes or {},
-        })
+        await self.hass._send_message(
+            {
+                "type": "state_update",
+                "entity_id": entity_id,
+                "state": state,
+                "attributes": attributes or {},
+            }
+        )
 
     def get(self, entity_id: str) -> dict[str, Any] | None:
         """Get entity state."""
@@ -197,7 +203,9 @@ class EventBus:
         self.hass = hass
         self._listeners: dict[str, list[Callable]] = {}
 
-    async def async_fire(self, event_type: str, event_data: dict[str, Any] | None = None):
+    async def async_fire(
+        self, event_type: str, event_data: dict[str, Any] | None = None
+    ):
         """Fire an event."""
         _LOGGER.debug("Event: %s - %s", event_type, event_data)
 

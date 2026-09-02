@@ -1,0 +1,27 @@
+# Lint and format settings for hearthd's Python: the Home Assistant shim and
+# the runner that hosts it.
+#
+# This tree is a compatibility layer standing in for Home Assistant's core
+# modules, so it is held to hearthd's standards rather than Home Assistant's;
+# nothing here is vendored, and nothing here is exempt.
+
+target-version = "py314"
+line-length = 88
+
+[lint]
+# Beyond ruff's defaults (pyflakes and the pycodestyle errors), the sets that
+# earn their place on a codebase whose job is to drive an asyncio child process
+# across a socket:
+#
+#   ASYNC  blocking calls inside coroutines
+#   B      bugbear; catches closures capturing loop variables
+#   I      import ordering, so diffs stay legible
+#   RUF    ruff's own, including dangling-task detection
+#   SIM    simplifications
+#   UP     syntax available on the interpreter we actually run
+select = ["E4", "E7", "E9", "F", "ASYNC", "B", "I", "RUF", "SIM", "UP"]
+
+[lint.isort]
+# Matches the Rust side, where rustfmt is configured to give each import its
+# own line. One import per line keeps merge conflicts to the line that changed.
+force-single-line = true

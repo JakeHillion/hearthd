@@ -1,8 +1,8 @@
 """Datetime utilities for hearthd."""
 
-from datetime import datetime, timezone
+from datetime import UTC
+from datetime import datetime
 from zoneinfo import ZoneInfo
-
 
 # Default time zone (can be updated)
 _DEFAULT_TIME_ZONE: ZoneInfo = ZoneInfo("UTC")
@@ -10,14 +10,14 @@ _DEFAULT_TIME_ZONE: ZoneInfo = ZoneInfo("UTC")
 
 def utcnow() -> datetime:
     """Get now in UTC time."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def as_utc(dattim: datetime) -> datetime:
     """Return a datetime as UTC."""
     if dattim.tzinfo is None:
-        return dattim.replace(tzinfo=timezone.utc)
-    return dattim.astimezone(timezone.utc)
+        return dattim.replace(tzinfo=UTC)
+    return dattim.astimezone(UTC)
 
 
 def get_default_time_zone() -> ZoneInfo:

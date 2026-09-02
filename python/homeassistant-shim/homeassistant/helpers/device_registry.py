@@ -1,7 +1,8 @@
 """Device registry stub for hearthd."""
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+from typing import Any
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -36,7 +37,7 @@ class DeviceInfo:
 class DeviceRegistry:
     """Device registry stub."""
 
-    def __init__(self, hass: "HomeAssistant"):
+    def __init__(self, hass: HomeAssistant):
         self.hass = hass
         self._devices: dict[str, DeviceEntry] = {}
 
@@ -49,7 +50,7 @@ class DeviceRegistry:
         self._devices.pop(device_id, None)
 
 
-def async_get(hass: "HomeAssistant") -> DeviceRegistry:
+def async_get(hass: HomeAssistant) -> DeviceRegistry:
     """Get device registry."""
     if "device_registry" not in hass.data:
         hass.data["device_registry"] = DeviceRegistry(hass)

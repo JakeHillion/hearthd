@@ -4,6 +4,5 @@
 # Advisory exclusions are project policy, not local configuration.
 !/.cargo/audit.toml
 /vendor
-!/vendor/ha-core
 *.local.toml
 *.pending-snap

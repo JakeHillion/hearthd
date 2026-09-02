@@ -1,14 +1,17 @@
 """Weather component shim for hearthd."""
 
+import contextlib
 import logging
-from datetime import datetime, timezone
+from datetime import UTC
+from datetime import datetime
 from enum import IntFlag
-from typing import Any, Generic, Required, TypedDict, TypeVar
+from typing import Any
+from typing import Required
+from typing import TypedDict
+from typing import TypeVar
 
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,7 +93,7 @@ class Forecast(TypedDict, total=False):
 T = TypeVar("T", bound=DataUpdateCoordinator)
 
 
-class SingleCoordinatorWeatherEntity(CoordinatorEntity[T], Generic[T]):
+class SingleCoordinatorWeatherEntity[T: DataUpdateCoordinator](CoordinatorEntity[T]):
     """Weather entity using a single coordinator."""
 
     _attr_supported_features: int = 0
@@ -173,16 +176,14 @@ class SingleCoordinatorWeatherEntity(CoordinatorEntity[T], Generic[T]):
 
     async def async_send_state_to_rust(self) -> None:
         """Send current weather state to Rust engine."""
-        hass = getattr(self, 'hass', None)
-        if hass is None or not hasattr(hass, '_send_message'):
+        hass = getattr(self, "hass", None)
+        if hass is None or not hasattr(hass, "_send_message"):
             return
 
-        uid = getattr(self, '_attr_unique_id', None)
-        try:
+        uid = getattr(self, "_attr_unique_id", None)
+        with contextlib.suppress(Exception):
             uid = self.unique_id or uid
-        except Exception:
-            pass
-        uid = uid or 'unknown'
+        uid = uid or "unknown"
         entity_id = f"weather.{uid}"
 
         # Get condition safely (may depend on hass.sun)
@@ -223,7 +224,7 @@ class SingleCoordinatorWeatherEntity(CoordinatorEntity[T], Generic[T]):
             if self.supported_features & WeatherEntityFeature.FORECAST_DAILY:
                 daily = None
                 # Try sync _async_forecast_daily first (Met.no pattern)
-                sync_fn = getattr(self, '_async_forecast_daily', None)
+                sync_fn = getattr(self, "_async_forecast_daily", None)
                 if sync_fn is not None:
                     daily = sync_fn()
                 else:
@@ -236,7 +237,7 @@ class SingleCoordinatorWeatherEntity(CoordinatorEntity[T], Generic[T]):
         try:
             if self.supported_features & WeatherEntityFeature.FORECAST_HOURLY:
                 hourly = None
-                sync_fn = getattr(self, '_async_forecast_hourly', None)
+                sync_fn = getattr(self, "_async_forecast_hourly", None)
                 if sync_fn is not None:
                     hourly = sync_fn()
                 else:
@@ -246,11 +247,13 @@ class SingleCoordinatorWeatherEntity(CoordinatorEntity[T], Generic[T]):
         except Exception:
             _LOGGER.debug("Could not get hourly forecast", exc_info=True)
 
-        await hass._send_message({
-            "type": "state_update",
-            "entity_id": entity_id,
-            "state": condition or "unknown",
-            "attributes": attrs,
-            "units": units,
-            "last_updated": datetime.now(timezone.utc).isoformat(),
-        })
+        await hass._send_message(
+            {
+                "type": "state_update",
+                "entity_id": entity_id,
+                "state": condition or "unknown",
+                "attributes": attrs,
+                "units": units,
+                "last_updated": datetime.now(UTC).isoformat(),
+            }
+        )

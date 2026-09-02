@@ -3,10 +3,13 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any
+from typing import TypeVar
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
+from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +35,7 @@ class UpdateFailed(HomeAssistantError):
         self.translation_placeholders = translation_placeholders or {}
 
 
-class DataUpdateCoordinator(Generic[T]):
+class DataUpdateCoordinator[T]:
     """Data update coordinator base class."""
 
     def __init__(
@@ -66,23 +69,27 @@ class DataUpdateCoordinator(Generic[T]):
         await self.async_refresh()
 
         # Then register timer with Rust for periodic updates
-        if self.update_interval and hasattr(self.hass, '_send_message'):
+        if self.update_interval and hasattr(self.hass, "_send_message"):
             interval_seconds = int(self.update_interval.total_seconds())
             _LOGGER.info(
                 "Registering timer %s for %s with interval %ds",
-                self._timer_id, self.name, interval_seconds
+                self._timer_id,
+                self.name,
+                interval_seconds,
             )
 
             # Register this coordinator in hass for TriggerUpdate lookup
             self.hass._coordinators[self._timer_id] = self
 
             # Send ScheduleUpdate message to Rust
-            await self.hass._send_message({
-                "type": "schedule_update",
-                "timer_id": self._timer_id,
-                "name": self.name,
-                "interval_seconds": interval_seconds,
-            })
+            await self.hass._send_message(
+                {
+                    "type": "schedule_update",
+                    "timer_id": self._timer_id,
+                    "name": self.name,
+                    "interval_seconds": interval_seconds,
+                }
+            )
 
     async def async_refresh(self) -> None:
         """Refresh data."""
@@ -134,10 +141,10 @@ class DataUpdateCoordinator(Generic[T]):
         for listener_ref in self._listeners:
             # CoordinatorEntity registers _handle_coordinator_update as listener.
             # We need to find the entity instance bound to that method.
-            entity = getattr(listener_ref, '__self__', None)
+            entity = getattr(listener_ref, "__self__", None)
             if entity is None:
                 continue
-            send_fn = getattr(entity, 'async_send_state_to_rust', None)
+            send_fn = getattr(entity, "async_send_state_to_rust", None)
             if send_fn is not None:
                 try:
                     await send_fn()
@@ -149,7 +156,7 @@ class DataUpdateCoordinator(Generic[T]):
         await self.async_refresh()
 
 
-class CoordinatorEntity(Generic[T]):
+class CoordinatorEntity[T]:
     """Base class for entities that use a DataUpdateCoordinator."""
 
     def __init__(self, coordinator: T):

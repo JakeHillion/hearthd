@@ -1,7 +1,5 @@
 """Entity registry stub for hearthd."""
 
-from typing import Any
-
 from homeassistant.core import HomeAssistant
 
 
@@ -28,7 +26,9 @@ class EntityRegistry:
         """Check if entity is registered."""
         return entity_id in self._entries
 
-    def async_get_entity_id(self, domain: str, platform: str, unique_id: str) -> str | None:
+    def async_get_entity_id(
+        self, domain: str, platform: str, unique_id: str
+    ) -> str | None:
         """Get entity ID from unique ID."""
         # Stub implementation
         return None
