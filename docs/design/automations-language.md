@@ -397,7 +397,6 @@ if await sleep_unique(5min) {
 ```rust
 keys(map)           // Get map keys
 values(map)         // Get map values
-filter(list, fn)    // Filter list with predicate
 len(collection)     // Length/count
 ```
 

@@ -1278,23 +1278,6 @@ impl TypeChecker {
                     Some(Ty::Error)
                 }
             }
-            "filter" => {
-                if arg_types.len() != 2 {
-                    self.error(span, "filter() takes exactly 2 arguments".into());
-                    return Some(Ty::Error);
-                }
-                match &arg_types[0] {
-                    Ty::List(_) => Some(arg_types[0].clone()),
-                    Ty::Error => Some(Ty::Error),
-                    other => {
-                        self.error(
-                            span,
-                            format!("filter() first argument must be a list, found {}", other),
-                        );
-                        Some(Ty::Error)
-                    }
-                }
-            }
             _ => None,
         }
     }
