@@ -867,11 +867,43 @@ impl TypeChecker {
             }
 
             // Equality
-            ast::BinOp::Eq | ast::BinOp::Ne => Ty::Bool,
+            ast::BinOp::Eq | ast::BinOp::Ne => {
+                if self.supports_equality(left) && self.supports_equality(right) {
+                    Ty::Bool
+                } else {
+                    self.error(
+                        span,
+                        format!(
+                            "operator '{}' is not supported on {} and {}: equality is \
+                             defined on scalars and collections of them, because a \
+                             struct value carries no identity to compare",
+                            op, left, right
+                        ),
+                    );
+                    Ty::Error
+                }
+            }
 
             // Membership
             ast::BinOp::In => match right {
-                Ty::List(_) | Ty::Set(_) | Ty::Map { .. } => Ty::Bool,
+                Ty::List(_) | Ty::Set(_) | Ty::Map { .. } => {
+                    // Membership is equality against each element, so it
+                    // carries the same restriction: `x in xs` must not
+                    // answer what `x == xs[0]` refuses to.
+                    if self.supports_equality(left) && self.supports_equality(right) {
+                        Ty::Bool
+                    } else {
+                        self.error(
+                            span,
+                            format!(
+                                "'in' is not supported for {} in {}: membership compares by \
+                                 equality, and a struct value carries no identity to compare",
+                                left, right
+                            ),
+                        );
+                        Ty::Error
+                    }
+                }
                 _ => {
                     self.error(
                         span,
@@ -944,6 +976,36 @@ impl TypeChecker {
 
     fn is_numeric(&self, ty: &Ty) -> bool {
         matches!(ty, Ty::Int | Ty::Float)
+    }
+
+    /// Whether `==` and `!=` are defined on `ty`.
+    ///
+    /// Struct values carry no identity at runtime — they are a bag of
+    /// fields — so two distinct named types with the same field shape are
+    /// indistinguishable once constructed.
+    /// `TemperatureMeasurementCluster` and
+    /// `RelativeHumidityMeasurementCluster` are both a single
+    /// `measured_value`, so comparing one against the other would hold. The
+    /// checker rejects the comparison rather than answering it wrongly;
+    /// giving struct values an identity is what would lift the restriction.
+    ///
+    /// Every named type is excluded, not only the structs. Each `Event`
+    /// variant carries a cluster, so no enum in the registry is comparable
+    /// today anyway, and refusing the lot keeps this from having to reason
+    /// about payloads. Equality on an enum can come back when something
+    /// needs it.
+    ///
+    /// Containers are excluded when their elements are: a struct buried in
+    /// a list compares just as structurally as a bare one.
+    fn supports_equality(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Named(_) | Ty::EnumVariant { .. } => false,
+            Ty::List(inner) | Ty::Set(inner) | Ty::Option(inner) | Ty::Future(inner) => {
+                self.supports_equality(inner)
+            }
+            Ty::Map { key, value } => self.supports_equality(key) && self.supports_equality(value),
+            _ => true,
+        }
     }
 
     // =========================================================================
