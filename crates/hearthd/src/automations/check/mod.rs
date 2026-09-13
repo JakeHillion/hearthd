@@ -1295,10 +1295,6 @@ impl TypeChecker {
                     }
                 }
             }
-            "wait" => {
-                // wait is an alias / variant of sleep with named args
-                Some(Ty::Future(Box::new(Ty::Unit)))
-            }
             _ => None,
         }
     }

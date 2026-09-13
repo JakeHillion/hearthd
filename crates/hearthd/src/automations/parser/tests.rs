@@ -358,9 +358,9 @@ fn test_parse_named_args() {
           Int: 1
     ");
     // Named with complex expression
-    insta::assert_snapshot!(parse_expr("wait(5min, retry = cancel)").unwrap().to_pretty_string(), @r"
+    insta::assert_snapshot!(parse_expr("f(5min, retry = cancel)").unwrap().to_pretty_string(), @r"
     Call:
-      Ident: wait
+      Ident: f
       Args:
         UnitLiteral: 5min
         Named: retry
