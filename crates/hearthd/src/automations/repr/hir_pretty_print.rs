@@ -117,8 +117,8 @@ fn write_op(op: &Op, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Op::Await(tmp) => write!(f, "await {}", tmp),
         Op::Field { base, field } => write!(f, "field {}.{}", base, field),
         Op::OptionalField { base, field } => write!(f, "optional_field {}?.{}", base, field),
-        Op::Call { name, args } => {
-            write!(f, "call {}(", name)?;
+        Op::Call { function, args } => {
+            write!(f, "call {}(", function)?;
             write_tmp_list(args, f)?;
             write!(f, ")")
         }

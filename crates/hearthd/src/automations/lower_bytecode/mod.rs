@@ -253,11 +253,14 @@ fn emit(enc: &mut Encoder, instr: &LirInstr) {
             enc.write_reg(*base);
             enc.write_u32(idx);
         }
-        LirInstr::Call { dst, name, args } => {
-            let name_idx = enc.intern_ident(name);
+        LirInstr::Call {
+            dst,
+            function,
+            args,
+        } => {
             enc.write_u8(Opcode::Call as u8);
             enc.write_reg(*dst);
-            enc.write_u32(name_idx);
+            enc.write_u8(FunctionTag::from(*function) as u8);
             enc.write_u32(args.len() as u32);
             for a in args {
                 enc.write_reg(*a);

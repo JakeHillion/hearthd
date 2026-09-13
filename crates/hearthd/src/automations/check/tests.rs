@@ -443,7 +443,7 @@ fn test_check_builtin_keys() {
       Body:
         ExprStmt:
           Call: [type: [NodeId]]
-            Ident: keys [type: <error>]
+            Ident: keys [builtin]
             Args:
               Ident: nodes [type: Map<NodeId, Node>]
     Errors:
@@ -461,7 +461,7 @@ fn test_check_builtin_sleep() {
       Body:
         ExprStmt:
           Call: [type: Future<()>]
-            Ident: sleep [type: <error>]
+            Ident: sleep [builtin]
             Args:
               UnitLiteral: 5min [type: Duration]
     Errors:
@@ -479,7 +479,7 @@ fn test_check_builtin_len() {
       Body:
         ExprStmt:
           Call: [type: Int]
-            Ident: len [type: <error>]
+            Ident: len [builtin]
             Args:
               String: "hello" [type: String]
     Errors:
@@ -497,7 +497,7 @@ fn test_check_builtin_clamp() {
       Body:
         ExprStmt:
           Call: [type: Int]
-            Ident: clamp [type: <error>]
+            Ident: clamp [builtin]
             Args:
               Int: 50 [type: Int]
               Int: 0 [type: Int]
@@ -582,15 +582,12 @@ fn test_check_list_comp() {
                 Var: l
                 Iter:
                   Call: [type: [NodeId]]
-                    Ident: keys [type: <error>]
+                    Ident: keys [builtin]
                     Args:
                       Ident: nodes [type: Map<NodeId, Node>]
                 Body:
                   Push: __result0
-                    Call: [type: Event]
-                      Path: [type: Event::OnOffChanged]
-                        Segment: Event
-                        Segment: OnOffChanged
+                    VariantCtor: Event::OnOffChanged [type: Event]
                       Args:
                         Ident: l [type: NodeId]
             Result:
@@ -740,15 +737,12 @@ fn test_check_lights_off_automation() {
                 Var: l
                 Iter:
                   Call: [type: [NodeId]]
-                    Ident: keys [type: <error>]
+                    Ident: keys [builtin]
                     Args:
                       Ident: nodes [type: Map<NodeId, Node>]
                 Body:
                   Push: __result0
-                    Call: [type: Event]
-                      Path: [type: Event::OnOffChanged]
-                        Segment: Event
-                        Segment: OnOffChanged
+                    VariantCtor: Event::OnOffChanged [type: Event]
                       Args:
                         Ident: l [type: NodeId]
             Result:
@@ -780,7 +774,7 @@ fn test_check_mutator_with_computation() {
       Body:
         Let: brightness
           Call: [type: Int]
-            Ident: clamp [type: <error>]
+            Ident: clamp [builtin]
             Args:
               BinOp: * [type: Int]
                 Int: 100 [type: Int]

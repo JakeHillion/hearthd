@@ -6,12 +6,14 @@
 //! - Type errors (if any)
 
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use chumsky::span::SimpleSpan;
 use chumsky::span::Span;
 use facet::Facet;
 
 use super::repr::ast;
+use super::repr::function::FunctionIdentity;
 use super::repr::lowered;
 use super::repr::typed::CheckResult;
 use super::repr::typed::EntityConstraint;
@@ -1049,7 +1051,6 @@ impl TypeChecker {
                     .resolve_enum_variant(enum_name, variant_name)
                     .cloned()
                 {
-                    let typed_func = self.check_path(segments, func.span(), func.origin.clone());
                     let typed_args = self.check_args(args);
 
                     // For enum variant constructors, the result is a Named type
@@ -1057,8 +1058,9 @@ impl TypeChecker {
                     let ty = Ty::Named(enum_name.clone());
 
                     return TypedExpr {
-                        kind: TypedExprKind::Call {
-                            func: Box::new(typed_func),
+                        kind: TypedExprKind::VariantCtor {
+                            enum_name: enum_name.clone(),
+                            variant: variant_name.clone(),
                             args: typed_args,
                         },
                         ty,
@@ -1079,15 +1081,10 @@ impl TypeChecker {
                 })
                 .collect();
 
-            if let Some(ret_ty) = self.resolve_builtin_call(name, &arg_types, span) {
-                let typed_func = TypedExpr {
-                    kind: TypedExprKind::Ident(name.clone()),
-                    ty: Ty::Error, // function identifier type not meaningful
-                    origin: func.origin.clone(),
-                };
+            if let Some((function, ret_ty)) = self.resolve_call(name, &arg_types, span) {
                 return TypedExpr {
                     kind: TypedExprKind::Call {
-                        func: Box::new(typed_func),
+                        function,
                         args: typed_args,
                     },
                     ty: ret_ty,
@@ -1095,7 +1092,9 @@ impl TypeChecker {
                 };
             }
 
-            // Not a builtin - check if it's a variable that's callable
+            // Not a known function - check if it's a variable that's callable.
+            // Nothing can be, since `Ty` has no function type, so this only
+            // ever produces the error below.
             let func_ty = self.env.lookup(name).cloned();
             let typed_func = TypedExpr {
                 kind: TypedExprKind::Ident(name.clone()),
@@ -1108,7 +1107,7 @@ impl TypeChecker {
             }
 
             return TypedExpr {
-                kind: TypedExprKind::Call {
+                kind: TypedExprKind::UnresolvedCall {
                     func: Box::new(typed_func),
                     args: typed_args,
                 },
@@ -1117,12 +1116,13 @@ impl TypeChecker {
             };
         }
 
-        // Generic call expression
+        // Generic call expression: the callee is not even a name, so there is
+        // nothing to resolve.
         let typed_func = self.check_expr(func);
         let typed_args = self.check_args(args);
 
         TypedExpr {
-            kind: TypedExprKind::Call {
+            kind: TypedExprKind::UnresolvedCall {
                 func: Box::new(typed_func),
                 args: typed_args,
             },
@@ -1144,17 +1144,21 @@ impl TypeChecker {
             })
             .collect()
     }
-
-    /// Resolve a call to a built-in function. Returns `Some(return_type)` if
-    /// the name is a known builtin, `None` otherwise.
-    fn resolve_builtin_call(
+    /// Resolve a call to a function the language defines, returning its
+    /// identity and return type. `None` if the name is not a known function.
+    ///
+    /// Resolution happens here and only here: the returned identity is what
+    /// every stage below carries, so nothing downstream looks a function up
+    /// by name.
+    fn resolve_call(
         &mut self,
         name: &str,
         arg_types: &[Ty],
         span: SimpleSpan,
-    ) -> Option<Ty> {
-        match name {
-            "sleep" => {
+    ) -> Option<(FunctionIdentity, Ty)> {
+        let function = FunctionIdentity::from_str(name).ok()?;
+        let ret_ty = match function {
+            FunctionIdentity::Sleep => {
                 if arg_types.len() != 1 {
                     self.error(span, "sleep() takes exactly 1 argument".into());
                 } else if arg_types[0] != Ty::Duration && arg_types[0] != Ty::Error {
@@ -1163,9 +1167,9 @@ impl TypeChecker {
                         format!("sleep() requires Duration, found {}", arg_types[0]),
                     );
                 }
-                Some(Ty::Future(Box::new(Ty::Unit)))
+                Ty::Future(Box::new(Ty::Unit))
             }
-            "sleep_unique" => {
+            FunctionIdentity::SleepUnique => {
                 if arg_types.len() != 1 {
                     self.error(span, "sleep_unique() takes exactly 1 argument".into());
                 } else if arg_types[0] != Ty::Duration && arg_types[0] != Ty::Error {
@@ -1174,37 +1178,37 @@ impl TypeChecker {
                         format!("sleep_unique() requires Duration, found {}", arg_types[0]),
                     );
                 }
-                Some(Ty::Future(Box::new(Ty::Bool)))
+                Ty::Future(Box::new(Ty::Bool))
             }
-            "keys" => {
+            FunctionIdentity::Keys => {
                 if arg_types.len() != 1 {
                     self.error(span, "keys() takes exactly 1 argument".into());
-                    return Some(Ty::Error);
+                    return Some((function, Ty::Error));
                 }
                 match &arg_types[0] {
-                    Ty::Map { key, .. } => Some(Ty::List(key.clone())),
-                    Ty::Error => Some(Ty::List(Box::new(Ty::Error))),
+                    Ty::Map { key, .. } => Ty::List(key.clone()),
+                    Ty::Error => Ty::List(Box::new(Ty::Error)),
                     other => {
                         self.error(span, format!("keys() requires Map, found {}", other));
-                        Some(Ty::Error)
+                        Ty::Error
                     }
                 }
             }
-            "values" => {
+            FunctionIdentity::Values => {
                 if arg_types.len() != 1 {
                     self.error(span, "values() takes exactly 1 argument".into());
-                    return Some(Ty::Error);
+                    return Some((function, Ty::Error));
                 }
                 match &arg_types[0] {
-                    Ty::Map { value, .. } => Some(Ty::List(value.clone())),
-                    Ty::Error => Some(Ty::List(Box::new(Ty::Error))),
+                    Ty::Map { value, .. } => Ty::List(value.clone()),
+                    Ty::Error => Ty::List(Box::new(Ty::Error)),
                     other => {
                         self.error(span, format!("values() requires Map, found {}", other));
-                        Some(Ty::Error)
+                        Ty::Error
                     }
                 }
             }
-            "len" => {
+            FunctionIdentity::Len => {
                 if arg_types.len() != 1 {
                     self.error(span, "len() takes exactly 1 argument".into());
                 } else {
@@ -1218,35 +1222,35 @@ impl TypeChecker {
                         }
                     }
                 }
-                Some(Ty::Int)
+                Ty::Int
             }
-            "abs" => {
+            FunctionIdentity::Abs => {
                 if arg_types.len() != 1 {
                     self.error(span, "abs() takes exactly 1 argument".into());
-                    return Some(Ty::Error);
+                    return Some((function, Ty::Error));
                 }
                 if self.is_numeric(&arg_types[0]) || arg_types[0] == Ty::Error {
-                    Some(arg_types[0].clone())
+                    arg_types[0].clone()
                 } else {
                     self.error(
                         span,
                         format!("abs() requires numeric type, found {}", arg_types[0]),
                     );
-                    Some(Ty::Error)
+                    Ty::Error
                 }
             }
-            "min" | "max" => {
+            FunctionIdentity::Min | FunctionIdentity::Max => {
                 if arg_types.len() != 2 {
                     self.error(span, format!("{}() takes exactly 2 arguments", name));
-                    return Some(Ty::Error);
+                    return Some((function, Ty::Error));
                 }
                 if (self.is_numeric(&arg_types[0]) || arg_types[0] == Ty::Error)
                     && (self.is_numeric(&arg_types[1]) || arg_types[1] == Ty::Error)
                 {
                     if arg_types[0] == Ty::Float || arg_types[1] == Ty::Float {
-                        Some(Ty::Float)
+                        Ty::Float
                     } else {
-                        Some(Ty::Int)
+                        Ty::Int
                     }
                 } else {
                     self.error(
@@ -1256,30 +1260,30 @@ impl TypeChecker {
                             name, arg_types[0], arg_types[1]
                         ),
                     );
-                    Some(Ty::Error)
+                    Ty::Error
                 }
             }
-            "clamp" => {
+            FunctionIdentity::Clamp => {
                 if arg_types.len() != 3 {
                     self.error(span, "clamp() takes exactly 3 arguments".into());
-                    return Some(Ty::Error);
+                    return Some((function, Ty::Error));
                 }
                 let all_numeric = arg_types
                     .iter()
                     .all(|t| self.is_numeric(t) || *t == Ty::Error);
                 if all_numeric {
                     if arg_types.contains(&Ty::Float) {
-                        Some(Ty::Float)
+                        Ty::Float
                     } else {
-                        Some(Ty::Int)
+                        Ty::Int
                     }
                 } else {
                     self.error(span, "clamp() requires numeric arguments".into());
-                    Some(Ty::Error)
+                    Ty::Error
                 }
             }
-            _ => None,
-        }
+        };
+        Some((function, ret_ty))
     }
 
     // =========================================================================
@@ -1403,11 +1407,12 @@ fn find_await_span(expr: &TypedExpr) -> Option<SimpleSpan> {
         TypedExprKind::Field { expr, .. } | TypedExprKind::OptionalField { expr, .. } => {
             find_await_span(expr)
         }
-        TypedExprKind::Call { func, args } => find_await_span(func).or_else(|| {
-            args.iter().find_map(|arg| match arg {
-                TypedArg::Positional(e) | TypedArg::Named { value: e, .. } => find_await_span(e),
-            })
-        }),
+        TypedExprKind::Call { args, .. } | TypedExprKind::VariantCtor { args, .. } => {
+            find_await_args(args)
+        }
+        TypedExprKind::UnresolvedCall { func, args } => {
+            find_await_span(func).or_else(|| find_await_args(args))
+        }
         TypedExprKind::If {
             cond,
             then_block,
@@ -1437,6 +1442,13 @@ fn find_await_span(expr: &TypedExpr) -> Option<SimpleSpan> {
         | TypedExprKind::Path(_)
         | TypedExprKind::MutableList => None,
     }
+}
+
+/// Find the first `await` in a call's arguments.
+fn find_await_args(args: &[TypedArg]) -> Option<SimpleSpan> {
+    args.iter().find_map(|arg| match arg {
+        TypedArg::Positional(e) | TypedArg::Named { value: e, .. } => find_await_span(e),
+    })
 }
 
 fn find_await_in_stmt(stmt: &TypedStmt) -> Option<SimpleSpan> {

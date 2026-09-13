@@ -44,19 +44,33 @@ impl PrettyPrint for TypedExpr {
                 writeln!(f, "OptionalField: ?.{} [type: {}]", field, self.ty)?;
                 expr.pretty_print(indent + 1, f)
             }
-            TypedExprKind::Call { func, args } => {
+            TypedExprKind::Call { function, args } => {
                 writeln!(f, "Call: [type: {}]", self.ty)?;
-                func.pretty_print(indent + 1, f)?;
+                // The callee gets its own line, annotated with what kind of
+                // function it resolved to rather than with a type. Functions
+                // are not values here, so it never had a meaningful type; if
+                // user-defined functions arrive, this is where they are
+                // distinguished from the built-in ones.
                 write_indent(indent + 1, f)?;
-                if args.is_empty() {
-                    writeln!(f, "Args: (none)")
-                } else {
-                    writeln!(f, "Args:")?;
-                    for arg in args {
-                        arg.pretty_print(indent + 2, f)?;
-                    }
-                    Ok(())
-                }
+                writeln!(f, "Ident: {} [builtin]", function)?;
+                write_args(args, indent + 1, f)
+            }
+            TypedExprKind::VariantCtor {
+                enum_name,
+                variant,
+                args,
+            } => {
+                writeln!(
+                    f,
+                    "VariantCtor: {}::{} [type: {}]",
+                    enum_name, variant, self.ty
+                )?;
+                write_args(args, indent + 1, f)
+            }
+            TypedExprKind::UnresolvedCall { func, args } => {
+                writeln!(f, "UnresolvedCall: [type: {}]", self.ty)?;
+                func.pretty_print(indent + 1, f)?;
+                write_args(args, indent + 1, f)
             }
             TypedExprKind::If {
                 cond,
@@ -259,6 +273,24 @@ impl PrettyPrint for CheckResult {
                 write_indent(indent + 1, f)?;
                 writeln!(f, "{}", e)?;
             }
+        }
+        Ok(())
+    }
+}
+
+/// Write a call's argument list, or `Args: (none)` when there are none.
+fn write_args(
+    args: &[TypedArg],
+    indent: usize,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    write_indent(indent, f)?;
+    if args.is_empty() {
+        writeln!(f, "Args: (none)")
+    } else {
+        writeln!(f, "Args:")?;
+        for arg in args {
+            arg.pretty_print(indent + 1, f)?;
         }
         Ok(())
     }

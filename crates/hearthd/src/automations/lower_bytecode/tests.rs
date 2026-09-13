@@ -115,20 +115,19 @@ fn test_lower_bytecode_list_comprehension() {
           r0: state [State]
         consts:
           #0 = ident nodes
-          #1 = ident keys
-          #2 = ident Event
-          #3 = ident OnOffChanged
+          #1 = ident Event
+          #2 = ident OnOffChanged
         code:
           0000: field              r1, r0, #0 (nodes)
           0013: empty_list         r2
-          0018: call               r3, #1 (keys), [r1]
-          0035: iter_init          r4, r3
-          0044: jump               0049
-          0049: iter_next          r4, r5, 0066, 0101
-          0066: variant            r6, #2 (Event), #3 (OnOffChanged), [r5]
-          0087: list_push          r2, r6
-          0096: jump               0049
-          0101: return             r2
+          0018: call               r3, keys, [r1]
+          0032: iter_init          r4, r3
+          0041: jump               0046
+          0046: iter_next          r4, r5, 0063, 0098
+          0063: variant            r6, #1 (Event), #2 (OnOffChanged), [r5]
+          0084: list_push          r2, r6
+          0093: jump               0046
+          0098: return             r2
     ");
 }
 
@@ -153,19 +152,18 @@ fn test_lower_bytecode_sleep_unique() {
         regs: 6
         consts:
           #0 = unit 5min
-          #1 = ident sleep_unique
         code:
           0000: load_const_unit    r1, #0 (5min)
-          0009: call               r2, #1 (sleep_unique), [r1]
-          0026: await              r3, r2
-          0035: jump_if            r3, 0048, 0067
-          0048: empty_list         r4
-          0053: copy               r0, r4
-          0062: jump               0086
-          0067: empty_list         r5
-          0072: copy               r0, r5
-          0081: jump               0086
-          0086: return             r0
+          0009: call               r2, sleep_unique, [r1]
+          0023: await              r3, r2
+          0032: jump_if            r3, 0045, 0064
+          0045: empty_list         r4
+          0050: copy               r0, r4
+          0059: jump               0083
+          0064: empty_list         r5
+          0069: copy               r0, r5
+          0078: jump               0083
+          0083: return             r0
     ");
 }
 
@@ -490,19 +488,18 @@ fn test_lower_bytecode_interns_repeated_ident() {
           #0 = int 1
           #1 = int 0
           #2 = int 9
-          #3 = ident clamp
-          #4 = int 2
+          #3 = int 2
         code:
           0000: load_const_int     r0, #0 (int 1)
           0009: load_const_int     r1, #1 (int 0)
           0018: load_const_int     r2, #2 (int 9)
-          0027: call               r3, #3 (clamp), [r0, r1, r2]
-          0052: load_const_int     r4, #4 (int 2)
-          0061: load_const_int     r5, #1 (int 0)
-          0070: load_const_int     r6, #2 (int 9)
-          0079: call               r7, #3 (clamp), [r4, r5, r6]
-          0104: empty_list         r8
-          0109: return             r8
+          0027: call               r3, clamp, [r0, r1, r2]
+          0049: load_const_int     r4, #3 (int 2)
+          0058: load_const_int     r5, #1 (int 0)
+          0067: load_const_int     r6, #2 (int 9)
+          0076: call               r7, clamp, [r4, r5, r6]
+          0098: empty_list         r8
+          0103: return             r8
     ");
 }
 

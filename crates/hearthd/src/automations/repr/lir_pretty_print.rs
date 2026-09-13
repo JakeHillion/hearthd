@@ -99,8 +99,12 @@ fn write_instr(instr: &LirInstr, f: &mut std::fmt::Formatter<'_>) -> std::fmt::R
         LirInstr::OptionalField { dst, base, field } => {
             write!(f, "{} = optional_field {}?.{}", dst, base, field)
         }
-        LirInstr::Call { dst, name, args } => {
-            write!(f, "{} = call {}(", dst, name)?;
+        LirInstr::Call {
+            dst,
+            function,
+            args,
+        } => {
+            write!(f, "{} = call {}(", dst, function)?;
             write_reg_list(args, f)?;
             write!(f, ")")
         }

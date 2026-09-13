@@ -6,6 +6,7 @@
 //! for later linking.
 
 use super::ast;
+use super::function::FunctionIdentity;
 use super::typed::Ty;
 
 /// A numbered temporary value.
@@ -112,7 +113,7 @@ pub enum Op {
 
     // === Function calls (all args positional) ===
     Call {
-        name: String,
+        function: FunctionIdentity,
         args: Vec<Tmp>,
     },
 

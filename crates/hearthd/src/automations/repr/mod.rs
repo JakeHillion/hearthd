@@ -5,6 +5,7 @@
 
 pub mod ast;
 pub mod bytecode;
+pub mod function;
 pub mod hir;
 pub mod lir;
 pub mod lowered;
@@ -22,9 +23,11 @@ mod typed_pretty_print;
 pub use ast::*;
 // Re-export bytecode types
 pub use bytecode::{
-    BinOpTag, Bytecode, BytecodeAutomation, BytecodeParam, BytecodeProgram, Const, Opcode,
-    StructFieldTag,
+    BinOpTag, Bytecode, BytecodeAutomation, BytecodeParam, BytecodeProgram, Const, FunctionTag,
+    Opcode, StructFieldTag,
 };
+// Re-export function identities
+pub use function::FunctionIdentity;
 // Re-export HIR types
 pub use hir::{
     BasicBlock, BlockId, HirAutomation, HirBinOp, HirFunction, HirProgram, HirStructField,

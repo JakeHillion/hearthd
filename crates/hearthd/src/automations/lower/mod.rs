@@ -405,7 +405,37 @@ impl Lowerer {
                 )
             }
 
-            TypedExprKind::Call { func, args } => self.lower_call(func, args, &expr.ty),
+            TypedExprKind::Call { function, args } => {
+                let lowered_args = self.lower_args(args);
+                self.emit(
+                    Op::Call {
+                        function: *function,
+                        args: lowered_args,
+                    },
+                    expr.ty.clone(),
+                )
+            }
+
+            TypedExprKind::VariantCtor {
+                enum_name,
+                variant,
+                args,
+            } => {
+                let lowered_args = self.lower_args(args);
+                self.emit(
+                    Op::Variant {
+                        enum_name: enum_name.clone(),
+                        variant: variant.clone(),
+                        args: lowered_args,
+                    },
+                    expr.ty.clone(),
+                )
+            }
+
+            // Already reported as a type error, so there is no call to emit.
+            // Lowering still runs on rejected programs, so emit a placeholder
+            // rather than refusing.
+            TypedExprKind::UnresolvedCall { .. } => self.emit(Op::Unit, expr.ty.clone()),
 
             TypedExprKind::If {
                 cond,
@@ -553,38 +583,6 @@ impl Lowerer {
     // ========================================================================
     // Call lowering
     // ========================================================================
-
-    fn lower_call(&mut self, func: &TypedExpr, args: &[TypedArg], result_ty: &Ty) -> Tmp {
-        // Enum variant constructor: Call to a Path with EnumVariant type.
-        if let TypedExprKind::Path(segments) = &func.kind {
-            if segments.len() == 2 {
-                let lowered_args = self.lower_args(args);
-                return self.emit(
-                    Op::Variant {
-                        enum_name: segments[0].clone(),
-                        variant: segments[1].clone(),
-                        args: lowered_args,
-                    },
-                    result_ty.clone(),
-                );
-            }
-        }
-
-        // Regular (builtin) function call.
-        let name = match &func.kind {
-            TypedExprKind::Ident(name) => name.clone(),
-            _ => "<unknown>".into(),
-        };
-
-        let lowered_args = self.lower_args(args);
-        self.emit(
-            Op::Call {
-                name,
-                args: lowered_args,
-            },
-            result_ty.clone(),
-        )
-    }
 
     fn lower_args(&mut self, args: &[TypedArg]) -> Vec<Tmp> {
         args.iter()

@@ -16,6 +16,7 @@
 use strum::FromRepr;
 
 use super::ast;
+use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::typed::Ty;
 
@@ -51,7 +52,8 @@ pub enum Opcode {
     Field = 0x20,
     OptionalField = 0x21,
 
-    // === 0x3_: construction by name (resolved against the constant pool) ===
+    // === 0x3_: calls and construction ===
+    /// Callee is a `FunctionTag`, resolved by the checker.
     Call = 0x30,
     Variant = 0x31,
 
@@ -129,6 +131,59 @@ impl From<BinOpTag> for HirBinOp {
             BinOpTag::Gt => HirBinOp::Gt,
             BinOpTag::Ge => HirBinOp::Ge,
             BinOpTag::In => HirBinOp::In,
+        }
+    }
+}
+
+/// Tag byte identifying the function a `Call` instruction targets. Stable
+/// values, mirroring [`super::function::FunctionIdentity`] the way
+/// [`BinOpTag`] mirrors [`HirBinOp`].
+///
+/// Calls are resolved by the checker, so the callee is a tag rather than a
+/// constant-pool name: nothing below the checker looks a function up by
+/// name, and the VM cannot fail to resolve one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
+#[repr(u8)]
+pub enum FunctionTag {
+    Len = 0,
+    Abs = 1,
+    Min = 2,
+    Max = 3,
+    Clamp = 4,
+    Keys = 5,
+    Values = 6,
+    Sleep = 7,
+    SleepUnique = 8,
+}
+
+impl From<FunctionIdentity> for FunctionTag {
+    fn from(function: FunctionIdentity) -> Self {
+        match function {
+            FunctionIdentity::Len => FunctionTag::Len,
+            FunctionIdentity::Abs => FunctionTag::Abs,
+            FunctionIdentity::Min => FunctionTag::Min,
+            FunctionIdentity::Max => FunctionTag::Max,
+            FunctionIdentity::Clamp => FunctionTag::Clamp,
+            FunctionIdentity::Keys => FunctionTag::Keys,
+            FunctionIdentity::Values => FunctionTag::Values,
+            FunctionIdentity::Sleep => FunctionTag::Sleep,
+            FunctionIdentity::SleepUnique => FunctionTag::SleepUnique,
+        }
+    }
+}
+
+impl From<FunctionTag> for FunctionIdentity {
+    fn from(tag: FunctionTag) -> Self {
+        match tag {
+            FunctionTag::Len => FunctionIdentity::Len,
+            FunctionTag::Abs => FunctionIdentity::Abs,
+            FunctionTag::Min => FunctionIdentity::Min,
+            FunctionTag::Max => FunctionIdentity::Max,
+            FunctionTag::Clamp => FunctionIdentity::Clamp,
+            FunctionTag::Keys => FunctionIdentity::Keys,
+            FunctionTag::Values => FunctionIdentity::Values,
+            FunctionTag::Sleep => FunctionIdentity::Sleep,
+            FunctionTag::SleepUnique => FunctionIdentity::SleepUnique,
         }
     }
 }
