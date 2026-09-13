@@ -6,3 +6,4 @@
 /vendor
 *.local.toml
 *.pending-snap
+/.direnv/
