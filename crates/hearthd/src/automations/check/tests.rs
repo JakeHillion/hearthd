@@ -1142,3 +1142,132 @@ fn test_error_multiple_errors() {
     ───╯
     "#);
 }
+
+/// Struct values are a bag of fields at runtime, so two named types with
+/// the same shape would compare equal. `TemperatureMeasurementCluster` and
+/// `RelativeHumidityMeasurementCluster` are both a single `measured_value`,
+/// which is exactly the pair that would silently hold.
+#[test]
+fn test_error_struct_equality_is_rejected() {
+    let result = check_errors(
+        "observer { event, ... } /TemperatureMeasurementCluster { measured_value: 20 } == RelativeHumidityMeasurementCluster { measured_value: 20 }/ { [event] }",
+    );
+    insta::assert_snapshot!(result, @"
+    Error: operator '==' is not supported on TemperatureMeasurementCluster and RelativeHumidityMeasurementCluster: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /TemperatureMeasurementCluster { measured_value: 20 } == RelativeHumidityMeasurementCluster { measured_value: 20 }/ { [event] }
+       │                          ────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────  
+       │                                                                                  ╰────────────────────────────────────────────────────────── operator '==' is not supported on TemperatureMeasurementCluster and RelativeHumidityMeasurementCluster: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+    ───╯
+    ");
+}
+
+/// The restriction follows the value: a struct inside a list compares just
+/// as structurally as a bare one.
+#[test]
+fn test_error_struct_equality_through_list_is_rejected() {
+    let result = check_errors(
+        "observer { event, ... } /[TemperatureMeasurementCluster { measured_value: 20 }] == [RelativeHumidityMeasurementCluster { measured_value: 20 }]/ { [event] }",
+    );
+    insta::assert_snapshot!(result, @"
+    Error: operator '==' is not supported on [TemperatureMeasurementCluster] and [RelativeHumidityMeasurementCluster]: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /[TemperatureMeasurementCluster { measured_value: 20 }] == [RelativeHumidityMeasurementCluster { measured_value: 20 }]/ { [event] }
+       │                          ──────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────  
+       │                                                                                    ╰──────────────────────────────────────────────────────────── operator '==' is not supported on [TemperatureMeasurementCluster] and [RelativeHumidityMeasurementCluster]: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+    ───╯
+    ");
+}
+
+/// Enums go with them. Every `Event` variant carries a cluster, so none is
+/// comparable today; refusing all named types avoids reasoning about
+/// payloads, and equality can come back when something needs it.
+#[test]
+fn test_error_event_equality_is_rejected() {
+    let result = check_errors("observer { event, ... } /event == event/ { [event] }");
+    insta::assert_snapshot!(result, @"
+    Error: operator '==' is not supported on Event and Event: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /event == event/ { [event] }
+       │                          ───────┬──────  
+       │                                 ╰──────── operator '==' is not supported on Event and Event: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+    ───╯
+    ");
+}
+
+/// Scalars, strings, unit literals and lists of them are unaffected.
+#[test]
+fn test_equality_on_scalars_still_checks() {
+    for src in [
+        "observer { event, ... } /1 == 1.0/ { [event] }",
+        r#"observer { event, ... } /"a" != "b"/ { [event] }"#,
+        "observer { event, ... } /5min == 5min/ { [event] }",
+        "observer { event, ... } /[1] == [1.0]/ { [event] }",
+        "observer { event, ... } /event.node_id == 1/ { [event] }",
+    ] {
+        let program = crate::automations::parse(src).expect("source should parse");
+        let lowered = crate::automations::desugar_program(program);
+        let checked = check_program(&lowered);
+        assert!(
+            checked.errors.is_empty(),
+            "{src} should check cleanly, got {:?}",
+            checked.errors,
+        );
+    }
+}
+
+/// Membership is equality against each element, so `in` carries the same
+/// restriction — otherwise `x in xs` would answer what `x == xs[0]`
+/// refuses to.
+#[test]
+fn test_error_struct_membership_is_rejected() {
+    let result = check_errors(
+        "observer { event, ... } /TemperatureMeasurementCluster { measured_value: 20 } in [RelativeHumidityMeasurementCluster { measured_value: 20 }]/ { [event] }",
+    );
+    insta::assert_snapshot!(result, @"
+    Error: 'in' is not supported for TemperatureMeasurementCluster in [RelativeHumidityMeasurementCluster]: membership compares by equality, and a struct value carries no identity to compare
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /TemperatureMeasurementCluster { measured_value: 20 } in [RelativeHumidityMeasurementCluster { measured_value: 20 }]/ { [event] }
+       │                          ─────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────  
+       │                                                                                   ╰─────────────────────────────────────────────────────────── 'in' is not supported for TemperatureMeasurementCluster in [RelativeHumidityMeasurementCluster]: membership compares by equality, and a struct value carries no identity to compare
+    ───╯
+    ");
+}
+
+#[test]
+fn test_error_event_membership_is_rejected() {
+    let result = check_errors("observer { event, ... } /event in [event]/ { [event] }");
+    insta::assert_snapshot!(result, @"
+    Error: 'in' is not supported for Event in [Event]: membership compares by equality, and a struct value carries no identity to compare
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /event in [event]/ { [event] }
+       │                          ────────┬───────  
+       │                                  ╰───────── 'in' is not supported for Event in [Event]: membership compares by equality, and a struct value carries no identity to compare
+    ───╯
+    ");
+}
+
+/// Membership over scalars is unaffected.
+#[test]
+fn test_membership_on_scalars_still_checks() {
+    for src in [
+        "observer { event, ... } /1 in [1, 2]/ { [event] }",
+        "observer { event, ... } /1 in [1.0]/ { [event] }",
+        r#"observer { event, ... } /"a" in ["a", "b"]/ { [event] }"#,
+        "observer { event, ... } /event.node_id in [1, 7]/ { [event] }",
+    ] {
+        let program = crate::automations::parse(src).expect("source should parse");
+        let lowered = crate::automations::desugar_program(program);
+        let checked = check_program(&lowered);
+        assert!(
+            checked.errors.is_empty(),
+            "{src} should check cleanly, got {:?}",
+            checked.errors,
+        );
+    }
+}
