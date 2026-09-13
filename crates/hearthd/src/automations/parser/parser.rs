@@ -204,58 +204,61 @@ where
         ));
 
         // Field access and function calls
-        let call = atom.clone().foldl_with(
-            choice((
-                // Function call: (args)
-                arg.separated_by(just(Token::Comma))
-                    .allow_trailing()
-                    .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LParen), just(Token::RParen))
-                    .map(PostfixOp::Call),
-                // Field access: .field
-                just(Token::Dot)
-                    .ignore_then(select! { Token::Ident(s) => s })
-                    .map(PostfixOp::Field),
-                // Optional chaining: ?.field
-                just(Token::Question)
-                    .then(just(Token::Dot))
-                    .ignore_then(select! { Token::Ident(s) => s })
-                    .map(PostfixOp::OptionalField),
-                // Path segment: ::Ident
-                just(Token::ColonColon)
-                    .ignore_then(select! { Token::Ident(s) => s })
-                    .map(PostfixOp::PathSegment),
-            ))
-            .repeated(),
-            |expr, op, e| {
-                let node = match op {
-                    PostfixOp::Call(args) => Expr::Call {
-                        func: Box::new(expr),
-                        args,
-                    },
-                    PostfixOp::Field(field) => Expr::Field {
-                        expr: Box::new(expr),
-                        field,
-                    },
-                    PostfixOp::OptionalField(field) => Expr::OptionalField {
-                        expr: Box::new(expr),
-                        field,
-                    },
-                    PostfixOp::PathSegment(segment) => {
-                        // Build path from Ident or extend existing Path
-                        match expr.node {
-                            Expr::Ident(first) => Expr::Path(vec![first, segment]),
-                            Expr::Path(mut segments) => {
-                                segments.push(segment);
-                                Expr::Path(segments)
+        let call = atom
+            .clone()
+            .foldl_with(
+                choice((
+                    // Function call: (args)
+                    arg.separated_by(just(Token::Comma))
+                        .allow_trailing()
+                        .collect::<Vec<_>>()
+                        .delimited_by(just(Token::LParen), just(Token::RParen))
+                        .map(PostfixOp::Call),
+                    // Field access: .field
+                    just(Token::Dot)
+                        .ignore_then(select! { Token::Ident(s) => s })
+                        .map(PostfixOp::Field),
+                    // Optional chaining: ?.field
+                    just(Token::Question)
+                        .then(just(Token::Dot))
+                        .ignore_then(select! { Token::Ident(s) => s })
+                        .map(PostfixOp::OptionalField),
+                    // Path segment: ::Ident
+                    just(Token::ColonColon)
+                        .ignore_then(select! { Token::Ident(s) => s })
+                        .map(PostfixOp::PathSegment),
+                ))
+                .repeated(),
+                |expr, op, e| {
+                    let node = match op {
+                        PostfixOp::Call(args) => Expr::Call {
+                            func: Box::new(expr),
+                            args,
+                        },
+                        PostfixOp::Field(field) => Expr::Field {
+                            expr: Box::new(expr),
+                            field,
+                        },
+                        PostfixOp::OptionalField(field) => Expr::OptionalField {
+                            expr: Box::new(expr),
+                            field,
+                        },
+                        PostfixOp::PathSegment(segment) => {
+                            // Build path from Ident or extend existing Path
+                            match expr.node {
+                                Expr::Ident(first) => Expr::Path(vec![first, segment]),
+                                Expr::Path(mut segments) => {
+                                    segments.push(segment);
+                                    Expr::Path(segments)
+                                }
+                                _ => Expr::Path(vec![segment]), // Fallback, shouldn't happen
                             }
-                            _ => Expr::Path(vec![segment]), // Fallback, shouldn't happen
                         }
-                    }
-                };
-                Spanned::new(node, e.span())
-            },
-        );
+                    };
+                    Spanned::new(node, e.span())
+                },
+            )
+            .boxed();
 
         // Unary operators
         let unary_op = select! {
@@ -265,15 +268,18 @@ where
             Token::Await => UnaryOp::Await,
         };
 
-        let unary = unary_op.repeated().foldr_with(call, |op, expr, e| {
-            Spanned::new(
-                Expr::UnaryOp {
-                    op,
-                    expr: Box::new(expr),
-                },
-                e.span(),
-            )
-        });
+        let unary = unary_op
+            .repeated()
+            .foldr_with(call, |op, expr, e| {
+                Spanned::new(
+                    Expr::UnaryOp {
+                        op,
+                        expr: Box::new(expr),
+                    },
+                    e.span(),
+                )
+            })
+            .boxed();
 
         // Multiplicative: *, /, %
         let mul_op = select! {
@@ -282,19 +288,19 @@ where
             Token::Percent => BinOp::Mod,
         };
 
-        let mul =
-            unary
-                .clone()
-                .foldl_with(mul_op.then(unary).repeated(), |left, (op, right), e| {
-                    Spanned::new(
-                        Expr::BinOp {
-                            op,
-                            left: Box::new(left),
-                            right: Box::new(right),
-                        },
-                        e.span(),
-                    )
-                });
+        let mul = unary
+            .clone()
+            .foldl_with(mul_op.then(unary).repeated(), |left, (op, right), e| {
+                Spanned::new(
+                    Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    e.span(),
+                )
+            })
+            .boxed();
 
         // Additive: +, -
         let add_op = select! {
@@ -313,7 +319,8 @@ where
                     },
                     e.span(),
                 )
-            });
+            })
+            .boxed();
 
         // Comparison: <, >, <=, >=, in
         let cmp_op = select! {
@@ -335,7 +342,8 @@ where
                     },
                     e.span(),
                 )
-            });
+            })
+            .boxed();
 
         // Equality: ==, !=
         let eq_op = select! {
@@ -354,7 +362,8 @@ where
                     },
                     e.span(),
                 )
-            });
+            })
+            .boxed();
 
         // Logical AND: &&
         let and_op = select! { Token::And => BinOp::And };
@@ -370,7 +379,8 @@ where
                     },
                     e.span(),
                 )
-            });
+            })
+            .boxed();
 
         // Logical OR: ||
         let or_op = select! { Token::Or => BinOp::Or };
