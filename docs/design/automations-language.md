@@ -218,12 +218,14 @@ observer {
    && event.device == person_tracker.jake
    && event.from == zone.home/ {
 
-  wait(5 minutes, retry = cancel);
-
-  if *person_tracker.jake != Zone::Home {
-    [ Event::LightOff(l) for l in keys(lights) ]
+  if await sleep_unique(5min) {
+    if *person_tracker.jake != Zone::Home {
+      [ Event::LightOff(l) for l in keys(lights) ]
+    } else {
+      []
+    }
   } else {
-    []
+    [] // Cancelled by a newer instance
   }
 }
 ```
@@ -338,7 +340,7 @@ Event {
 ```rust
 function(arg1, arg2)
 keys(lights)
-wait(5 minutes, retry = cancel)
+function(arg, name = value)
 ```
 
 #### Field Access

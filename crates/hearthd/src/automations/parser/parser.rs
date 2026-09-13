@@ -193,7 +193,7 @@ where
 
         // Function argument: either `name = expr` (named) or `expr` (positional)
         let arg = choice((
-            // Named: ident = expr (per design doc: `wait(5 minutes, retry = cancel)`)
+            // Named: ident = expr (per design doc: `function(arg, name = value)`)
             select! { Token::Ident(s) => s }
                 .then_ignore(just(Token::Assign))
                 .then(expr.clone())
