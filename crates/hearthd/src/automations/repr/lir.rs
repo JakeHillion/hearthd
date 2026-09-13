@@ -14,6 +14,7 @@
 //! `num_regs = max_tmp + 1`.
 
 use super::ast;
+use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::typed::Ty;
 
@@ -139,7 +140,7 @@ pub enum LirInstr {
     // === Calls / variants ===
     Call {
         dst: Reg,
-        name: String,
+        function: FunctionIdentity,
         args: Vec<Reg>,
     },
     Variant {

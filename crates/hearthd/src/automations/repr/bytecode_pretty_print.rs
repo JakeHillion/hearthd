@@ -5,6 +5,7 @@
 //! are readable.
 
 use super::bytecode::*;
+use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::pretty_print::PrettyPrint;
 use super::pretty_print::write_indent;
@@ -197,16 +198,16 @@ fn disassemble(
             }
             Opcode::Call => {
                 let dst = read_u32(code, &mut pc);
-                let name_idx = read_u32(code, &mut pc);
+                let tag = FunctionTag::from_repr(code[pc]).expect("invalid function tag");
+                pc += 1;
                 let n = read_u32(code, &mut pc);
                 let args: Vec<u32> = (0..n).map(|_| read_u32(code, &mut pc)).collect();
                 writeln!(
                     f,
-                    "{:<18} r{}, #{} ({}), [{}]",
+                    "{:<18} r{}, {}, [{}]",
                     "call",
                     dst,
-                    name_idx,
-                    const_brief(consts, name_idx),
+                    FunctionIdentity::from(tag),
                     args.iter()
                         .map(|r| format!("r{}", r))
                         .collect::<Vec<_>>()

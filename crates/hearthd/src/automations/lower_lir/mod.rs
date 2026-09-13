@@ -126,9 +126,9 @@ fn lower_instr(instr: &Instruction) -> LirInstr {
             base: Reg(base.0),
             field: field.clone(),
         },
-        Op::Call { name, args } => LirInstr::Call {
+        Op::Call { function, args } => LirInstr::Call {
             dst,
-            name: name.clone(),
+            function: *function,
             args: args.iter().map(|t| Reg(t.0)).collect(),
         },
         Op::Variant {

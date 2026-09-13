@@ -5,6 +5,7 @@
 //! collected for runtime validation.
 
 use super::ast;
+use super::function::FunctionIdentity;
 use super::lowered::Origin;
 
 /// Internal semantic type. Distinct from the syntactic `ast::Type`.
@@ -128,8 +129,25 @@ pub enum TypedExprKind {
         field: std::string::String,
     },
 
-    // Function call
+    /// A call resolved to a known function. The callee is decided here, so
+    /// no later stage looks it up by name.
     Call {
+        function: FunctionIdentity,
+        args: Vec<TypedArg>,
+    },
+
+    /// Enum variant construction, e.g. `Event::OnOffChanged(…)`. Shares call
+    /// syntax with [`TypedExprKind::Call`] but is a different operation, so
+    /// lowering does not have to tell them apart by inspecting the callee.
+    VariantCtor {
+        enum_name: String,
+        variant: String,
+        args: Vec<TypedArg>,
+    },
+
+    /// A call the checker could not resolve, already reported as an error.
+    /// Retained so the tree stays walkable for further diagnostics.
+    UnresolvedCall {
         func: Box<TypedExpr>,
         args: Vec<TypedArg>,
     },
