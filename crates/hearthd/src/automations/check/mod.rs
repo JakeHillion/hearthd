@@ -874,9 +874,8 @@ impl TypeChecker {
                     self.error(
                         span,
                         format!(
-                            "operator '{}' is not supported on {} and {}: equality is \
-                             defined on scalars and collections of them, because a \
-                             struct value carries no identity to compare",
+                            "operator '{}' is not supported on {} and {}: equality is only \
+                             defined on scalars and collections of scalars",
                             op, left, right
                         ),
                     );
@@ -897,7 +896,7 @@ impl TypeChecker {
                             span,
                             format!(
                                 "'in' is not supported for {} in {}: membership compares by \
-                                 equality, and a struct value carries no identity to compare",
+                                 equality, which is only defined on scalars and collections of scalars",
                                 left, right
                             ),
                         );
@@ -997,12 +996,14 @@ impl TypeChecker {
     ///
     /// Containers are excluded when their elements are: a struct buried in
     /// a list compares just as structurally as a bare one.
+    ///
+    /// A `Future` is excluded outright, not as a container of its result: it
+    /// is a pending computation rather than a value, so comparing two futures
+    /// would compare nothing meaningful. Await it first.
     fn supports_equality(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::Named(_) | Ty::EnumVariant { .. } => false,
-            Ty::List(inner) | Ty::Set(inner) | Ty::Option(inner) | Ty::Future(inner) => {
-                self.supports_equality(inner)
-            }
+            Ty::Named(_) | Ty::EnumVariant { .. } | Ty::Future(_) => false,
+            Ty::List(inner) | Ty::Set(inner) | Ty::Option(inner) => self.supports_equality(inner),
             Ty::Map { key, value } => self.supports_equality(key) && self.supports_equality(value),
             _ => true,
         }

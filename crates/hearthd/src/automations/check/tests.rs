@@ -1153,12 +1153,12 @@ fn test_error_struct_equality_is_rejected() {
         "observer { event, ... } /TemperatureMeasurementCluster { measured_value: 20 } == RelativeHumidityMeasurementCluster { measured_value: 20 }/ { [event] }",
     );
     insta::assert_snapshot!(result, @"
-    Error: operator '==' is not supported on TemperatureMeasurementCluster and RelativeHumidityMeasurementCluster: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+    Error: operator '==' is not supported on TemperatureMeasurementCluster and RelativeHumidityMeasurementCluster: equality is only defined on scalars and collections of scalars
        ╭─[ <test>:1:26 ]
        │
      1 │ observer { event, ... } /TemperatureMeasurementCluster { measured_value: 20 } == RelativeHumidityMeasurementCluster { measured_value: 20 }/ { [event] }
        │                          ────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────  
-       │                                                                                  ╰────────────────────────────────────────────────────────── operator '==' is not supported on TemperatureMeasurementCluster and RelativeHumidityMeasurementCluster: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+       │                                                                                  ╰────────────────────────────────────────────────────────── operator '==' is not supported on TemperatureMeasurementCluster and RelativeHumidityMeasurementCluster: equality is only defined on scalars and collections of scalars
     ───╯
     ");
 }
@@ -1171,12 +1171,12 @@ fn test_error_struct_equality_through_list_is_rejected() {
         "observer { event, ... } /[TemperatureMeasurementCluster { measured_value: 20 }] == [RelativeHumidityMeasurementCluster { measured_value: 20 }]/ { [event] }",
     );
     insta::assert_snapshot!(result, @"
-    Error: operator '==' is not supported on [TemperatureMeasurementCluster] and [RelativeHumidityMeasurementCluster]: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+    Error: operator '==' is not supported on [TemperatureMeasurementCluster] and [RelativeHumidityMeasurementCluster]: equality is only defined on scalars and collections of scalars
        ╭─[ <test>:1:26 ]
        │
      1 │ observer { event, ... } /[TemperatureMeasurementCluster { measured_value: 20 }] == [RelativeHumidityMeasurementCluster { measured_value: 20 }]/ { [event] }
        │                          ──────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────  
-       │                                                                                    ╰──────────────────────────────────────────────────────────── operator '==' is not supported on [TemperatureMeasurementCluster] and [RelativeHumidityMeasurementCluster]: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+       │                                                                                    ╰──────────────────────────────────────────────────────────── operator '==' is not supported on [TemperatureMeasurementCluster] and [RelativeHumidityMeasurementCluster]: equality is only defined on scalars and collections of scalars
     ───╯
     ");
 }
@@ -1188,12 +1188,28 @@ fn test_error_struct_equality_through_list_is_rejected() {
 fn test_error_event_equality_is_rejected() {
     let result = check_errors("observer { event, ... } /event == event/ { [event] }");
     insta::assert_snapshot!(result, @"
-    Error: operator '==' is not supported on Event and Event: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+    Error: operator '==' is not supported on Event and Event: equality is only defined on scalars and collections of scalars
        ╭─[ <test>:1:26 ]
        │
      1 │ observer { event, ... } /event == event/ { [event] }
        │                          ───────┬──────  
-       │                                 ╰──────── operator '==' is not supported on Event and Event: equality is defined on scalars and collections of them, because a struct value carries no identity to compare
+       │                                 ╰──────── operator '==' is not supported on Event and Event: equality is only defined on scalars and collections of scalars
+    ───╯
+    ");
+}
+
+/// A `Future` is a pending computation, not a value: comparing two futures
+/// would compare nothing meaningful. Await it first, then compare the result.
+#[test]
+fn test_error_future_equality_is_rejected() {
+    let result = check_errors("observer { event, ... } /sleep(5s) == sleep(5s)/ { [event] }");
+    insta::assert_snapshot!(result, @"
+    Error: operator '==' is not supported on Future<()> and Future<()>: equality is only defined on scalars and collections of scalars
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /sleep(5s) == sleep(5s)/ { [event] }
+       │                          ───────────┬──────────  
+       │                                     ╰──────────── operator '==' is not supported on Future<()> and Future<()>: equality is only defined on scalars and collections of scalars
     ───╯
     ");
 }
@@ -1228,12 +1244,12 @@ fn test_error_struct_membership_is_rejected() {
         "observer { event, ... } /TemperatureMeasurementCluster { measured_value: 20 } in [RelativeHumidityMeasurementCluster { measured_value: 20 }]/ { [event] }",
     );
     insta::assert_snapshot!(result, @"
-    Error: 'in' is not supported for TemperatureMeasurementCluster in [RelativeHumidityMeasurementCluster]: membership compares by equality, and a struct value carries no identity to compare
+    Error: 'in' is not supported for TemperatureMeasurementCluster in [RelativeHumidityMeasurementCluster]: membership compares by equality, which is only defined on scalars and collections of scalars
        ╭─[ <test>:1:26 ]
        │
      1 │ observer { event, ... } /TemperatureMeasurementCluster { measured_value: 20 } in [RelativeHumidityMeasurementCluster { measured_value: 20 }]/ { [event] }
        │                          ─────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────  
-       │                                                                                   ╰─────────────────────────────────────────────────────────── 'in' is not supported for TemperatureMeasurementCluster in [RelativeHumidityMeasurementCluster]: membership compares by equality, and a struct value carries no identity to compare
+       │                                                                                   ╰─────────────────────────────────────────────────────────── 'in' is not supported for TemperatureMeasurementCluster in [RelativeHumidityMeasurementCluster]: membership compares by equality, which is only defined on scalars and collections of scalars
     ───╯
     ");
 }
@@ -1242,12 +1258,12 @@ fn test_error_struct_membership_is_rejected() {
 fn test_error_event_membership_is_rejected() {
     let result = check_errors("observer { event, ... } /event in [event]/ { [event] }");
     insta::assert_snapshot!(result, @"
-    Error: 'in' is not supported for Event in [Event]: membership compares by equality, and a struct value carries no identity to compare
+    Error: 'in' is not supported for Event in [Event]: membership compares by equality, which is only defined on scalars and collections of scalars
        ╭─[ <test>:1:26 ]
        │
      1 │ observer { event, ... } /event in [event]/ { [event] }
        │                          ────────┬───────  
-       │                                  ╰───────── 'in' is not supported for Event in [Event]: membership compares by equality, and a struct value carries no identity to compare
+       │                                  ╰───────── 'in' is not supported for Event in [Event]: membership compares by equality, which is only defined on scalars and collections of scalars
     ───╯
     ");
 }
