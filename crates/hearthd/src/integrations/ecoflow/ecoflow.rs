@@ -45,8 +45,9 @@ use super::wave3::wire;
 use crate::engine::FromIntegrationMessage;
 use crate::engine::FromIntegrationSender;
 use crate::engine::Integration;
+use crate::engine::IntegrationRegistry;
 use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
+use crate::engine::RegisteredNode;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
@@ -67,9 +68,9 @@ const STALENESS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_
 
 /// One declared device and everything known about it.
 struct Device {
-    node_id: NodeId,
-    entity_id: String,
-    name: String,
+    /// Holds the node registration for as long as the device is declared;
+    /// dropping it gives up the entity id.
+    registration: RegisteredNode,
     serial: String,
     state: DeviceState,
     /// Last endpoint map handed to the engine, so only genuine changes are
@@ -80,21 +81,10 @@ struct Device {
     stale_reported: bool,
 }
 
-impl Device {
-    fn node(&self) -> Node {
-        Node {
-            entity_id: self.entity_id.clone(),
-            integration: INTEGRATION_NAME.to_string(),
-            name: Some(self.name.clone()),
-            endpoints: self.published.clone(),
-        }
-    }
-}
-
-/// A device from configuration, before the engine has assigned it a node id.
+/// A device from configuration, before it has been registered.
 ///
-/// Ids come from the engine's allocator, which only arrives at `setup`, so
-/// what configuration determines is kept apart from what the engine assigns.
+/// Registration only happens at `setup`, so what configuration determines is
+/// kept apart from the identity the engine assigns.
 struct DeclaredDevice {
     entity_id: String,
     name: String,
@@ -575,54 +565,60 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
     async fn setup(
         &mut self,
         tx: FromIntegrationSender,
-        node_ids: NodeIdAllocator,
+        nodes: IntegrationRegistry,
     ) -> Result<(), Box<dyn Error + Send>> {
         self.to_engine = Some(tx.clone());
 
         // Devices are declared, not discovered, so every node is known now.
-        // Announcing them before any telemetry means the engine sees a stable
+        // Registering them before any telemetry means the engine sees a stable
         // shape whose attributes fill in later.
-        let nodes: Vec<(NodeId, Node)> = {
-            let mut guard = self.inner.lock().await;
+        //
+        // Registration awaits the engine channel, so it happens before the
+        // lock is taken rather than under it.
+        let mut registered = Vec::with_capacity(self.declared.len());
+        for declared in self.declared.drain(..) {
+            let state = DeviceState::default();
+            let published = wave3_matter::build_endpoints(&state);
 
-            for declared in self.declared.drain(..) {
-                let node_id = node_ids.allocate();
-                let state = DeviceState::default();
-
-                guard
-                    .serial_to_node
-                    .insert(declared.serial.clone(), node_id);
-                guard.devices.insert(
-                    node_id,
-                    Device {
-                        node_id,
-                        entity_id: declared.entity_id,
-                        name: declared.name,
-                        serial: declared.serial,
-                        published: wave3_matter::build_endpoints(&state),
-                        state,
-                        stale_reported: false,
-                    },
-                );
-            }
-
-            guard
-                .devices
-                .values()
-                .map(|device| (device.node_id, device.node()))
-                .collect()
-        };
-
-        for (node_id, node) in nodes {
-            info!(
-                "declared EcoFlow device: {} (node {node_id})",
-                node.entity_id
-            );
-            if let Err(e) = tx
-                .send(FromIntegrationMessage::NodeAdded { node_id, node })
+            let registration = match nodes
+                .register(Node {
+                    entity_id: declared.entity_id,
+                    integration: INTEGRATION_NAME.to_string(),
+                    name: Some(declared.name.clone()),
+                    endpoints: published.clone(),
+                })
                 .await
             {
-                warn!("failed to send NodeAdded: {e}");
+                Ok(registration) => registration,
+                // One unusable name does not stop the account's other
+                // devices from being controllable.
+                Err(e) => {
+                    warn!("cannot register EcoFlow device '{}': {e}", declared.name);
+                    continue;
+                }
+            };
+
+            info!(
+                "declared EcoFlow device: {} (node {})",
+                registration.entity_id(),
+                registration.node_id()
+            );
+
+            registered.push(Device {
+                registration,
+                serial: declared.serial,
+                published,
+                state,
+                stale_reported: false,
+            });
+        }
+
+        {
+            let mut guard = self.inner.lock().await;
+            for device in registered {
+                let node_id = device.registration.node_id();
+                guard.serial_to_node.insert(device.serial.clone(), node_id);
+                guard.devices.insert(node_id, device);
             }
         }
 
@@ -818,7 +814,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(64);
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .unwrap();
 
@@ -842,7 +841,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(64);
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .unwrap();
         next_engine_message(&mut rx).await;
@@ -878,7 +880,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(64);
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .unwrap();
         next_engine_message(&mut rx).await;
@@ -914,7 +919,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(64);
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .unwrap();
         next_engine_message(&mut rx).await;
@@ -940,7 +948,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(64);
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .unwrap();
         next_engine_message(&mut rx).await;
@@ -974,7 +985,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(64);
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .unwrap();
         next_engine_message(&mut rx).await;
@@ -1019,7 +1033,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(64);
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .unwrap();
         next_engine_message(&mut rx).await;
@@ -1053,7 +1070,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(64);
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(
+                tx.clone(),
+                IntegrationRegistry::for_test(INTEGRATION_NAME, tx),
+            )
             .await
             .unwrap();
         next_engine_message(&mut rx).await;

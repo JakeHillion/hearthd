@@ -7,6 +7,21 @@
 # Use "debug" or "trace" to see the full config printed at startup
 level = "info"
 
+[engine]
+# What to do when two integrations declare a node under the same entity id
+# (for example both offering "sensor.porch").
+#
+#   "suffix" (default) admits the second one under a numbered name
+#            ("sensor.porch_2"), logged at warn level.
+#   "reject" refuses it instead, so the clashing node is dropped entirely.
+#
+# Which node keeps the bare name follows registration order under either
+# setting, and for discovered devices that is whatever arrives first — so a
+# clash is worth fixing at the source rather than living with. The default
+# keeps the losing device reachable in the meantime.
+#
+# duplicate_entity_ids = "suffix"
+
 [locations]
 # The default location to use
 default = "home"
