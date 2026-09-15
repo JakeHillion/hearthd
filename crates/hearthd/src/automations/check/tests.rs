@@ -1287,3 +1287,144 @@ fn test_membership_on_scalars_still_checks() {
         );
     }
 }
+
+/// A Duration and an Angle are distinct unit types and must not be
+/// comparable. `1h == 90deg` is thus rejected with a type-mismatch error
+/// rather than silently type-checking (the earlier bug).
+#[test]
+fn test_error_duration_angle_equality_is_rejected() {
+    let result = check_and_pretty("observer {} { 1h == 90deg }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Body:
+        ExprStmt:
+          BinOp: == [type: <error>]
+            UnitLiteral: 1h [type: Duration]
+            UnitLiteral: 90deg [type: Angle]
+    Errors:
+      type error at 14..25: operator '==' requires operands of the same type, found Duration and Angle
+    ");
+}
+
+/// `in` compares the left operand against the element type, so a mismatched
+/// unit feeds the same type-mismatch error as a bare `==`.
+#[test]
+fn test_error_duration_angle_membership_is_rejected() {
+    let result = check_errors("observer {} { 1h in [90deg] }");
+    insta::assert_snapshot!(result, @"
+    Error: 'in' requires operands of the same type, found Duration and Angle
+       ╭─[ <test>:1:15 ]
+       │
+     1 │ observer {} { 1h in [90deg] }
+       │               ──────┬──────  
+       │                     ╰──────── 'in' requires operands of the same type, found Duration and Angle
+    ───╯
+    ");
+}
+
+/// Assert that `filter` (wrapped in a filter observer) fails type-checking
+/// with a same-type equality error.
+///
+/// These comparisons used to type-check and were only rejected at runtime by
+/// the VM; the stricter checker now refuses them statically, and their
+/// coverage moves here from the (since-deleted) VM tests.
+fn assert_same_type_error(filter: &str) {
+    let src = format!("observer {{ event, ... }} /{filter}/ {{ [event] }}");
+    let program = crate::automations::parse(&src).expect("source should parse");
+    let lowered = crate::automations::desugar_program(program);
+    let checked = check_program(&lowered);
+    assert!(
+        !checked.errors.is_empty(),
+        "`{filter}` should fail type-checking, but checked cleanly"
+    );
+    assert!(
+        checked
+            .errors
+            .first()
+            .is_some_and(|e| e.message.contains("same type")),
+        "`{filter}`: expected a same-type error, got {:?}",
+        checked.errors,
+    );
+}
+
+/// A quantity carries a dimension, so it never equals a bare number or a
+/// quantity of another dimension. The VM used to be the only thing standing
+/// between `1h` and `3600`; now the checker refuses the comparison statically.
+#[test]
+fn test_error_cross_dimension_equality_is_rejected() {
+    for src in ["1h == 3600", "1rad == 1.0", "1s == 1rad", "0k == 0deg"] {
+        assert_same_type_error(src);
+    }
+}
+
+/// Equality stays structural for anything non-numeric, so a list never equals
+/// a string. The VM used to answer this at runtime; the checker now refuses it
+/// statically.
+#[test]
+fn test_error_equality_of_different_kinds_is_rejected() {
+    assert_same_type_error(r#"[1] == "1""#);
+}
+
+/// `?` field access is transparent for comparison: the VM unwraps it like a
+/// plain field, so an `?.` result compares against its element type (and
+/// numeric promotion still applies). This keeps `event?.node_id == 7` just as
+/// valid as `event.node_id == 7`. It is why the OptionalField VM behavior
+/// remains covered there.
+#[test]
+fn test_optional_field_access_is_comparable() {
+    for src in [
+        "observer { event, ... } /event?.node_id == 7/ { [event] }",
+        "observer { event, ... } /event?.node_id == 1.0/ { [event] }",
+    ] {
+        let program = crate::automations::parse(src).expect("source should parse");
+        let lowered = crate::automations::desugar_program(program);
+        let checked = check_program(&lowered);
+        assert!(
+            checked.errors.is_empty(),
+            "{src} should check cleanly, got {:?}",
+            checked.errors,
+        );
+    }
+}
+
+/// A list must be homogeneous. An `Error`-typed member (e.g. a deferred field
+/// access) is tolerated, but mixing concrete types is a type error. Without
+/// this check `[1h, 90deg]` would take its first element's type and give
+/// opposite verdicts for `90deg in [1h, 90deg]` vs `[1h, 90deg] ==
+/// [1h, 90deg]`.
+#[test]
+fn test_error_mixed_type_list_is_rejected() {
+    let src = "observer { event, ... } /[1h, 90deg]/ { [event] }";
+    let program = crate::automations::parse(src).expect("source should parse");
+    let lowered = crate::automations::desugar_program(program);
+    let checked = check_program(&lowered);
+    assert!(
+        checked
+            .errors
+            .iter()
+            .any(|e| e.message.contains("list elements must have the same type")),
+        "expected a mixed-list error, got {:?}",
+        checked.errors,
+    );
+}
+
+/// Numeric promotion still applies inside a list, so `[1, 2.0]` is a valid
+/// `[Float]` list and compares against another Float list.
+#[test]
+fn test_numeric_list_promotes_elements() {
+    for src in [
+        "observer { event, ... } /[1, 2.0] == [1.0, 2.0]/ { [event] }",
+        "observer { event, ... } /2.0 in [1, 2.0]/ { [event] }",
+    ] {
+        let program = crate::automations::parse(src).expect("source should parse");
+        let lowered = crate::automations::desugar_program(program);
+        let checked = check_program(&lowered);
+        assert!(
+            checked.errors.is_empty(),
+            "{src} should check cleanly, got {:?}",
+            checked.errors,
+        );
+    }
+}

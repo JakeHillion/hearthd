@@ -289,18 +289,6 @@ fn test_vm_const_unit_literal_large_duration_is_exact() {
     insta::assert_snapshot!(run_filter("1000d == 86400001s"), @"false");
 }
 
-/// A quantity carries its dimension, so it never equals a bare number or a
-/// quantity of another dimension — the checker types `==` as `Bool` for any
-/// operand pair, so the VM is the only thing standing between `1h` and
-/// `3600`.
-#[test]
-fn test_vm_const_unit_literal_dimension_distinguishes() {
-    insta::assert_snapshot!(run_filter("1h == 3600"), @"false");
-    insta::assert_snapshot!(run_filter("1rad == 1.0"), @"false");
-    insta::assert_snapshot!(run_filter("1s == 1rad"), @"false");
-    insta::assert_snapshot!(run_filter("0k == 0deg"), @"false");
-}
-
 /// A duration literal large enough to leave `i64` nanoseconds is the
 /// automation's own doing, not a broken compiler: `1000000000d`
 /// type-checks, so the VM must report it rather than panic. It surfaces
@@ -660,7 +648,9 @@ fn test_vm_field_nested() {
 }
 
 /// `OptionalField` decodes identically to `Field` and behaves the same;
-/// `Value` has no `Option` representation for it to return.
+/// `Value` has no `Option` representation for it to return. The checker treats
+/// an `Option` as transparent, so `?` access compares against the unwrapped
+/// value just like plain field access.
 #[test]
 fn test_vm_optional_field_behaves_like_field() {
     insta::assert_snapshot!(run_filter("event?.node_id == 7"), @"true");
@@ -999,12 +989,6 @@ fn test_vm_mixed_equality() {
 #[test]
 fn test_vm_mixed_inequality() {
     insta::assert_snapshot!(run_filter("1 != 1.5"), @"true");
-}
-
-/// Equality stays structural for anything non-numeric.
-#[test]
-fn test_vm_equality_of_different_kinds() {
-    insta::assert_snapshot!(run_filter(r#"[1] == "1""#), @"false");
 }
 
 /// The promotion reaches inside containers, so it does not matter how
