@@ -21,12 +21,22 @@ jobs:
 
     - name: Install Nix
       uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-
-    - name: Setup Cachix
-      uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
       with:
-        name: hearthd
-        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+        extra_nix_config: |
+          accept-flake-config = true
+          extra-substituters = https://nixcache.hearthd.dev
+          extra-trusted-public-keys = nixcache.hearthd.dev-1:nDKId0zqk7popcBT1tHB9j3nAGU3meWFuJjWzVKab/o=
+
+    - name: Setup Nix S3 cache
+      uses: testquorum/nix-s3-generations@45aa2ff2b0df67b5f48a1b710c574c754f08a0c7 # v0.1.4
+      with:
+        s3-endpoint: https://28e45df51086264c6d9cf2b5e6ecc190.r2.cloudflarestorage.com
+        bucket: hearthd-nix
+        public-key: nixcache.hearthd.dev-1:nDKId0zqk7popcBT1tHB9j3nAGU3meWFuJjWzVKab/o=
+        private-key: ${{ secrets.NIX_SIGNING_KEY }}
+        region: auto
+        aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
     - name: Build all outputs
       run: |

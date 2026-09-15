@@ -3,10 +3,10 @@
 
   nixConfig = {
     extra-substituters = [
-      "https://hearthd.cachix.org"
+      "https://nixcache.hearthd.dev"
     ];
     extra-trusted-public-keys = [
-      "hearthd.cachix.org-1:Lt/GTziCLrilXymMR1tEX1TZkv5ZEqF6JKfyS5aGEqY="
+      "nixcache.hearthd.dev-1:nDKId0zqk7popcBT1tHB9j3nAGU3meWFuJjWzVKab/o="
     ];
   };
 
