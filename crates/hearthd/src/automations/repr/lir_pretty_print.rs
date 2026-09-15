@@ -95,6 +95,7 @@ fn write_instr(instr: &LirInstr, f: &mut std::fmt::Formatter<'_>) -> std::fmt::R
         LirInstr::Neg { dst, src } => write!(f, "{} = neg {}", dst, src),
         LirInstr::Not { dst, src } => write!(f, "{} = not {}", dst, src),
         LirInstr::Deref { dst, src } => write!(f, "{} = deref {}", dst, src),
+        LirInstr::ToFloat { dst, src } => write!(f, "{} = to_float {}", dst, src),
         LirInstr::Field { dst, base, field } => write!(f, "{} = field {}.{}", dst, base, field),
         LirInstr::OptionalField { dst, base, field } => {
             write!(f, "{} = optional_field {}?.{}", dst, base, field)

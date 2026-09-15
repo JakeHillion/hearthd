@@ -15,8 +15,76 @@
 
 use super::ast;
 use super::function::FunctionIdentity;
-use super::hir::HirBinOp;
 use super::typed::Ty;
+
+/// A typed binary operation in LIR, produced by monomorphising an HIR
+/// [`super::hir::HirBinOp`] against the static types of its operands.
+///
+/// The numeric operations are split into `Int`/`Float` variants so the
+/// operation itself dictates the types of its source registers — the VM no
+/// longer has to break open the runtime `Value` to pick an overload. Mixed
+/// `Int`/`Float` operands are promoted to a common float pair before the
+/// op is emitted, so each variant is homogeneous.
+///
+/// `Eq`/`Ne`/`In` stay polymorphic: they are defined over scalars and
+/// collections of scalars, so the VM still resolves them against runtime
+/// values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LirBinOp {
+    // Int arithmetic (checked) and comparisons.
+    AddInt,
+    SubInt,
+    MulInt,
+    DivInt,
+    ModInt,
+    LtInt,
+    LeInt,
+    GtInt,
+    GeInt,
+    // Float arithmetic (IEEE) and comparisons.
+    AddFloat,
+    SubFloat,
+    MulFloat,
+    DivFloat,
+    ModFloat,
+    LtFloat,
+    LeFloat,
+    GtFloat,
+    GeFloat,
+    // Polymorphic equality / membership; the VM dispatches on values.
+    Eq,
+    Ne,
+    In,
+}
+
+impl std::fmt::Display for LirBinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use LirBinOp::*;
+        match self {
+            AddInt => write!(f, "add_int"),
+            SubInt => write!(f, "sub_int"),
+            MulInt => write!(f, "mul_int"),
+            DivInt => write!(f, "div_int"),
+            ModInt => write!(f, "mod_int"),
+            LtInt => write!(f, "lt_int"),
+            LeInt => write!(f, "le_int"),
+            GtInt => write!(f, "gt_int"),
+            GeInt => write!(f, "ge_int"),
+            AddFloat => write!(f, "add_float"),
+            SubFloat => write!(f, "sub_float"),
+            MulFloat => write!(f, "mul_float"),
+            DivFloat => write!(f, "div_float"),
+            ModFloat => write!(f, "mod_float"),
+            LtFloat => write!(f, "lt_float"),
+            LeFloat => write!(f, "le_float"),
+            GtFloat => write!(f, "gt_float"),
+            GeFloat => write!(f, "ge_float"),
+            Eq => write!(f, "eq"),
+            Ne => write!(f, "ne"),
+            In => write!(f, "in"),
+        }
+    }
+}
 
 /// A numbered register within a function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -108,7 +176,7 @@ pub enum LirInstr {
     // === Binary / unary ===
     BinOp {
         dst: Reg,
-        op: HirBinOp,
+        op: LirBinOp,
         lhs: Reg,
         rhs: Reg,
     },
@@ -121,6 +189,16 @@ pub enum LirInstr {
         src: Reg,
     },
     Deref {
+        dst: Reg,
+        src: Reg,
+    },
+    /// Reinterpret an `Int` register as the `F64` of the same value.
+    ///
+    /// Emitted when a mixed `Int`/`Float` binop is monomorphised: the int
+    /// operand is promoted to a float register so the typed float operation
+    /// reads homogeneous sources. Overflows the int's precision beyond
+    /// `2^53`, matching the checker's rule that a `Float` contaminates.
+    ToFloat {
         dst: Reg,
         src: Reg,
     },

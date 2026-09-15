@@ -184,10 +184,59 @@ fn test_lower_lir_binary_arithmetic() {
         r0 = const_int 1
         r1 = const_int 2
         r2 = const_int 3
-        r3 = mul r1, r2
-        r4 = add r0, r3
+        r3 = mul_int r1, r2
+        r4 = add_int r0, r3
         r5 = empty_list
         return r5
+    ");
+}
+
+/// A `Float` operand contaminates an `Int` one: the `Int` register is
+/// promoted through `to_float` so the homogeneous `add_float` reads two
+/// float registers.
+#[test]
+fn test_lower_lir_mixed_int_float_arithmetic() {
+    let result = lower_and_pretty("observer {} /true/ { 1 + 2.5; [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        regs: 1
+      L0:
+        r0 = const_bool true
+        return r0
+      body:
+        regs: 5
+      L0:
+        r0 = const_int 1
+        r1 = const_float 2.5
+        r4 = to_float r0
+        r2 = add_float r4, r1
+        r3 = empty_list
+        return r3
+    ");
+}
+
+/// Promotion happens on whichever side is the lone `Int`: a `Float` on the
+/// left promotes the `Int` on the right.
+#[test]
+fn test_lower_lir_mixed_float_int_comparison() {
+    let result = lower_and_pretty("observer {} /true/ { 2.5 < 3; [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        regs: 1
+      L0:
+        r0 = const_bool true
+        return r0
+      body:
+        regs: 5
+      L0:
+        r0 = const_float 2.5
+        r1 = const_int 3
+        r4 = to_float r1
+        r2 = lt_float r0, r4
+        r3 = empty_list
+        return r3
     ");
 }
 
@@ -206,7 +255,7 @@ fn test_lower_lir_float_literal() {
       L0:
         r0 = const_float 1.5
         r1 = const_float 2.5
-        r2 = add r0, r1
+        r2 = add_float r0, r1
         r3 = empty_list
         return r3
     ");

@@ -239,6 +239,11 @@ fn emit(enc: &mut Encoder, instr: &LirInstr) {
             enc.write_reg(*dst);
             enc.write_reg(*src);
         }
+        LirInstr::ToFloat { dst, src } => {
+            enc.write_u8(Opcode::ToFloat as u8);
+            enc.write_reg(*dst);
+            enc.write_reg(*src);
+        }
         LirInstr::Field { dst, base, field } => {
             let idx = enc.intern_ident(field);
             enc.write_u8(Opcode::Field as u8);

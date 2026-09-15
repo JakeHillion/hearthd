@@ -191,8 +191,8 @@ fn test_lower_bytecode_binary_arithmetic() {
           0000: load_const_int     r0, #0 (int 1)
           0009: load_const_int     r1, #1 (int 2)
           0018: load_const_int     r2, #2 (int 3)
-          0027: binop              r3, mul, r1, r2
-          0041: binop              r4, add, r0, r3
+          0027: binop              r3, mul_int, r1, r2
+          0041: binop              r4, add_int, r0, r3
           0055: empty_list         r5
           0060: return             r5
     ");
@@ -216,9 +216,37 @@ fn test_lower_bytecode_float_literal() {
         code:
           0000: load_const_float   r0, #0 (float 1.5)
           0009: load_const_float   r1, #1 (float 2.5)
-          0018: binop              r2, add, r0, r1
+          0018: binop              r2, add_float, r0, r1
           0032: empty_list         r3
           0037: return             r3
+    ");
+}
+
+/// A mixed `Int`/`Float` addition monomorphises to `add_float`, promoting
+/// the `Int` operand through `to_float` onto a fresh register past the HIR
+/// temps.
+#[test]
+fn test_lower_bytecode_mixed_int_float() {
+    let result = lower_and_pretty("observer {} /true/ { 1 + 2.5; [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        regs: 1
+        code:
+          0000: load_const_bool    r0, true
+          0006: return             r0
+      body:
+        regs: 5
+        consts:
+          #0 = int 1
+          #1 = float 2.5
+        code:
+          0000: load_const_int     r0, #0 (int 1)
+          0009: load_const_float   r1, #1 (float 2.5)
+          0018: to_float           r4, r0
+          0027: binop              r2, add_float, r4, r1
+          0041: empty_list         r3
+          0046: return             r3
     ");
 }
 
@@ -466,7 +494,7 @@ fn test_lower_bytecode_interns_repeated_int() {
         code:
           0000: load_const_int     r0, #0 (int 1)
           0009: load_const_int     r1, #0 (int 1)
-          0018: binop              r2, add, r0, r1
+          0018: binop              r2, add_int, r0, r1
           0032: empty_list         r3
           0037: return             r3
     ");

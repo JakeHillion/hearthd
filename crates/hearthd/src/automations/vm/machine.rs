@@ -13,7 +13,7 @@ use super::value::Pending;
 use super::value::Value;
 use crate::automations::repr::bytecode::*;
 use crate::automations::repr::function::FunctionIdentity;
-use crate::automations::repr::hir::HirBinOp;
+use crate::automations::repr::lir::LirBinOp;
 
 /// Where [`Vm::poll`] stopped.
 ///
@@ -340,7 +340,25 @@ impl Vm {
                         .ok_or(VmError::InvariantViolation("bad binop tag".into()))?;
                     let lhs = self.read_index();
                     let rhs = self.read_index();
-                    let value = eval_binop(HirBinOp::from(tag), &self.regs[lhs], &self.regs[rhs])?;
+                    let value = eval_binop(LirBinOp::from(tag), &self.regs[lhs], &self.regs[rhs])?;
+                    self.regs[dst] = value;
+                }
+                Opcode::ToFloat => {
+                    let dst = self.read_index();
+                    let src = self.read_index();
+                    // `ToFloat` is only emitted for an operand monomorphised
+                    // to `Int`, so the source is always an `Int`; the cast
+                    // mirrors the checker's float contamination rule. A
+                    // non-`Int` here is a broken compiler, not bad source.
+                    let value = match &self.regs[src] {
+                        Value::Int(n) => Value::Float(*n as f64),
+                        other => {
+                            return Err(VmError::InvariantViolation(format!(
+                                "to_f64 on {:?}",
+                                other
+                            )));
+                        }
+                    };
                     self.regs[dst] = value;
                 }
                 Opcode::Neg => {

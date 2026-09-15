@@ -17,7 +17,7 @@ use strum::FromRepr;
 
 use super::ast;
 use super::function::FunctionIdentity;
-use super::hir::HirBinOp;
+use super::lir::LirBinOp;
 use super::typed::Ty;
 
 // ============================================================================
@@ -47,6 +47,7 @@ pub enum Opcode {
     Neg = 0x11,
     Not = 0x12,
     Deref = 0x13,
+    ToFloat = 0x14,
 
     // === 0x2_: field access ===
     Field = 0x20,
@@ -79,65 +80,97 @@ pub enum Opcode {
     Await = 0x80,
 }
 
-/// Tag byte for `BinOp` instructions. Stable values.
+/// Tag byte for `BinOp` instructions. Stable values, mirroring the LIR
+/// [`LirBinOp`]: the numeric operations are already monomorphised into
+/// `Int`/`Float` pairs, so a tag fully dictates the operand types and the
+/// VM need not inspect runtime `Value` tags to pick an overload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
 #[repr(u8)]
 pub enum BinOpTag {
-    Add = 0,
-    Sub = 1,
-    Mul = 2,
-    Div = 3,
-    Mod = 4,
-    Eq = 5,
-    Ne = 6,
-    Lt = 7,
-    Le = 8,
-    Gt = 9,
-    Ge = 10,
-    In = 11,
+    AddInt = 0,
+    SubInt = 1,
+    MulInt = 2,
+    DivInt = 3,
+    ModInt = 4,
+    AddFloat = 5,
+    SubFloat = 6,
+    MulFloat = 7,
+    DivFloat = 8,
+    ModFloat = 9,
+    LtInt = 10,
+    LeInt = 11,
+    GtInt = 12,
+    GeInt = 13,
+    LtFloat = 14,
+    LeFloat = 15,
+    GtFloat = 16,
+    GeFloat = 17,
+    Eq = 18,
+    Ne = 19,
+    In = 20,
 }
 
-impl From<HirBinOp> for BinOpTag {
-    fn from(op: HirBinOp) -> Self {
+impl From<LirBinOp> for BinOpTag {
+    fn from(op: LirBinOp) -> Self {
+        use LirBinOp::*;
         match op {
-            HirBinOp::Add => BinOpTag::Add,
-            HirBinOp::Sub => BinOpTag::Sub,
-            HirBinOp::Mul => BinOpTag::Mul,
-            HirBinOp::Div => BinOpTag::Div,
-            HirBinOp::Mod => BinOpTag::Mod,
-            HirBinOp::Eq => BinOpTag::Eq,
-            HirBinOp::Ne => BinOpTag::Ne,
-            HirBinOp::Lt => BinOpTag::Lt,
-            HirBinOp::Le => BinOpTag::Le,
-            HirBinOp::Gt => BinOpTag::Gt,
-            HirBinOp::Ge => BinOpTag::Ge,
-            HirBinOp::In => BinOpTag::In,
+            AddInt => BinOpTag::AddInt,
+            SubInt => BinOpTag::SubInt,
+            MulInt => BinOpTag::MulInt,
+            DivInt => BinOpTag::DivInt,
+            ModInt => BinOpTag::ModInt,
+            AddFloat => BinOpTag::AddFloat,
+            SubFloat => BinOpTag::SubFloat,
+            MulFloat => BinOpTag::MulFloat,
+            DivFloat => BinOpTag::DivFloat,
+            ModFloat => BinOpTag::ModFloat,
+            LtInt => BinOpTag::LtInt,
+            LeInt => BinOpTag::LeInt,
+            GtInt => BinOpTag::GtInt,
+            GeInt => BinOpTag::GeInt,
+            LtFloat => BinOpTag::LtFloat,
+            LeFloat => BinOpTag::LeFloat,
+            GtFloat => BinOpTag::GtFloat,
+            GeFloat => BinOpTag::GeFloat,
+            Eq => BinOpTag::Eq,
+            Ne => BinOpTag::Ne,
+            In => BinOpTag::In,
         }
     }
 }
 
-impl From<BinOpTag> for HirBinOp {
+impl From<BinOpTag> for LirBinOp {
     fn from(tag: BinOpTag) -> Self {
+        use BinOpTag::*;
         match tag {
-            BinOpTag::Add => HirBinOp::Add,
-            BinOpTag::Sub => HirBinOp::Sub,
-            BinOpTag::Mul => HirBinOp::Mul,
-            BinOpTag::Div => HirBinOp::Div,
-            BinOpTag::Mod => HirBinOp::Mod,
-            BinOpTag::Eq => HirBinOp::Eq,
-            BinOpTag::Ne => HirBinOp::Ne,
-            BinOpTag::Lt => HirBinOp::Lt,
-            BinOpTag::Le => HirBinOp::Le,
-            BinOpTag::Gt => HirBinOp::Gt,
-            BinOpTag::Ge => HirBinOp::Ge,
-            BinOpTag::In => HirBinOp::In,
+            AddInt => LirBinOp::AddInt,
+            SubInt => LirBinOp::SubInt,
+            MulInt => LirBinOp::MulInt,
+            DivInt => LirBinOp::DivInt,
+            ModInt => LirBinOp::ModInt,
+            AddFloat => LirBinOp::AddFloat,
+            SubFloat => LirBinOp::SubFloat,
+            MulFloat => LirBinOp::MulFloat,
+            DivFloat => LirBinOp::DivFloat,
+            ModFloat => LirBinOp::ModFloat,
+            LtInt => LirBinOp::LtInt,
+            LeInt => LirBinOp::LeInt,
+            GtInt => LirBinOp::GtInt,
+            GeInt => LirBinOp::GeInt,
+            LtFloat => LirBinOp::LtFloat,
+            LeFloat => LirBinOp::LeFloat,
+            GtFloat => LirBinOp::GtFloat,
+            GeFloat => LirBinOp::GeFloat,
+            Eq => LirBinOp::Eq,
+            Ne => LirBinOp::Ne,
+            In => LirBinOp::In,
         }
     }
 }
 
 /// Tag byte identifying the function a `Call` instruction targets. Stable
 /// values, mirroring [`super::function::FunctionIdentity`] the way
-/// [`BinOpTag`] mirrors [`HirBinOp`].
+/// [`BinOpTag`] mirrors [`LirBinOp`].
 ///
 /// Calls are resolved by the checker, so the callee is a tag rather than a
 /// constant-pool name: nothing below the checker looks a function up by

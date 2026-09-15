@@ -6,7 +6,7 @@
 
 use super::bytecode::*;
 use super::function::FunctionIdentity;
-use super::hir::HirBinOp;
+use super::lir::LirBinOp;
 use super::pretty_print::PrettyPrint;
 use super::pretty_print::write_indent;
 
@@ -161,18 +161,19 @@ fn disassemble(
                     "{:<18} r{}, {}, r{}, r{}",
                     "binop",
                     dst,
-                    HirBinOp::from(tag),
+                    LirBinOp::from(tag),
                     lhs,
                     rhs
                 )?;
             }
-            Opcode::Neg | Opcode::Not | Opcode::Deref => {
+            Opcode::Neg | Opcode::Not | Opcode::Deref | Opcode::ToFloat => {
                 let dst = read_u32(code, &mut pc);
                 let src = read_u32(code, &mut pc);
                 let name = match opcode {
                     Opcode::Neg => "neg",
                     Opcode::Not => "not",
                     Opcode::Deref => "deref",
+                    Opcode::ToFloat => "to_float",
                     _ => unreachable!(),
                 };
                 writeln!(f, "{:<18} r{}, r{}", name, dst, src)?;

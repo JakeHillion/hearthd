@@ -8,7 +8,7 @@ use super::quantity::Quantity;
 use super::value::Pending;
 use super::value::Value;
 use crate::automations::repr::function::FunctionIdentity;
-use crate::automations::repr::hir::HirBinOp;
+use crate::automations::repr::lir::LirBinOp;
 
 pub(super) fn field_access(base: &Value, field: &str) -> Result<Value, VmError> {
     match base {
@@ -129,63 +129,129 @@ fn as_f64(value: &Value) -> Option<f64> {
     }
 }
 
-pub(super) fn eval_binop(op: HirBinOp, lhs: &Value, rhs: &Value) -> Result<Value, VmError> {
-    use HirBinOp::*;
-    match (op, lhs, rhs) {
-        (Eq, a, b) => Ok(Value::Bool(values_equal(a, b)?)),
-        (Ne, a, b) => Ok(Value::Bool(!values_equal(a, b)?)),
-        (In, needle, haystack) => eval_in(needle, haystack),
+/// Reading the two operands of a binop that was monomorphised to `Int`.
+///
+/// The opcode dictates both operands are `Int`, so a register holding
+/// anything else is a broken compiler rather than bad automation source.
+fn ints(lhs: &Value, rhs: &Value) -> (i64, i64) {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => (*a, *b),
+        other => unreachable!("typed Int binop on {:?}", other),
+    }
+}
+
+/// As [`ints`], for `Float` operands.
+fn floats(lhs: &Value, rhs: &Value) -> (f64, f64) {
+    match (lhs, rhs) {
+        (Value::Float(a), Value::Float(b)) => (*a, *b),
+        other => unreachable!("typed Float binop on {:?}", other),
+    }
+}
+
+/// Evaluate a binop that has already been monomorphised to a concrete
+/// operand type (`add_int`, `lt_float`, …) or is inherently polymorphic
+/// (`eq`, `ne`, `in`).
+///
+/// The numeric variants no longer inspect the runtime `Value` tag to pick
+/// an overload — the opcode dictates it, so the operand registers are
+/// guaranteed to be homogeneous. Only `Eq`/`Ne`/`In` dispatch on values,
+/// because they are defined over scalars and collections of scalars.
+pub(super) fn eval_binop(op: LirBinOp, lhs: &Value, rhs: &Value) -> Result<Value, VmError> {
+    use LirBinOp::*;
+    match op {
+        // Polymorphic equality / membership.
+        Eq => Ok(Value::Bool(values_equal(lhs, rhs)?)),
+        Ne => Ok(Value::Bool(!values_equal(lhs, rhs)?)),
+        In => eval_in(lhs, rhs),
 
         // Integer arithmetic is checked: the operands come from
         // user-authored filter source, so overflow and division by zero
         // must surface as `VmError` rather than panicking the caller.
-        (Add, Value::Int(a), Value::Int(b)) => checked_int(a.checked_add(*b), "add", *a, *b),
-        (Sub, Value::Int(a), Value::Int(b)) => checked_int(a.checked_sub(*b), "sub", *a, *b),
-        (Mul, Value::Int(a), Value::Int(b)) => checked_int(a.checked_mul(*b), "mul", *a, *b),
-        (Div, Value::Int(a), Value::Int(b)) => {
-            if *b == 0 {
+        AddInt => {
+            let (a, b) = ints(lhs, rhs);
+            checked_int(a.checked_add(b), "add", a, b)
+        }
+        SubInt => {
+            let (a, b) = ints(lhs, rhs);
+            checked_int(a.checked_sub(b), "sub", a, b)
+        }
+        MulInt => {
+            let (a, b) = ints(lhs, rhs);
+            checked_int(a.checked_mul(b), "mul", a, b)
+        }
+        DivInt => {
+            let (a, b) = ints(lhs, rhs);
+            if b == 0 {
                 return Err(VmError::DivideByZero);
             }
-            checked_int(a.checked_div(*b), "div", *a, *b)
+            checked_int(a.checked_div(b), "div", a, b)
         }
-        (Mod, Value::Int(a), Value::Int(b)) => {
-            if *b == 0 {
+        ModInt => {
+            let (a, b) = ints(lhs, rhs);
+            if b == 0 {
                 return Err(VmError::DivideByZero);
             }
             // `wrapping_rem` rather than `checked_rem`: the only pair
             // `checked_rem` rejects is `i64::MIN % -1`, where the true
             // remainder is 0 and representable. It is `checked_div` that
             // genuinely overflows on that pair, so only division reports it.
-            Ok(Value::Int(a.wrapping_rem(*b)))
+            Ok(Value::Int(a.wrapping_rem(b)))
         }
-        (Lt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
-        (Le, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
-        (Gt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
-        (Ge, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
+        LtInt => {
+            let (a, b) = ints(lhs, rhs);
+            Ok(Value::Bool(a < b))
+        }
+        LeInt => {
+            let (a, b) = ints(lhs, rhs);
+            Ok(Value::Bool(a <= b))
+        }
+        GtInt => {
+            let (a, b) = ints(lhs, rhs);
+            Ok(Value::Bool(a > b))
+        }
+        GeInt => {
+            let (a, b) = ints(lhs, rhs);
+            Ok(Value::Bool(a >= b))
+        }
 
         // Float arithmetic follows IEEE 754: division by zero yields an
         // infinity rather than an error, so nothing here is checked.
-        (Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
-        (Sub, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
-        (Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
-        (Div, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
-        (Mod, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a % b)),
-        (Lt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
-        (Le, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
-        (Gt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
-        (Ge, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
-
-        // The checker specifies that a `Float` on either side contaminates
-        // the result, so promote the `Int` side and retry against the float
-        // arms above. Integer pairs never reach here, keeping their exact
-        // checked arithmetic.
-        (_, Value::Int(a), Value::Float(_)) => eval_binop(op, &Value::Float(*a as f64), rhs),
-        (_, Value::Float(_), Value::Int(b)) => eval_binop(op, lhs, &Value::Float(*b as f64)),
-
-        (op, a, b) => Err(VmError::InvariantViolation(format!(
-            "binop {:?} on {:?}, {:?}",
-            op, a, b
-        ))),
+        AddFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Float(a + b))
+        }
+        SubFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Float(a - b))
+        }
+        MulFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Float(a * b))
+        }
+        DivFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Float(a / b))
+        }
+        ModFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Float(a % b))
+        }
+        LtFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Bool(a < b))
+        }
+        LeFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Bool(a <= b))
+        }
+        GtFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Bool(a > b))
+        }
+        GeFloat => {
+            let (a, b) = floats(lhs, rhs);
+            Ok(Value::Bool(a >= b))
+        }
     }
 }
 

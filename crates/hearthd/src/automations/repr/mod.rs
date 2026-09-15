@@ -35,7 +35,8 @@ pub use hir::{
 };
 // Re-export LIR types
 pub use lir::{
-    Label, LirAutomation, LirFunction, LirInstr, LirParam, LirProgram, LirStructField, Reg,
+    Label, LirAutomation, LirBinOp, LirFunction, LirInstr, LirParam, LirProgram, LirStructField,
+    Reg,
 };
 // Re-export lowered AST types with a Lowered prefix already in their names
 pub use lowered::{
