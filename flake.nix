@@ -119,7 +119,6 @@
           };
 
           devShells.default = craneLib.devShell {
-            checks = self.checks.${system};
             packages = with pkgs; [
               rust-analyzer
               cargo-insta
@@ -132,8 +131,6 @@
           formatter = treefmtEval.config.build.wrapper;
 
           checks = {
-            inherit hearthd;
-
             hearthd-clippy = craneLib.cargoClippy (commonArgs // {
               inherit cargoArtifacts;
               cargoClippyExtraArgs = "--all-targets -- --deny warnings";
@@ -170,6 +167,6 @@
               partitionType = "count";
               cargoNextestPartitionsExtraArgs = "--no-tests=pass";
             });
-          };
+          } // self.packages.${system} // self.devShells.${system};
         });
 }
