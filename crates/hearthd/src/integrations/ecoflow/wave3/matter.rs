@@ -53,8 +53,10 @@ use super::semantics::Preset;
 use super::semantics::UserTempUnit;
 use super::state::DeviceState;
 use crate::matter::BooleanStateCluster;
+use crate::matter::CLUSTER_ID_THERMOSTAT;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
+use crate::matter::ClusterWrite;
 use crate::matter::ControlSequenceOfOperation;
 use crate::matter::DehumidificationControlCluster;
 use crate::matter::DehumidificationControlCommand;
@@ -567,6 +569,57 @@ fn unsupported(endpoint: EndpointId, command: &ClusterCommand) -> CommandError {
     }
 }
 
+/// Translate a set of Matter attribute writes into the config write that performs them.
+///
+/// Returns the write rather than publishing it, so the caller can log it,
+/// apply it optimistically and frame it.
+pub fn writes_to_config_write(
+    state: &DeviceState,
+    endpoint: EndpointId,
+    writes: &[ClusterWrite],
+) -> Result<ConfigWrite, CommandError> {
+    if endpoint != EP_AIR_CONDITIONER {
+        return Err(CommandError::UnsupportedOnEndpoint {
+            endpoint,
+            cluster_id: CLUSTER_ID_THERMOSTAT,
+        });
+    }
+
+    let mut result = ConfigWrite::default();
+    for write in writes {
+        let partial = thermostat_write(state, write)?;
+        result = merge_writes(result, partial);
+    }
+    Ok(result)
+}
+
+fn merge_writes(mut left: ConfigWrite, right: ConfigWrite) -> ConfigWrite {
+    macro_rules! merge_opt {
+        ($field:ident) => {
+            if right.$field.is_some() {
+                left.$field = right.$field;
+            }
+        };
+    }
+
+    merge_opt!(cfg_main_power);
+    merge_opt!(cfg_sys_pause);
+    merge_opt!(cfg_wave_operating_mode);
+    merge_opt!(cfg_wave_operating_submode);
+    merge_opt!(cfg_temp_set);
+    merge_opt!(cfg_temp_thermostatic_upper_limit);
+    merge_opt!(cfg_temp_thermostatic_lower_limit);
+    merge_opt!(cfg_airflow_speed);
+    merge_opt!(cfg_humi_set);
+    merge_opt!(cfg_drainage_mode);
+    merge_opt!(cfg_en_pet_care);
+    merge_opt!(cfg_user_temp_unit);
+    merge_opt!(en_beep);
+    merge_opt!(lcd_light);
+
+    left
+}
+
 /// Translate a Matter cluster command into the config write that performs it.
 ///
 /// Returns the write rather than publishing it, so the caller can log it,
@@ -683,19 +736,6 @@ fn thermostat_command(
     command: &ThermostatCommand,
 ) -> Result<ConfigWrite, CommandError> {
     match command {
-        ThermostatCommand::SetSystemMode { mode } => set_system_mode(*mode),
-
-        ThermostatCommand::SetOccupiedCoolingSetpoint { centi_celsius } => Ok(setpoint_write(
-            state,
-            centi_to_celsius(*centi_celsius),
-            true,
-        )),
-        ThermostatCommand::SetOccupiedHeatingSetpoint { centi_celsius } => Ok(setpoint_write(
-            state,
-            centi_to_celsius(*centi_celsius),
-            false,
-        )),
-
         ThermostatCommand::SetpointRaiseLower { mode, amount } => {
             // `amount` is a relative adjustment in tenths of a degree, so it
             // needs a setpoint to adjust.
@@ -722,6 +762,35 @@ fn thermostat_command(
             Ok(setpoint_write(state, base + delta, cooling))
         }
     }
+}
+
+fn thermostat_write(
+    state: &DeviceState,
+    write: &ClusterWrite,
+) -> Result<ConfigWrite, CommandError> {
+    let ClusterWrite::Thermostat(t) = write;
+
+    let mut result = ConfigWrite::default();
+
+    if let Some(mode) = t.system_mode {
+        result = merge_writes(result, set_system_mode(mode)?);
+    }
+
+    if let Some(centi_celsius) = t.occupied_cooling_setpoint {
+        result = merge_writes(
+            result,
+            setpoint_write(state, centi_to_celsius(centi_celsius), true),
+        );
+    }
+
+    if let Some(centi_celsius) = t.occupied_heating_setpoint {
+        result = merge_writes(
+            result,
+            setpoint_write(state, centi_to_celsius(centi_celsius), false),
+        );
+    }
+
+    Ok(result)
 }
 
 /// Build the write for a new absolute setpoint.
@@ -753,6 +822,10 @@ fn setpoint_write(state: &DeviceState, celsius: f32, cooling: bool) -> ConfigWri
 }
 
 fn set_system_mode(mode: SystemMode) -> Result<ConfigWrite, CommandError> {
+    // If a system-mode write does not change the mode, it should not force a
+    // power-on or a pause. The integration only sends non-empty writes, so a
+    // no-op is naturally suppressed higher up.
+
     let operating = match mode {
         SystemMode::Off => {
             return Ok(ConfigWrite {
@@ -821,6 +894,7 @@ mod tests {
     use crate::integrations::ecoflow::wave3::codec::DisplayProperties;
     use crate::integrations::ecoflow::wave3::codec::ModeParamItem;
     use crate::integrations::ecoflow::wave3::codec::RuntimeProperties;
+    use crate::matter::ThermostatWrite;
 
     /// A six-entry mode parameter list, as the device sends it.
     fn mode_list() -> Vec<ModeParamItem> {
@@ -1323,7 +1397,7 @@ mod tests {
         23 ElectricalPowerMeasurement: {"cluster":"ElectricalPowerMeasurement","power_mode":"Dc","voltage":51200,"active_power":-120500,"active_current":-2350,"frequency":null}
         "#);
     }
-    fn write_for(
+    fn write_for_command(
         state: &DeviceState,
         endpoint: EndpointId,
         command: ClusterCommand,
@@ -1331,11 +1405,19 @@ mod tests {
         command_to_config_write(state, endpoint, &command).expect("command should translate")
     }
 
+    fn write_for_attributes(
+        state: &DeviceState,
+        endpoint: EndpointId,
+        writes: &[ClusterWrite],
+    ) -> ConfigWrite {
+        writes_to_config_write(state, endpoint, writes).expect("write should translate")
+    }
+
     #[test]
     fn turning_off_pauses_rather_than_powering_off() {
         // cfg_sys_pause is the tested path; cfgPowerOff exists but the app
         // never uses it for this device.
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
             ClusterCommand::OnOff(OnOffCommand::Off),
@@ -1346,7 +1428,7 @@ mod tests {
 
     #[test]
     fn turning_on_resumes_the_previous_mode() {
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
             ClusterCommand::OnOff(OnOffCommand::On),
@@ -1366,14 +1448,14 @@ mod tests {
             },
             Instant::now(),
         );
-        let write = write_for(
+        let write = write_for_command(
             &standby,
             EP_AIR_CONDITIONER,
             ClusterCommand::OnOff(OnOffCommand::Toggle),
         );
         assert_eq!(write.cfg_main_power, Some(true));
 
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
             ClusterCommand::OnOff(OnOffCommand::Toggle),
@@ -1384,12 +1466,13 @@ mod tests {
     #[test]
     fn selecting_a_mode_powers_up_in_one_write() {
         // Both fields must ride together, or the unit stays in standby.
-        let write = write_for(
+        let write = write_for_attributes(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetSystemMode {
-                mode: SystemMode::Heat,
-            }),
+            &[ClusterWrite::Thermostat(ThermostatWrite {
+                system_mode: Some(SystemMode::Heat),
+                ..Default::default()
+            })],
         );
         assert_eq!(write.cfg_main_power, Some(true));
         assert_eq!(write.cfg_wave_operating_mode, Some(2));
@@ -1397,12 +1480,13 @@ mod tests {
 
     #[test]
     fn selecting_off_pauses_the_unit() {
-        let write = write_for(
+        let write = write_for_attributes(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetSystemMode {
-                mode: SystemMode::Off,
-            }),
+            &[ClusterWrite::Thermostat(ThermostatWrite {
+                system_mode: Some(SystemMode::Off),
+                ..Default::default()
+            })],
         );
         assert_eq!(write.cfg_sys_pause, Some(true));
         assert_eq!(write.cfg_main_power, None);
@@ -1415,10 +1499,13 @@ mod tests {
             SystemMode::Precooling,
             SystemMode::Sleep,
         ] {
-            let result = command_to_config_write(
+            let result = writes_to_config_write(
                 &state_in_mode(1),
                 EP_AIR_CONDITIONER,
-                &ClusterCommand::Thermostat(ThermostatCommand::SetSystemMode { mode }),
+                &[ClusterWrite::Thermostat(ThermostatWrite {
+                    system_mode: Some(mode),
+                    ..Default::default()
+                })],
             );
             assert!(matches!(result, Err(CommandError::Unsupported(_))));
         }
@@ -1426,12 +1513,13 @@ mod tests {
 
     #[test]
     fn a_setpoint_targets_the_single_value_outside_auto_mode() {
-        let write = write_for(
+        let write = write_for_attributes(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetOccupiedCoolingSetpoint {
-                centi_celsius: 2350,
-            }),
+            &[ClusterWrite::Thermostat(ThermostatWrite {
+                occupied_cooling_setpoint: Some(2350),
+                ..Default::default()
+            })],
         );
         assert_eq!(write.cfg_temp_set, Some(23.5));
         assert_eq!(write.cfg_temp_thermostatic_upper_limit, None);
@@ -1441,34 +1529,37 @@ mod tests {
     fn setpoints_target_the_limit_pair_in_auto_mode() {
         let state = state_in_mode(5);
 
-        let write = write_for(
+        let write = write_for_attributes(
             &state,
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetOccupiedCoolingSetpoint {
-                centi_celsius: 2500,
-            }),
+            &[ClusterWrite::Thermostat(ThermostatWrite {
+                occupied_cooling_setpoint: Some(2500),
+                ..Default::default()
+            })],
         );
         assert_eq!(write.cfg_temp_thermostatic_upper_limit, Some(25.0));
         assert_eq!(write.cfg_temp_set, None);
 
-        let write = write_for(
+        let write = write_for_attributes(
             &state,
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetOccupiedHeatingSetpoint {
-                centi_celsius: 1900,
-            }),
+            &[ClusterWrite::Thermostat(ThermostatWrite {
+                occupied_heating_setpoint: Some(1900),
+                ..Default::default()
+            })],
         );
         assert_eq!(write.cfg_temp_thermostatic_lower_limit, Some(19.0));
     }
 
     #[test]
     fn setpoints_outside_the_devices_range_are_clamped() {
-        let write = write_for(
+        let write = write_for_attributes(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetOccupiedCoolingSetpoint {
-                centi_celsius: 500,
-            }),
+            &[ClusterWrite::Thermostat(ThermostatWrite {
+                occupied_cooling_setpoint: Some(500),
+                ..Default::default()
+            })],
         );
         assert_eq!(write.cfg_temp_set, Some(16.0));
     }
@@ -1476,7 +1567,7 @@ mod tests {
     #[test]
     fn a_relative_setpoint_change_applies_to_the_cached_value() {
         // +2.5 C on a cached 22.0.
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
             ClusterCommand::Thermostat(ThermostatCommand::SetpointRaiseLower {
@@ -1516,7 +1607,7 @@ mod tests {
     #[test]
     fn fan_speed_steps_map_to_the_permitted_percentages() {
         for (step, percent) in [(1u8, 20u32), (2, 40), (3, 60), (4, 80), (5, 100)] {
-            let write = write_for(
+            let write = write_for_command(
                 &state_in_mode(1),
                 EP_AIR_CONDITIONER,
                 ClusterCommand::FanControl(FanControlCommand::SetSpeedSetting { speed: step }),
@@ -1528,7 +1619,7 @@ mod tests {
     #[test]
     fn an_arbitrary_fan_percentage_is_snapped_before_it_is_sent() {
         // The device accepts only five values, so 71 % must not go out as-is.
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
             ClusterCommand::FanControl(FanControlCommand::SetPercentSetting { percent: 71 }),
@@ -1560,7 +1651,7 @@ mod tests {
 
     #[test]
     fn a_humidity_setpoint_is_clamped_to_the_dry_mode_range() {
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(4),
             EP_AIR_CONDITIONER,
             ClusterCommand::DehumidificationControl(
@@ -1572,7 +1663,7 @@ mod tests {
 
     #[test]
     fn selecting_a_preset_writes_the_submode() {
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
             ClusterCommand::ModeSelect(ModeSelectCommand::ChangeToMode { new_mode: 4 }),
@@ -1592,14 +1683,14 @@ mod tests {
 
     #[test]
     fn the_beeper_command_carries_the_flag_straight_through() {
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_BEEPER,
             ClusterCommand::OnOff(OnOffCommand::On),
         );
         assert_eq!(write.en_beep, Some(1));
 
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_BEEPER,
             ClusterCommand::OnOff(OnOffCommand::Off),
@@ -1609,14 +1700,14 @@ mod tests {
 
     #[test]
     fn drainage_and_pet_care_map_to_their_own_config_fields() {
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_DRAINAGE,
             ClusterCommand::OnOff(OnOffCommand::On),
         );
         assert_eq!(write.cfg_drainage_mode, Some(1));
 
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_PET_CARE,
             ClusterCommand::OnOff(OnOffCommand::Off),
@@ -1626,7 +1717,7 @@ mod tests {
 
     #[test]
     fn panel_brightness_converts_from_the_matter_level_scale() {
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_PANEL,
             ClusterCommand::LevelControl(LevelControlCommand::MoveToLevel {
@@ -1636,7 +1727,7 @@ mod tests {
         );
         assert_eq!(write.lcd_light, Some(100));
 
-        let write = write_for(
+        let write = write_for_command(
             &state_in_mode(1),
             EP_PANEL,
             ClusterCommand::LevelControl(LevelControlCommand::MoveToLevel {
@@ -1650,12 +1741,13 @@ mod tests {
     #[test]
     fn a_cluster_on_the_wrong_endpoint_is_refused() {
         // Thermostat lives on endpoint 1, not on the panel.
-        let result = command_to_config_write(
+        let result = writes_to_config_write(
             &state_in_mode(1),
             EP_PANEL,
-            &ClusterCommand::Thermostat(ThermostatCommand::SetSystemMode {
-                mode: SystemMode::Cool,
-            }),
+            &[ClusterWrite::Thermostat(ThermostatWrite {
+                system_mode: Some(SystemMode::Cool),
+                ..Default::default()
+            })],
         );
         assert!(matches!(
             result,

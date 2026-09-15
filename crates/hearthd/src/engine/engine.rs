@@ -23,6 +23,7 @@ use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
+use crate::matter::ClusterWrite;
 use crate::matter::EndpointId;
 
 /// hearthd engine
@@ -132,12 +133,13 @@ impl Engine {
         self.integration_handles.push(handle);
     }
 
-    /// Send a command to an integration.
+    /// Send a mutation to an integration.
     ///
-    /// Routes the command to the integration that owns the target node.
-    pub fn send_command(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
+    /// Routes the message to the integration that owns the target node.
+    pub fn send_mutation(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
         let node_id = match &msg {
-            ToIntegrationMessage::InvokeCommand { node_id, .. } => *node_id,
+            ToIntegrationMessage::InvokeCommand { node_id, .. }
+            | ToIntegrationMessage::WriteAttributes { node_id, .. } => *node_id,
         };
 
         let map = self
@@ -165,6 +167,54 @@ impl Engine {
 
         tx.send(msg)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })
+    }
+
+    /// Send a command to an integration.
+    ///
+    /// Validates the command against the current state before routing.
+    pub fn send_command(
+        &self,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        command: ClusterCommand,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        let state = self.state.load();
+        if let Err(e) = super::mutation::validate_command(&state, node_id, endpoint_id, &command) {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                e.to_string(),
+            )));
+        }
+
+        self.send_mutation(ToIntegrationMessage::InvokeCommand {
+            node_id,
+            endpoint_id,
+            command,
+        })
+    }
+
+    /// Send an attribute write to an integration.
+    ///
+    /// Validates the write against the current state before routing.
+    pub fn send_write(
+        &self,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        writes: Vec<ClusterWrite>,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        let state = self.state.load();
+        if let Err(e) = super::mutation::validate_write(&state, node_id, endpoint_id, &writes) {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                e.to_string(),
+            )));
+        }
+
+        self.send_mutation(ToIntegrationMessage::WriteAttributes {
+            node_id,
+            endpoint_id,
+            writes,
+        })
     }
 
     /// Run the engine's main event loop
@@ -204,11 +254,17 @@ impl Engine {
         endpoint_id: EndpointId,
         command: ClusterCommand,
     ) -> Result<(), Box<dyn Error + Send>> {
-        self.send_command(ToIntegrationMessage::InvokeCommand {
-            node_id,
-            endpoint_id,
-            command,
-        })
+        self.send_command(node_id, endpoint_id, command)
+    }
+
+    /// Write cluster attributes on a node's endpoint.
+    pub fn write_attributes(
+        &self,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        writes: Vec<ClusterWrite>,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        self.send_write(node_id, endpoint_id, writes)
     }
 
     /// Handle an event from an integration
