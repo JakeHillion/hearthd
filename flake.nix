@@ -120,6 +120,7 @@
 
           devShells.default = craneLib.devShell {
             packages = with pkgs; [
+              curl
               rust-analyzer
               cargo-insta
               fmt-toolchain
