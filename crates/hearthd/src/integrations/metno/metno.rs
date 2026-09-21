@@ -259,6 +259,12 @@ impl Integration for MetnoIntegration {
                     format!("metno node {node_id} is read-only"),
                 )))
             }
+            ToIntegrationMessage::WriteAttributes { node_id, .. } => {
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("metno node {node_id} is read-only"),
+                )))
+            }
         }
     }
 
