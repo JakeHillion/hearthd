@@ -65,3 +65,35 @@ change without iteration noise.
 - Do **not** include unrelated files in a commit.  
 - Keep commit text concise, accurate, and human-readable.  
 - Prefer crate-level `CRATE_OR_AREA` names unless the change spans multiple areas.
+
+## Repository working notes
+
+This section is for general notes on working in the repository. Add further
+operational guidance here as it arises.
+
+### Formatting
+
+**Always** format the repository with the official formatter, and run it across
+the **entire repository** before every commit:
+
+```
+nix fmt .
+```
+
+`nix fmt .` formats **all** code in the repo — every language — in one pass. It
+is the single source of truth for formatting, defined once in `flake.nix` and
+easily replicated locally and in CI. Never reach for a language-specific
+formatter by hand (`cargo fmt`, `nixpkgs-fmt`, alejandra, etc.) or shape code
+manually to approximate it — those will diverge from what CI enforces.
+
+`nix fmt` is backed by `treefmt-nix`, which centralises every language's
+formatter (currently the pinned fenix `rustfmt` with `rustfmt.toml` for Rust,
+`nixpkgs-fmt` for `.nix` files, and so on). When a new language is added to the
+repo, its formatter is registered in the `treefmtEval` block in `flake.nix` —
+not invoked ad hoc — so `nix fmt .` keeps working uniformly:
+
+- `flake.nix` defines the `formatter` output used by `nix fmt`, and the
+  `treefmtEval` block is where every language's formatter is configured.  
+- CI runs `nix flake check`, which includes the `formatting` check
+  (`treefmtEval.config.build.check self`), so any formatting drift fails the  
+  build.
