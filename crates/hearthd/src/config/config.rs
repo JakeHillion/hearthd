@@ -111,6 +111,9 @@ pub struct IntegrationsConfig {
 
     #[cfg(feature = "integration_snapcast")]
     pub snapcast: Option<crate::integrations::snapcast::SnapcastConfig>,
+
+    #[cfg(feature = "integration_wake_on_lan")]
+    pub wake_on_lan: Option<crate::integrations::wake_on_lan::WolConfig>,
 }
 
 #[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
@@ -1056,6 +1059,61 @@ longitude = 11.0
 
         let level3 = level2.level3.unwrap();
         assert_eq!(level3.data.unwrap().into_inner(), "deep value");
+
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_wol_integration_config() {
+        let temp_dir = std::env::temp_dir().join("hearthd_test_wol");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let config_path = temp_dir.join("wake_on_lan.toml");
+        let mut config_file = fs::File::create(&config_path).unwrap();
+        write!(
+            config_file,
+            r#"
+[integrations.wake_on_lan]
+
+[integrations.wake_on_lan.hosts.lab_server]
+host = "192.168.1.50"
+mac = "AA:BB:CC:DD:EE:FF"
+name = "Lab server"
+
+[integrations.wake_on_lan.hosts.workstation]
+host = "192.168.1.51"
+mac = "DE-AD-BE-EF-00-01"
+port = 7
+broadcast = "192.168.1.255"
+"#
+        )
+        .unwrap();
+
+        let (config, diagnostics) = Config::from_files(&[config_path]).expect("config should load");
+        assert_eq!(diagnostics.0.len(), 0, "Expected no diagnostics");
+
+        let wake_on_lan = config
+            .integrations
+            .wake_on_lan
+            .expect("wake_on_lan integration configured");
+        // Defaults from the generated default functions.
+        assert_eq!(wake_on_lan.ping_timeout_ms, 2_000);
+
+        let lab = &wake_on_lan.hosts["lab_server"];
+        assert_eq!(lab.host, "192.168.1.50");
+        assert_eq!(lab.mac, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(lab.name.as_deref(), Some("Lab server"));
+        assert_eq!(lab.port, 9);
+        // Default ping interval from the generated default function.
+        assert_eq!(lab.ping_interval_ms, 30_000);
+        // Unset broadcast/netmask default to None and are resolved at runtime.
+        assert_eq!(lab.broadcast, None);
+        assert_eq!(lab.netmask, None);
+
+        let ws = &wake_on_lan.hosts["workstation"];
+        assert_eq!(ws.port, 7);
+        assert_eq!(ws.broadcast.as_deref(), Some("192.168.1.255"));
+        assert_eq!(ws.name, None);
 
         fs::remove_dir_all(&temp_dir).ok();
     }

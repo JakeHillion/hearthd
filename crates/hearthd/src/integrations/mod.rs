@@ -6,3 +6,5 @@ pub mod metno;
 pub mod mqtt;
 #[cfg(feature = "integration_snapcast")]
 pub mod snapcast;
+#[cfg(feature = "integration_wake_on_lan")]
+pub mod wake_on_lan;
