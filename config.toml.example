@@ -70,3 +70,25 @@ longitude = 10.7579
 # The integration resynchronises its whole view on every reconnect, so
 # nothing is lost by waiting.
 # reconnect_interval_ms = 5000
+
+# Wake on LAN, over ICMP ping. Each configured host becomes a "switch.<name>"
+# entity whose state reflects whether the host answers a ping. Toggling the
+# switch on sends a Wake-on-LAN magic packet to wake the host; "off" is a
+# no-op, because a WoL switch cannot power a host down.
+#
+# [integrations.wake_on_lan]
+#
+# ICMP timeout before a host counts as offline (ms).
+# ping_timeout_ms = 2000
+#
+# One section per host. The key names the entity, so this becomes
+# "switch.desktop".
+# [integrations.wake_on_lan.hosts.desktop]
+# host = "192.168.1.50"            # IP address or hostname to ping
+# mac = "AA:BB:CC:DD:EE:FF"        # MAC for the Wake-on-LAN magic packet
+# ping_interval_ms = 30000         # how often this host is pinged (ms)
+# name = "Desktop computer"        # optional, defaults to the key
+# port = 9                         # UDP port for the magic packet
+# broadcast = "192.168.1.255"      # optional; defaults to the subnet-directed
+#                                  # broadcast derived from `host` + `netmask`
+# netmask = "255.255.255.0"        # only used when `broadcast` is unset
