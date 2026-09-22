@@ -97,3 +97,79 @@ not invoked ad hoc — so `nix fmt .` keeps working uniformly:
 - CI runs `nix flake check`, which includes the `formatting` check
   (`treefmtEval.config.build.check self`), so any formatting drift fails the  
   build.
+
+## Testing a running hearthd
+
+When you need to exercise running behaviour — the HTTP API, engine startup, or
+config loading at runtime — start hearthd manually rather than relying on a
+systemd service.
+
+### Configuration
+
+Any config you write for testing must use the gitignored `.local.toml` suffix
+so it is never committed (`*.local.toml` is in `.gitignore`). Do **not** copy
+`config.toml.example` wholesale — build a minimal config: a small base that lets
+hearthd start, plus only the options for the feature you are adding or testing.
+`config.toml.example` is a reference for shape and available keys, not a
+starting point.
+
+The default path `/etc/hearthd/config.toml` does not exist in a dev
+environment, so always pass your file explicitly.
+
+### Running
+
+Either build a debug binary and run it:
+
+```
+cargo build
+./target/debug/hearthd --config hearthd.local.toml
+```
+
+or run the packaged binary from the flake:
+
+```
+nix run . -- --config hearthd.local.toml
+```
+
+If your environment can keep processes running in the background (e.g. a
+dedicated shell/task that persists), start hearthd in the background rather
+than blocking on it, and keep control of its PID:
+
+```
+./target/debug/hearthd --config hearthd.local.toml &
+PID=$!
+echo "hearthd PID: $PID"
+```
+
+**Always note the PID at startup.** hearthd binds the HTTP port (default
+`127.0.0.1:8565`), so a stray process left behind will make the next run fail
+to bind. When you are finished, kill the recorded PID:
+
+```
+kill $PID
+```
+
+**Never use `pkill` (or any heuristic process matching) to stop hearthd.** It
+can kill the wrong hearthd — e.g. one you or another agent started — or kill a
+short-lived process the pattern was never meant to target. Only kill the PID
+you recorded at startup.
+
+### Querying the API
+
+Use `curl`, which is provided by the devshell, against the HTTP API to verify
+the daemon is actually serving. The server listens on `127.0.0.1:8565` by
+default.
+
+```
+curl http://127.0.0.1:8565/v1/ping
+curl http://127.0.0.1:8565/v1/info
+curl http://127.0.0.1:8565/v1/state
+```
+
+Commands to an entity use POST:
+
+```
+curl -X POST http://127.0.0.1:8565/v1/entities/<id>/command \
+  -H 'content-type: application/json' \
+  -d '{"endpoint": 1, "command": {"command": "OnOffOn"}}'
+```
