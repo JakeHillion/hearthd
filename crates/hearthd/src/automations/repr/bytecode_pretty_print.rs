@@ -1,8 +1,12 @@
 //! Disassembler / pretty-printer for [`super::bytecode::Bytecode`].
 //!
 //! Decodes the byte stream back into a textual form suitable for snapshot
-//! tests. Each instruction is shown with its byte offset so jump targets
-//! are readable.
+//! tests. Jump operands print as labels rather than byte offsets, so the
+//! output describes control flow instead of byte layout and stays stable
+//! when instruction encodings change.
+
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use super::bytecode::*;
 use super::function::FunctionIdentity;
@@ -89,20 +93,81 @@ fn write_const(c: &Const, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     }
 }
 
+/// The offsets that are jumped to, named `l0`, `l1`, ... in ascending order.
+#[derive(Default)]
+struct Labels {
+    names: BTreeMap<u32, usize>,
+}
+
+/// Instruction boundaries and jump targets recorded while decoding.
+#[derive(Default)]
+struct Scan {
+    starts: BTreeSet<u32>,
+    targets: BTreeSet<u32>,
+}
+
+impl Labels {
+    /// Decode the stream once to find which offsets are jumped to. The
+    /// disassembly this produces goes to a scratch buffer and is discarded;
+    /// only the recorded boundaries and targets are kept. Decoding through
+    /// the printer keeps a single description of the instruction layout.
+    fn scan(code: &[u8], consts: &[Const]) -> Labels {
+        let mut scan = Scan::default();
+        let mut scratch = String::new();
+        write_instructions(code, consts, &Labels::default(), 0, &mut scratch, &mut scan)
+            .expect("writing to a String cannot fail");
+        Labels {
+            names: scan
+                .targets
+                .iter()
+                .filter(|target| scan.starts.contains(target))
+                .enumerate()
+                .map(|(i, &target)| (target, i))
+                .collect(),
+        }
+    }
+
+    /// Render a jump operand. A target that is not an instruction boundary
+    /// cannot be labelled and is a lowering bug, so say so rather than print
+    /// an offset that reads like a normal operand.
+    fn target(&self, offset: u32) -> String {
+        match self.names.get(&offset) {
+            Some(i) => format!("l{}", i),
+            None => format!("<invalid target {:04}>", offset),
+        }
+    }
+}
+
 fn disassemble(
     code: &[u8],
     consts: &[Const],
     indent: usize,
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
+    let labels = Labels::scan(code, consts);
+    write_instructions(code, consts, &labels, indent, f, &mut Scan::default())
+}
+
+fn write_instructions<W: std::fmt::Write>(
+    code: &[u8],
+    consts: &[Const],
+    labels: &Labels,
+    indent: usize,
+    f: &mut W,
+    scan: &mut Scan,
+) -> std::fmt::Result {
     let mut pc = 0;
     while pc < code.len() {
         let start = pc;
+        scan.starts.insert(start as u32);
         let opcode = Opcode::from_repr(code[pc])
             .unwrap_or_else(|| panic!("unknown opcode 0x{:02x} at offset {}", code[pc], pc));
         pc += 1;
+        if let Some(label) = labels.names.get(&(start as u32)) {
+            write_indent(indent.saturating_sub(1), f)?;
+            writeln!(f, "l{}:", label)?;
+        }
         write_indent(indent, f)?;
-        write!(f, "{:04}: ", start)?;
         match opcode {
             Opcode::LoadConstInt | Opcode::LoadConstFloat | Opcode::LoadConstString => {
                 let dst = read_u32(code, &mut pc);
@@ -303,16 +368,22 @@ fn disassemble(
             }
             Opcode::Jump => {
                 let target = read_u32(code, &mut pc);
-                writeln!(f, "{:<18} {:04}", "jump", target)?;
+                scan.targets.insert(target);
+                writeln!(f, "{:<18} {}", "jump", labels.target(target))?;
             }
             Opcode::JumpIf => {
                 let cond = read_u32(code, &mut pc);
                 let then_t = read_u32(code, &mut pc);
                 let else_t = read_u32(code, &mut pc);
+                scan.targets.insert(then_t);
+                scan.targets.insert(else_t);
                 writeln!(
                     f,
-                    "{:<18} r{}, {:04}, {:04}",
-                    "jump_if", cond, then_t, else_t
+                    "{:<18} r{}, {}, {}",
+                    "jump_if",
+                    cond,
+                    labels.target(then_t),
+                    labels.target(else_t)
                 )?;
             }
             Opcode::IterNext => {
@@ -320,10 +391,16 @@ fn disassemble(
                 let value = read_u32(code, &mut pc);
                 let body = read_u32(code, &mut pc);
                 let exit = read_u32(code, &mut pc);
+                scan.targets.insert(body);
+                scan.targets.insert(exit);
                 writeln!(
                     f,
-                    "{:<18} r{}, r{}, {:04}, {:04}",
-                    "iter_next", iter, value, body, exit
+                    "{:<18} r{}, r{}, {}, {}",
+                    "iter_next",
+                    iter,
+                    value,
+                    labels.target(body),
+                    labels.target(exit)
                 )?;
             }
             Opcode::Return => {
