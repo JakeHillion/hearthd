@@ -3,9 +3,9 @@
 //! Used by type checker tests to produce unambiguous snapshot output.
 //! Shows `[type: X]` annotations on every expression.
 
-use super::pretty_print::PrettyPrint;
-use super::pretty_print::write_indent;
 use super::typed::*;
+use crate::automations::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::write_indent;
 
 impl PrettyPrint for TypedExpr {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

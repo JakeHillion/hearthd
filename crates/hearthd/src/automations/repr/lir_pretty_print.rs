@@ -3,8 +3,8 @@
 //! Used by `lower_lir` snapshot tests to produce readable output.
 
 use super::lir::*;
-use super::pretty_print::PrettyPrint;
-use super::pretty_print::write_indent;
+use crate::automations::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::write_indent;
 
 impl PrettyPrint for LirProgram {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -1,6 +1,6 @@
 use super::check_program;
 use super::format_type_errors;
-use crate::automations::repr::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::PrettyPrint;
 
 fn check_and_pretty(input: &str) -> String {
     let program = crate::automations::parse(input).expect("parsing should succeed");

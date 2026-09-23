@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 
 use super::bytecode::*;
 use super::function::FunctionIdentity;
-use super::pretty_print::PrettyPrint;
-use super::pretty_print::write_indent;
+use crate::automations::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::write_indent;
 
 /// The mnemonic for a binary opcode, which names its operator and — for
 /// the numeric ones — the type it is specialised to.

@@ -1,4 +1,4 @@
-use crate::automations::repr::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::PrettyPrint;
 
 /// Lower a program and pretty-print the HIR. Tolerates type errors since
 /// we're testing lowering, not the type checker.

@@ -3,8 +3,8 @@
 //! Used by desugar tests to produce unambiguous snapshot output.
 
 use super::lowered::*;
-use super::pretty_print::PrettyPrint;
-use super::pretty_print::write_indent;
+use crate::automations::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::write_indent;
 
 impl PrettyPrint for Origin {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
