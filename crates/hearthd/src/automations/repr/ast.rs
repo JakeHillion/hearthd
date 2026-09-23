@@ -5,6 +5,8 @@
 use chumsky::span::SimpleSpan;
 use strum::Display;
 
+use crate::automations::lexer::UnitType;
+
 /// An AST node with an associated source span.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spanned<T> {
@@ -207,34 +209,6 @@ pub enum UnaryOp {
     Deref,
     #[strum(serialize = "await")]
     Await,
-}
-
-/// Unit types for numeric literals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display)]
-pub enum UnitType {
-    // Time units
-    #[strum(serialize = "s")]
-    Seconds,
-    #[strum(serialize = "min")]
-    Minutes,
-    #[strum(serialize = "h")]
-    Hours,
-    #[strum(serialize = "d")]
-    Days,
-
-    // Angle units
-    #[strum(serialize = "deg")]
-    Degrees,
-    #[strum(serialize = "rad")]
-    Radians,
-
-    // Temperature units
-    #[strum(serialize = "c")]
-    Celsius,
-    #[strum(serialize = "f")]
-    Fahrenheit,
-    #[strum(serialize = "k")]
-    Kelvin,
 }
 
 /// Function call argument.

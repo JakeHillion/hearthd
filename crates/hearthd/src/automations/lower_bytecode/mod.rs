@@ -93,7 +93,7 @@ struct Encoder {
     float_idx: HashMap<u64, u32>, // f64 bit pattern
     string_idx: HashMap<String, u32>,
     ident_idx: HashMap<String, u32>,
-    unit_idx: HashMap<(String, crate::automations::repr::ast::UnitType), u32>,
+    unit_idx: HashMap<(String, crate::automations::lexer::UnitType), u32>,
 }
 
 struct Backpatch {
@@ -166,7 +166,7 @@ impl Encoder {
         idx
     }
 
-    fn intern_unit(&mut self, value: &str, unit: crate::automations::repr::ast::UnitType) -> u32 {
+    fn intern_unit(&mut self, value: &str, unit: crate::automations::lexer::UnitType) -> u32 {
         let key = (value.to_string(), unit);
         if let Some(&idx) = self.unit_idx.get(&key) {
             return idx;

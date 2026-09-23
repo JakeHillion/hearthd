@@ -7,6 +7,7 @@
 use super::ast;
 use super::function::FunctionIdentity;
 use super::lowered::Origin;
+use crate::automations::lexer::UnitType;
 
 /// Internal semantic type. Distinct from the syntactic `ast::Type`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +98,7 @@ pub enum TypedExprKind {
     // Unit literals
     UnitLiteral {
         value: std::string::String,
-        unit: ast::UnitType,
+        unit: UnitType,
     },
 
     // Identifiers and paths

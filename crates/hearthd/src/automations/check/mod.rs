@@ -12,6 +12,7 @@ use chumsky::span::SimpleSpan;
 use chumsky::span::Span;
 use facet::Facet;
 
+use super::lexer::UnitType;
 use super::repr::ast;
 use super::repr::function::FunctionIdentity;
 use super::repr::lowered;
@@ -611,14 +612,11 @@ impl TypeChecker {
             // Unit literals
             lowered::LoweredExpr::UnitLiteral { value, unit } => {
                 let ty = match unit {
-                    ast::UnitType::Seconds
-                    | ast::UnitType::Minutes
-                    | ast::UnitType::Hours
-                    | ast::UnitType::Days => Ty::Duration,
-                    ast::UnitType::Degrees | ast::UnitType::Radians => Ty::Angle,
-                    ast::UnitType::Celsius | ast::UnitType::Fahrenheit | ast::UnitType::Kelvin => {
-                        Ty::Temperature
+                    UnitType::Seconds | UnitType::Minutes | UnitType::Hours | UnitType::Days => {
+                        Ty::Duration
                     }
+                    UnitType::Degrees | UnitType::Radians => Ty::Angle,
+                    UnitType::Celsius | UnitType::Fahrenheit | UnitType::Kelvin => Ty::Temperature,
                 };
                 TypedExpr {
                     kind: TypedExprKind::UnitLiteral {

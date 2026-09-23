@@ -20,6 +20,7 @@ use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::hir::NumTy;
 use super::typed::Ty;
+use crate::automations::lexer::UnitType;
 
 // ============================================================================
 // Opcode tags
@@ -237,7 +238,7 @@ pub enum Const {
     Ident(String),
     UnitLit {
         value: String,
-        unit: ast::UnitType,
+        unit: UnitType,
     },
 }
 

@@ -1,8 +1,8 @@
 use chumsky::Parser;
 
 use super::Token;
+use super::UnitType;
 use super::lexer;
-use crate::automations::repr::ast::UnitType;
 
 #[test]
 fn test_lex_integers() {

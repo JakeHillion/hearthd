@@ -3,8 +3,7 @@
 use chumsky::input::MapExtra;
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
-
-use crate::automations::repr::ast::UnitType;
+use strum::Display;
 
 /// A token in the automations language.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -121,6 +120,38 @@ impl std::fmt::Display for Token {
             Token::FilterEnd => write!(f, "/"),
         }
     }
+}
+
+/// Unit types for numeric literals.
+///
+/// A unit is a lexical property of the literal that carries it: the lexer
+/// decides which suffixes are units at all, so the set of units lives here
+/// rather than in the AST, and every later representation refers back to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display)]
+pub enum UnitType {
+    // Time units
+    #[strum(serialize = "s")]
+    Seconds,
+    #[strum(serialize = "min")]
+    Minutes,
+    #[strum(serialize = "h")]
+    Hours,
+    #[strum(serialize = "d")]
+    Days,
+
+    // Angle units
+    #[strum(serialize = "deg")]
+    Degrees,
+    #[strum(serialize = "rad")]
+    Radians,
+
+    // Temperature units
+    #[strum(serialize = "c")]
+    Celsius,
+    #[strum(serialize = "f")]
+    Fahrenheit,
+    #[strum(serialize = "k")]
+    Kelvin,
 }
 
 /// Parse a unit suffix and return the corresponding unit type.
