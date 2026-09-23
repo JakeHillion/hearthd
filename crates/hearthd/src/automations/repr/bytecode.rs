@@ -15,11 +15,11 @@
 
 use strum::FromRepr;
 
-use super::hir::HirBinOp;
-use super::hir::NumTy;
 use crate::automations::check::function::FunctionIdentity;
 use crate::automations::check::typed::Ty;
 use crate::automations::lexer::UnitType;
+use crate::automations::lower::hir::HirBinOp;
+use crate::automations::lower::hir::NumTy;
 use crate::automations::parser::ast;
 
 // ============================================================================

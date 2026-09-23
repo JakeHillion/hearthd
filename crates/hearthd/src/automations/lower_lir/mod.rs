@@ -11,7 +11,7 @@
 //! on the value flowing into `src`, which is produced by an earlier `Call`
 //! to an async builtin.
 
-use crate::automations::repr::hir::*;
+use crate::automations::lower::hir::*;
 use crate::automations::repr::lir::*;
 
 #[cfg(test)]
