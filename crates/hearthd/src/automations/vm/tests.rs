@@ -24,11 +24,11 @@ use super::Quantity;
 use super::Suspension;
 use super::Value;
 use super::VmError;
+use crate::automations::check::function::FunctionIdentity;
 use crate::automations::repr::Bytecode;
 use crate::automations::repr::BytecodeAutomation;
 use crate::automations::repr::BytecodeProgram;
 use crate::automations::repr::Opcode;
-use crate::automations::repr::function::FunctionIdentity;
 
 // ============================================================================
 // Harness

@@ -13,10 +13,10 @@
 //! preserves the HIR `Tmp` numbering 1:1, then allocates any further
 //! register it needs for itself past the highest `Tmp`.
 
-use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::hir::NumTy;
-use super::typed::Ty;
+use crate::automations::check::function::FunctionIdentity;
+use crate::automations::check::typed::Ty;
 use crate::automations::lexer::UnitType;
 use crate::automations::parser::ast;
 

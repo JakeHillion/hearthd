@@ -15,10 +15,10 @@
 
 use strum::FromRepr;
 
-use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::hir::NumTy;
-use super::typed::Ty;
+use crate::automations::check::function::FunctionIdentity;
+use crate::automations::check::typed::Ty;
 use crate::automations::lexer::UnitType;
 use crate::automations::parser::ast;
 
@@ -158,7 +158,7 @@ impl Opcode {
 }
 
 /// Tag byte identifying the function a `Call` instruction targets. Stable
-/// values, mirroring [`super::function::FunctionIdentity`].
+/// values, mirroring [`FunctionIdentity`].
 ///
 /// A tag rather than an opcode per function, unlike the numeric operators:
 /// a builtin's identity does not tell the VM what its registers hold, so

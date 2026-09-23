@@ -291,6 +291,6 @@ impl CheckResult {
 
     /// Render all type errors as pretty diagnostics with source context.
     pub fn format_errors(&self, source: &str, filename: &str) -> String {
-        crate::automations::check::format_type_errors(&self.errors, source, filename)
+        super::format_type_errors(&self.errors, source, filename)
     }
 }

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use super::bytecode::*;
-use super::function::FunctionIdentity;
+use crate::automations::check::function::FunctionIdentity;
 use crate::automations::pretty_print::PrettyPrint;
 use crate::automations::pretty_print::write_indent;
 

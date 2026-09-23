@@ -5,8 +5,8 @@
 //! replaced with numbered temporaries, but entity references remain symbolic
 //! for later linking.
 
-use super::function::FunctionIdentity;
-use super::typed::Ty;
+use crate::automations::check::function::FunctionIdentity;
+use crate::automations::check::typed::Ty;
 use crate::automations::lexer::UnitType;
 use crate::automations::parser::ast;
 
