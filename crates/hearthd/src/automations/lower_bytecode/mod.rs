@@ -12,8 +12,11 @@
 
 use std::collections::HashMap;
 
+use self::bytecode::*;
 use crate::automations::lower_lir::lir::*;
-use crate::automations::repr::bytecode::*;
+
+pub mod bytecode;
+mod disassemble;
 
 #[cfg(test)]
 mod tests;

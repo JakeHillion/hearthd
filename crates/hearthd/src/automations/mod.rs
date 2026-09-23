@@ -10,7 +10,6 @@ pub mod lower_bytecode;
 pub mod lower_lir;
 pub mod parser;
 pub mod pretty_print;
-pub mod repr;
 pub mod vm;
 
 pub use check::check_program;
@@ -21,4 +20,3 @@ pub use lower_bytecode::lower_bytecode_program;
 pub use lower_lir::lower_lir_program;
 pub use parser::parse;
 pub use pretty_print::PrettyPrint;
-pub use repr::*;

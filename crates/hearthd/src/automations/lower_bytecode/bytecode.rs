@@ -10,7 +10,7 @@
 //! interned into a per-function pool keyed by the underlying value so
 //! repeated literals don't bloat the stream.
 //!
-//! A disassembler (see `bytecode_pretty_print`) expands the byte stream
+//! A disassembler (see `disassemble`) expands the byte stream
 //! back into a readable form for snapshot tests.
 
 use strum::FromRepr;

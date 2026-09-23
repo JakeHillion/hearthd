@@ -25,10 +25,10 @@ use super::Suspension;
 use super::Value;
 use super::VmError;
 use crate::automations::check::function::FunctionIdentity;
-use crate::automations::repr::Bytecode;
-use crate::automations::repr::BytecodeAutomation;
-use crate::automations::repr::BytecodeProgram;
-use crate::automations::repr::Opcode;
+use crate::automations::lower_bytecode::bytecode::Bytecode;
+use crate::automations::lower_bytecode::bytecode::BytecodeAutomation;
+use crate::automations::lower_bytecode::bytecode::BytecodeProgram;
+use crate::automations::lower_bytecode::bytecode::Opcode;
 
 // ============================================================================
 // Harness
