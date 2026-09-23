@@ -483,3 +483,89 @@ fn test_lower_lir_template() {
             return r0
     ");
 }
+
+// =============================================================================
+// Mixed Int/Float operands
+// =============================================================================
+
+#[test]
+fn test_lower_lir_mixed_arithmetic_int_lhs() {
+    let result = lower_and_pretty("observer {} /true/ { 1 + 2.5; [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        regs: 1
+      L0:
+        r0 = const_bool true
+        return r0
+      body:
+        regs: 4
+      L0:
+        r0 = const_int 1
+        r1 = const_float 2.5
+        r2 = add r0, r1
+        r3 = empty_list
+        return r3
+    ");
+}
+
+#[test]
+fn test_lower_lir_mixed_arithmetic_int_rhs() {
+    let result = lower_and_pretty("observer {} /true/ { 2.5 + 1; [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        regs: 1
+      L0:
+        r0 = const_bool true
+        return r0
+      body:
+        regs: 4
+      L0:
+        r0 = const_float 2.5
+        r1 = const_int 1
+        r2 = add r0, r1
+        r3 = empty_list
+        return r3
+    ");
+}
+
+#[test]
+fn test_lower_lir_mixed_comparison() {
+    let result = lower_and_pretty("observer {} /1 < 2.5/ { [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        regs: 3
+      L0:
+        r0 = const_int 1
+        r1 = const_float 2.5
+        r2 = lt r0, r1
+        return r2
+      body:
+        regs: 1
+      L0:
+        r0 = empty_list
+        return r0
+    ");
+}
+
+#[test]
+fn test_lower_lir_mixed_equality() {
+    let result = lower_and_pretty("observer {} /1 == 2.5/ { [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        regs: 3
+      L0:
+        r0 = const_int 1
+        r1 = const_float 2.5
+        r2 = eq r0, r1
+        return r2
+      body:
+        regs: 1
+      L0:
+        r0 = empty_list
+        return r0
+    ");
+}

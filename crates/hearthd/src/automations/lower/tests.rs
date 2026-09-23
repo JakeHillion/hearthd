@@ -436,6 +436,30 @@ fn test_lower_float_literal() {
     ");
 }
 
+/// An `Int` and a `Float` operand, in either order. Both results are
+/// `Float`, so the instruction's own type does not distinguish them.
+#[test]
+fn test_lower_mixed_arithmetic() {
+    let result = lower_and_pretty("observer {} /true/ { 1 + 2.5; 2.5 + 1; [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        bb0:
+          %0 = const_bool true [Bool]
+          return %0
+      body:
+        bb0:
+          %0 = const_int 1 [Int]
+          %1 = const_float 2.5 [Float]
+          %2 = add %0, %1 [Float]
+          %3 = const_float 2.5 [Float]
+          %4 = const_int 1 [Int]
+          %5 = add %3, %4 [Float]
+          %6 = empty_list [[<error>]]
+          return %6
+    ");
+}
+
 #[test]
 fn test_lower_unit_literals() {
     let result = lower_and_pretty("observer {} /true/ { 5s; 30min; 25c; 90deg; [] }");
