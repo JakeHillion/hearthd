@@ -3,8 +3,8 @@
 //! Used by lowering tests to produce readable snapshot output.
 
 use super::hir::*;
-use super::pretty_print::PrettyPrint;
-use super::pretty_print::write_indent;
+use crate::automations::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::write_indent;
 
 impl std::fmt::Display for Tmp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

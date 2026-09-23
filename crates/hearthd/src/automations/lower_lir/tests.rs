@@ -1,4 +1,4 @@
-use crate::automations::repr::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::PrettyPrint;
 
 /// Lower a program all the way through to LIR and pretty-print it.
 fn lower_and_pretty(input: &str) -> String {

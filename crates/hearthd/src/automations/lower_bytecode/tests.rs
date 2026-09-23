@@ -1,4 +1,4 @@
-use crate::automations::repr::pretty_print::PrettyPrint;
+use crate::automations::pretty_print::PrettyPrint;
 
 /// Compile a program all the way to bytecode and pretty-print its
 /// disassembly.

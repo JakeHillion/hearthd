@@ -9,10 +9,10 @@ pub mod function;
 pub mod hir;
 pub mod lir;
 pub mod lowered;
-pub mod pretty_print;
 pub mod typed;
 
 // Pretty print impls (use the same PrettyPrint trait)
+mod ast_pretty_print;
 mod bytecode_pretty_print;
 mod hir_pretty_print;
 mod lir_pretty_print;
@@ -42,8 +42,6 @@ pub use lowered::{
     LoweredArg, LoweredAutomation, LoweredExpr, LoweredProgram, LoweredStmt, LoweredStructField,
     Origin, Spanned as LoweredSpanned,
 };
-// Re-export pretty printing
-pub use pretty_print::PrettyPrint;
 // Re-export typed AST types
 pub use typed::{
     CheckResult, EntityConstraint, Ty, TypedArg, TypedAutomation, TypedExpr, TypedExprKind,
