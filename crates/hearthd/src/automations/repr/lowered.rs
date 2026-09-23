@@ -9,8 +9,9 @@
 use std::rc::Rc;
 
 use super::ast;
-// Re-export shared types from ast.rs
-pub use super::ast::{BinOp, UnaryOp, UnitType};
+pub use super::ast::BinOp;
+pub use super::ast::UnaryOp;
+pub use crate::automations::lexer::UnitType;
 
 /// Reference to the original AST node that produced a lowered node.
 /// The span is accessible via `origin.span()`.

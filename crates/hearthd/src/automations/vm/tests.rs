@@ -319,7 +319,7 @@ fn test_vm_unit_literal_overflow_is_reported() {
 /// writes, which is exact because the two differ by a power of ten.
 #[test]
 fn test_quantity_display_renders_in_authored_units() {
-    use crate::automations::repr::ast::UnitType;
+    use crate::automations::lexer::UnitType;
 
     let rendered = [
         (UnitType::Hours, "1.5"),
@@ -357,7 +357,7 @@ fn test_quantity_display_renders_in_authored_units() {
 /// conversion table the equality tests above rest on.
 #[test]
 fn test_quantity_canonical_conversions() {
-    use crate::automations::repr::ast::UnitType;
+    use crate::automations::lexer::UnitType;
 
     let rendered = [
         UnitType::Seconds,

@@ -8,6 +8,7 @@
 use super::ast;
 use super::function::FunctionIdentity;
 use super::typed::Ty;
+use crate::automations::lexer::UnitType;
 
 /// A numbered temporary value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -82,7 +83,7 @@ pub enum Op {
     ConstBool(bool),
     ConstUnit {
         value: String,
-        unit: ast::UnitType,
+        unit: UnitType,
     },
 
     /// The unit/void value.

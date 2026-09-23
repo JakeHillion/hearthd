@@ -18,6 +18,7 @@ use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::hir::NumTy;
 use super::typed::Ty;
+use crate::automations::lexer::UnitType;
 
 /// A numbered register within a function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,7 +101,7 @@ pub enum LirInstr {
     ConstUnit {
         dst: Reg,
         value: String,
-        unit: ast::UnitType,
+        unit: UnitType,
     },
     Unit {
         dst: Reg,

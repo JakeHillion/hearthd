@@ -1,6 +1,6 @@
 //! [`Quantity`]: unit literals in their dimension's canonical unit.
 
-use crate::automations::repr::ast::UnitType;
+use crate::automations::lexer::UnitType;
 
 /// A magnitude in its dimension's canonical unit.
 ///
