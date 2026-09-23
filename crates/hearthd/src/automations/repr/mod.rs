@@ -3,7 +3,6 @@
 //! This module contains the AST and lowered AST types, along with
 //! pretty-printing utilities for debugging and testing.
 
-pub mod ast;
 pub mod bytecode;
 pub mod function;
 pub mod hir;
@@ -12,20 +11,21 @@ pub mod lowered;
 pub mod typed;
 
 // Pretty print impls (use the same PrettyPrint trait)
-mod ast_pretty_print;
 mod bytecode_pretty_print;
 mod hir_pretty_print;
 mod lir_pretty_print;
 mod lowered_pretty_print;
 mod typed_pretty_print;
 
-// Re-export AST types at the repr level
-pub use ast::*;
 // Re-export bytecode types
-pub use bytecode::{
-    Bytecode, BytecodeAutomation, BytecodeParam, BytecodeProgram, Const, FunctionTag, Opcode,
-    StructFieldTag,
-};
+pub use bytecode::Bytecode;
+pub use bytecode::BytecodeAutomation;
+pub use bytecode::BytecodeParam;
+pub use bytecode::BytecodeProgram;
+pub use bytecode::Const;
+pub use bytecode::FunctionTag;
+pub use bytecode::Opcode;
+pub use bytecode::StructFieldTag;
 // Re-export function identities
 pub use function::FunctionIdentity;
 // Re-export HIR types

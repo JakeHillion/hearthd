@@ -8,10 +8,10 @@
 
 use std::rc::Rc;
 
-use super::ast;
-pub use super::ast::BinOp;
-pub use super::ast::UnaryOp;
 pub use crate::automations::lexer::UnitType;
+use crate::automations::parser::ast;
+pub use crate::automations::parser::ast::BinOp;
+pub use crate::automations::parser::ast::UnaryOp;
 
 /// Reference to the original AST node that produced a lowered node.
 /// The span is accessible via `origin.span()`.

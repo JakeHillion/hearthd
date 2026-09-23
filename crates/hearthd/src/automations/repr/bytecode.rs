@@ -15,12 +15,12 @@
 
 use strum::FromRepr;
 
-use super::ast;
 use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
 use super::hir::NumTy;
 use super::typed::Ty;
 use crate::automations::lexer::UnitType;
+use crate::automations::parser::ast;
 
 // ============================================================================
 // Opcode tags

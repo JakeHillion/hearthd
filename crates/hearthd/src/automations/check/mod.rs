@@ -13,7 +13,7 @@ use chumsky::span::Span;
 use facet::Facet;
 
 use super::lexer::UnitType;
-use super::repr::ast;
+use super::parser::ast;
 use super::repr::function::FunctionIdentity;
 use super::repr::lowered;
 use super::repr::typed::CheckResult;

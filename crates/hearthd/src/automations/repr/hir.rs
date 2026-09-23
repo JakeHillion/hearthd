@@ -5,10 +5,10 @@
 //! replaced with numbered temporaries, but entity references remain symbolic
 //! for later linking.
 
-use super::ast;
 use super::function::FunctionIdentity;
 use super::typed::Ty;
 use crate::automations::lexer::UnitType;
+use crate::automations::parser::ast;
 
 /// A numbered temporary value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

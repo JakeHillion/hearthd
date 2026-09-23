@@ -3,9 +3,9 @@ use chumsky::prelude::*;
 use super::desugar;
 use super::desugar_program;
 use crate::automations::lexer::Token;
+use crate::automations::parser::ast::Expr;
+use crate::automations::parser::ast::Spanned;
 use crate::automations::pretty_print::PrettyPrint;
-use crate::automations::repr::ast::Expr;
-use crate::automations::repr::ast::Spanned;
 
 fn parse_expr(input: &str) -> Result<Spanned<Expr>, Vec<Rich<'static, Token>>> {
     let tokens = crate::automations::lexer::lexer()
