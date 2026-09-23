@@ -91,8 +91,16 @@ fn write_instr(instr: &LirInstr, f: &mut std::fmt::Formatter<'_>) -> std::fmt::R
             write!(f, "{} = const_unit {}{}", dst, value, unit)
         }
         LirInstr::Unit { dst } => write!(f, "{} = unit", dst),
+        LirInstr::TypedBinOp {
+            dst,
+            op,
+            ty,
+            lhs,
+            rhs,
+        } => write!(f, "{} = {}_{} {}, {}", dst, op, ty, lhs, rhs),
         LirInstr::BinOp { dst, op, lhs, rhs } => write!(f, "{} = {} {}, {}", dst, op, lhs, rhs),
         LirInstr::Neg { dst, src } => write!(f, "{} = neg {}", dst, src),
+        LirInstr::ToFloat { dst, src } => write!(f, "{} = to_float {}", dst, src),
         LirInstr::Not { dst, src } => write!(f, "{} = not {}", dst, src),
         LirInstr::Deref { dst, src } => write!(f, "{} = deref {}", dst, src),
         LirInstr::Field { dst, base, field } => write!(f, "{} = field {}.{}", dst, base, field),

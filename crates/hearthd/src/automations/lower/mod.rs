@@ -97,6 +97,32 @@ fn lower_binop(op: ast::BinOp) -> HirBinOp {
     }
 }
 
+/// Which operators this stage commits to an operand type. `eq`/`ne`/`in`
+/// accept types [`NumTy`] cannot name, so they are left alone.
+fn monomorphises(op: ast::BinOp) -> bool {
+    matches!(
+        op,
+        ast::BinOp::Add
+            | ast::BinOp::Sub
+            | ast::BinOp::Mul
+            | ast::BinOp::Div
+            | ast::BinOp::Mod
+            | ast::BinOp::Lt
+            | ast::BinOp::Le
+            | ast::BinOp::Gt
+            | ast::BinOp::Ge
+    )
+}
+
+/// The [`NumTy`] a checked type stands for, if it is a number at all.
+fn num_ty(ty: &Ty) -> Option<NumTy> {
+    match ty {
+        Ty::Int => Some(NumTy::Int),
+        Ty::Float => Some(NumTy::Float),
+        _ => None,
+    }
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -361,14 +387,27 @@ impl Lowerer {
                 _ => {
                     let left_tmp = self.lower_expr(left);
                     let right_tmp = self.lower_expr(right);
-                    self.emit(
-                        Op::BinOp {
-                            op: lower_binop(*op),
-                            left: left_tmp,
-                            right: right_tmp,
-                        },
-                        expr.ty.clone(),
-                    )
+                    let hir_op = lower_binop(*op);
+                    let untyped = Op::BinOp {
+                        op: hir_op,
+                        left: left_tmp,
+                        right: right_tmp,
+                    };
+                    let op = if monomorphises(*op) {
+                        match num_ty(&left.ty).zip(num_ty(&right.ty)) {
+                            Some((left_ty, right_ty)) => Op::TypedBinOp {
+                                op: hir_op,
+                                left: left_tmp,
+                                left_ty,
+                                right: right_tmp,
+                                right_ty,
+                            },
+                            None => Op::Unit,
+                        }
+                    } else {
+                        untyped
+                    };
+                    self.emit(op, expr.ty.clone())
                 }
             },
 

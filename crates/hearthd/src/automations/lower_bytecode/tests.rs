@@ -200,8 +200,8 @@ fn test_lower_bytecode_binary_arithmetic() {
           load_const_int     r0, #0 (int 1)
           load_const_int     r1, #1 (int 2)
           load_const_int     r2, #2 (int 3)
-          binop              r3, mul, r1, r2
-          binop              r4, add, r0, r3
+          mul_int            r3, r1, r2
+          add_int            r4, r0, r3
           empty_list         r5
           return             r5
     ");
@@ -225,7 +225,7 @@ fn test_lower_bytecode_float_literal() {
         code:
           load_const_float   r0, #0 (float 1.5)
           load_const_float   r1, #1 (float 2.5)
-          binop              r2, add, r0, r1
+          add_float          r2, r0, r1
           empty_list         r3
           return             r3
     ");
@@ -478,7 +478,7 @@ fn test_lower_bytecode_interns_repeated_int() {
         code:
           load_const_int     r0, #0 (int 1)
           load_const_int     r1, #0 (int 1)
-          binop              r2, add, r0, r1
+          add_int            r2, r0, r1
           empty_list         r3
           return             r3
     ");
@@ -594,14 +594,15 @@ fn test_lower_bytecode_mixed_arithmetic() {
           load_const_bool    r0, true
           return             r0
       body:
-        regs: 4
+        regs: 5
         consts:
           #0 = int 1
           #1 = float 2.5
         code:
           load_const_int     r0, #0 (int 1)
           load_const_float   r1, #1 (float 2.5)
-          binop              r2, add, r0, r1
+          to_float           r4, r0
+          add_float          r2, r4, r1
           empty_list         r3
           return             r3
     ");

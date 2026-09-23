@@ -10,9 +10,37 @@ use std::collections::BTreeSet;
 
 use super::bytecode::*;
 use super::function::FunctionIdentity;
-use super::hir::HirBinOp;
 use super::pretty_print::PrettyPrint;
 use super::pretty_print::write_indent;
+
+/// The mnemonic for a binary opcode, which names its operator and — for
+/// the numeric ones — the type it is specialised to.
+fn binary_name(opcode: Opcode) -> &'static str {
+    match opcode {
+        Opcode::AddInt => "add_int",
+        Opcode::SubInt => "sub_int",
+        Opcode::MulInt => "mul_int",
+        Opcode::DivInt => "div_int",
+        Opcode::ModInt => "mod_int",
+        Opcode::LtInt => "lt_int",
+        Opcode::LeInt => "le_int",
+        Opcode::GtInt => "gt_int",
+        Opcode::GeInt => "ge_int",
+        Opcode::AddFloat => "add_float",
+        Opcode::SubFloat => "sub_float",
+        Opcode::MulFloat => "mul_float",
+        Opcode::DivFloat => "div_float",
+        Opcode::ModFloat => "mod_float",
+        Opcode::LtFloat => "lt_float",
+        Opcode::LeFloat => "le_float",
+        Opcode::GtFloat => "gt_float",
+        Opcode::GeFloat => "ge_float",
+        Opcode::Eq => "eq",
+        Opcode::Ne => "ne",
+        Opcode::In => "in",
+        other => unreachable!("{:?} is not a binary opcode", other),
+    }
+}
 
 impl PrettyPrint for BytecodeProgram {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -215,27 +243,45 @@ fn write_instructions<W: std::fmt::Write>(
                 let dst = read_u32(code, &mut pc);
                 writeln!(f, "{:<18} r{}", "unit", dst)?;
             }
-            Opcode::BinOp => {
+            Opcode::AddInt
+            | Opcode::SubInt
+            | Opcode::MulInt
+            | Opcode::DivInt
+            | Opcode::ModInt
+            | Opcode::LtInt
+            | Opcode::LeInt
+            | Opcode::GtInt
+            | Opcode::GeInt
+            | Opcode::AddFloat
+            | Opcode::SubFloat
+            | Opcode::MulFloat
+            | Opcode::DivFloat
+            | Opcode::ModFloat
+            | Opcode::LtFloat
+            | Opcode::LeFloat
+            | Opcode::GtFloat
+            | Opcode::GeFloat
+            | Opcode::Eq
+            | Opcode::Ne
+            | Opcode::In => {
                 let dst = read_u32(code, &mut pc);
-                let tag = BinOpTag::from_repr(code[pc]).expect("invalid binop tag");
-                pc += 1;
                 let lhs = read_u32(code, &mut pc);
                 let rhs = read_u32(code, &mut pc);
                 writeln!(
                     f,
-                    "{:<18} r{}, {}, r{}, r{}",
-                    "binop",
+                    "{:<18} r{}, r{}, r{}",
+                    binary_name(opcode),
                     dst,
-                    HirBinOp::from(tag),
                     lhs,
                     rhs
                 )?;
             }
-            Opcode::Neg | Opcode::Not | Opcode::Deref => {
+            Opcode::Neg | Opcode::ToFloat | Opcode::Not | Opcode::Deref => {
                 let dst = read_u32(code, &mut pc);
                 let src = read_u32(code, &mut pc);
                 let name = match opcode {
                     Opcode::Neg => "neg",
+                    Opcode::ToFloat => "to_float",
                     Opcode::Not => "not",
                     Opcode::Deref => "deref",
                     _ => unreachable!(),

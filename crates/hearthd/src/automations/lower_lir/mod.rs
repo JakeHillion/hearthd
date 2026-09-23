@@ -3,8 +3,8 @@
 //! Each `HirFunction` becomes a `LirFunction`. Basic block terminators are
 //! emitted as ordinary `LirInstr`s (`Jump`, `JumpIf`, `IterNext`, `Return`),
 //! preceded by a `Label` for every block so jumps can resolve to positions
-//! in the stream. HIR `Tmp(i)` maps directly to `Reg(i)`; the function
-//! reports `num_regs = max_tmp + 1`.
+//! in the stream. HIR `Tmp(i)` maps directly to `Reg(i)`; registers past
+//! the highest `Tmp` are scratch slots this pass allocates for itself.
 //!
 //! `Op::Await` lowers to `LirInstr::Await { dst, src }`. The decision of
 //! *what* to await (a `tokio::time::sleep`, etc.) is made by the VM based
@@ -111,6 +111,28 @@ impl FunctionLowerer {
         self.instrs.push(instr);
     }
 
+    /// A scratch register, for a value with no `Tmp` of its own.
+    fn fresh_reg(&mut self) -> Reg {
+        let reg = Reg(self.next_reg);
+        self.next_reg += 1;
+        reg
+    }
+
+    /// Bring every operand to `target`, answering where each now lives.
+    fn coerce(&mut self, operands: &[(Reg, NumTy)], target: NumTy) -> Vec<Reg> {
+        operands
+            .iter()
+            .map(|&(reg, ty)| {
+                if ty == target {
+                    return reg;
+                }
+                let dst = self.fresh_reg();
+                self.push(LirInstr::ToFloat { dst, src: reg });
+                dst
+            })
+            .collect()
+    }
+
     fn lower_instr(&mut self, instr: &Instruction) {
         let dst = Reg(instr.dst.0);
         let lowered = match &instr.op {
@@ -127,6 +149,24 @@ impl FunctionLowerer {
                 unit: *unit,
             },
             Op::Unit => LirInstr::Unit { dst },
+            Op::TypedBinOp {
+                op,
+                left,
+                left_ty,
+                right,
+                right_ty,
+            } => {
+                let ty = left_ty.join(*right_ty);
+                let operands =
+                    self.coerce(&[(Reg(left.0), *left_ty), (Reg(right.0), *right_ty)], ty);
+                LirInstr::TypedBinOp {
+                    dst,
+                    op: *op,
+                    ty,
+                    lhs: operands[0],
+                    rhs: operands[1],
+                }
+            }
             Op::BinOp { op, left, right } => LirInstr::BinOp {
                 dst,
                 op: *op,
@@ -238,7 +278,7 @@ fn lower_terminator(term: &Terminator) -> LirInstr {
 }
 
 /// Returns every `Tmp::0` value referenced as an input by an `Op`.
-/// Used by `lower_function` to compute `num_regs`.
+/// Used by `max_tmp` to size the register namespace.
 fn op_input_tmps(op: &Op) -> Vec<usize> {
     match op {
         Op::ConstInt(_)
@@ -248,7 +288,7 @@ fn op_input_tmps(op: &Op) -> Vec<usize> {
         | Op::ConstUnit { .. }
         | Op::Unit
         | Op::EmptyList => Vec::new(),
-        Op::BinOp { left, right, .. } => vec![left.0, right.0],
+        Op::BinOp { left, right, .. } | Op::TypedBinOp { left, right, .. } => vec![left.0, right.0],
         Op::Neg(t) | Op::Not(t) | Op::Deref(t) | Op::Await(t) | Op::IterInit(t) | Op::Copy(t) => {
             vec![t.0]
         }

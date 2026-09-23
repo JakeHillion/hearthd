@@ -4,16 +4,21 @@ use std::sync::Arc;
 
 use super::consts::VmConst;
 use super::error::VmError;
+use super::ops::add_int;
 use super::ops::call;
-use super::ops::eval_binop;
+use super::ops::div_int;
+use super::ops::eval_in;
 use super::ops::field_access;
+use super::ops::mod_int;
+use super::ops::mul_int;
+use super::ops::sub_int;
+use super::ops::values_equal;
 use super::suspension::Suspension;
 use super::value::IterState;
 use super::value::Pending;
 use super::value::Value;
 use crate::automations::repr::bytecode::*;
 use crate::automations::repr::function::FunctionIdentity;
-use crate::automations::repr::hir::HirBinOp;
 
 /// Where [`Vm::poll`] stopped.
 ///
@@ -250,6 +255,26 @@ impl Vm {
         self.read_u32() as usize
     }
 
+    fn int_reg(&self, idx: usize) -> Result<i64, VmError> {
+        match &self.regs[idx] {
+            Value::Int(n) => Ok(*n),
+            other => Err(VmError::InvariantViolation(format!(
+                "expected an Int in r{}, found {}",
+                idx, other
+            ))),
+        }
+    }
+
+    fn float_reg(&self, idx: usize) -> Result<f64, VmError> {
+        match &self.regs[idx] {
+            Value::Float(n) => Ok(*n),
+            other => Err(VmError::InvariantViolation(format!(
+                "expected a Float in r{}, found {}",
+                idx, other
+            ))),
+        }
+    }
+
     /// Resolve a constant-pool slot expected to hold an identifier.
     ///
     /// Only `Ident` is accepted. Every index reaching here — a field name,
@@ -334,14 +359,92 @@ impl Vm {
                     let dst = self.read_index();
                     self.regs[dst] = Value::Unit;
                 }
-                Opcode::BinOp => {
-                    let dst = self.read_index();
-                    let tag = BinOpTag::from_repr(self.read_u8())
-                        .ok_or(VmError::InvariantViolation("bad binop tag".into()))?;
-                    let lhs = self.read_index();
-                    let rhs = self.read_index();
-                    let value = eval_binop(HirBinOp::from(tag), &self.regs[lhs], &self.regs[rhs])?;
-                    self.regs[dst] = value;
+                Opcode::AddInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = add_int(a, b)?;
+                }
+                Opcode::SubInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = sub_int(a, b)?;
+                }
+                Opcode::MulInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = mul_int(a, b)?;
+                }
+                Opcode::DivInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = div_int(a, b)?;
+                }
+                Opcode::ModInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = mod_int(a, b)?;
+                }
+                Opcode::LtInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = Value::Bool(a < b);
+                }
+                Opcode::LeInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = Value::Bool(a <= b);
+                }
+                Opcode::GtInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = Value::Bool(a > b);
+                }
+                Opcode::GeInt => {
+                    let (dst, a, b) = self.int_args()?;
+                    self.regs[dst] = Value::Bool(a >= b);
+                }
+                Opcode::AddFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Float(a + b);
+                }
+                Opcode::SubFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Float(a - b);
+                }
+                Opcode::MulFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Float(a * b);
+                }
+                Opcode::DivFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Float(a / b);
+                }
+                Opcode::ModFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Float(a % b);
+                }
+                Opcode::LtFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Bool(a < b);
+                }
+                Opcode::LeFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Bool(a <= b);
+                }
+                Opcode::GtFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Bool(a > b);
+                }
+                Opcode::GeFloat => {
+                    let (dst, a, b) = self.float_args()?;
+                    self.regs[dst] = Value::Bool(a >= b);
+                }
+                Opcode::Eq => {
+                    let (dst, lhs, rhs) = self.value_args();
+                    let equal = values_equal(&self.regs[lhs], &self.regs[rhs])?;
+                    self.regs[dst] = Value::Bool(equal);
+                }
+                Opcode::Ne => {
+                    let (dst, lhs, rhs) = self.value_args();
+                    let equal = values_equal(&self.regs[lhs], &self.regs[rhs])?;
+                    self.regs[dst] = Value::Bool(!equal);
+                }
+                Opcode::In => {
+                    let (dst, lhs, rhs) = self.value_args();
+                    let found = eval_in(&self.regs[lhs], &self.regs[rhs])?;
+                    self.regs[dst] = found;
                 }
                 Opcode::Neg => {
                     let dst = self.read_index();
@@ -359,6 +462,11 @@ impl Vm {
                         }
                     };
                     self.regs[dst] = value;
+                }
+                Opcode::ToFloat => {
+                    let dst = self.read_index();
+                    let src = self.read_index();
+                    self.regs[dst] = Value::Float(self.int_reg(src)? as f64);
                 }
                 Opcode::Not => {
                     let dst = self.read_index();
@@ -538,6 +646,27 @@ impl Vm {
                 Opcode::Await => return Ok(VmPoll::Awaiting),
             }
         }
+    }
+
+    fn int_args(&mut self) -> Result<(usize, i64, i64), VmError> {
+        let dst = self.read_index();
+        let lhs = self.read_index();
+        let rhs = self.read_index();
+        Ok((dst, self.int_reg(lhs)?, self.int_reg(rhs)?))
+    }
+
+    fn float_args(&mut self) -> Result<(usize, f64, f64), VmError> {
+        let dst = self.read_index();
+        let lhs = self.read_index();
+        let rhs = self.read_index();
+        Ok((dst, self.float_reg(lhs)?, self.float_reg(rhs)?))
+    }
+
+    fn value_args(&mut self) -> (usize, usize, usize) {
+        let dst = self.read_index();
+        let lhs = self.read_index();
+        let rhs = self.read_index();
+        (dst, lhs, rhs)
     }
 
     /// Decode a length-prefixed run of register operands and clone the value

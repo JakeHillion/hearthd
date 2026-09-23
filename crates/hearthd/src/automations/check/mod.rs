@@ -820,7 +820,7 @@ impl TypeChecker {
 
     fn check_binop(&mut self, op: ast::BinOp, left: &Ty, right: &Ty, span: SimpleSpan) -> Ty {
         // Error propagation
-        if *left == Ty::Error || *right == Ty::Error {
+        if !Self::is_numeric_op(op) && (*left == Ty::Error || *right == Ty::Error) {
             return Ty::Error;
         }
 
@@ -975,6 +975,22 @@ impl TypeChecker {
 
     fn is_numeric(&self, ty: &Ty) -> bool {
         matches!(ty, Ty::Int | Ty::Float)
+    }
+
+    /// Whether an operator requires statically numeric operands.
+    fn is_numeric_op(op: ast::BinOp) -> bool {
+        matches!(
+            op,
+            ast::BinOp::Add
+                | ast::BinOp::Sub
+                | ast::BinOp::Mul
+                | ast::BinOp::Div
+                | ast::BinOp::Mod
+                | ast::BinOp::Lt
+                | ast::BinOp::Le
+                | ast::BinOp::Gt
+                | ast::BinOp::Ge
+        )
     }
 
     /// Whether `==` and `!=` are defined on `ty`.

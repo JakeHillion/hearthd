@@ -10,12 +10,13 @@
 //!
 //! Registers are unbounded and intended as scratch slots. The lowering
 //! pass does not attempt single-use enforcement or coalescing — it
-//! preserves the HIR `Tmp` numbering 1:1 so each function reports
-//! `num_regs = max_tmp + 1`.
+//! preserves the HIR `Tmp` numbering 1:1, then allocates any further
+//! register it needs for itself past the highest `Tmp`.
 
 use super::ast;
 use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
+use super::hir::NumTy;
 use super::typed::Ty;
 
 /// A numbered register within a function.
@@ -112,7 +113,20 @@ pub enum LirInstr {
         lhs: Reg,
         rhs: Reg,
     },
+    /// A `BinOp` whose operands both hold `ty`.
+    TypedBinOp {
+        dst: Reg,
+        op: HirBinOp,
+        ty: NumTy,
+        lhs: Reg,
+        rhs: Reg,
+    },
     Neg {
+        dst: Reg,
+        src: Reg,
+    },
+    /// Widen an `Int` to a `Float`.
+    ToFloat {
         dst: Reg,
         src: Reg,
     },

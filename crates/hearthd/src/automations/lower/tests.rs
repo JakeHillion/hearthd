@@ -61,8 +61,8 @@ fn test_lower_binary_arithmetic() {
           %0 = const_int 1 [Int]
           %1 = const_int 2 [Int]
           %2 = const_int 3 [Int]
-          %3 = mul %1, %2 [Int]
-          %4 = add %0, %3 [Int]
+          %3 = mul %1:int, %2:int [Int]
+          %4 = add %0:int, %3:int [Int]
           %5 = empty_list [[<error>]]
           return %5
     ");
@@ -292,7 +292,7 @@ fn test_lower_subtraction() {
         bb0:
           %0 = const_int 10 [Int]
           %1 = const_int 3 [Int]
-          %2 = sub %0, %1 [Int]
+          %2 = sub %0:int, %1:int [Int]
           %3 = empty_list [[<error>]]
           return %3
     ");
@@ -311,11 +311,11 @@ fn test_lower_division_and_modulo() {
         bb0:
           %0 = const_int 100 [Int]
           %1 = const_int 4 [Int]
-          %2 = div %0, %1 [Int]
+          %2 = div %0:int, %1:int [Int]
           %3 = const_int 17 [Int]
           %4 = const_int 5 [Int]
-          %5 = mod %3, %4 [Int]
-          %6 = add %2, %5 [Int]
+          %5 = mod %3:int, %4:int [Int]
+          %6 = add %2:int, %5:int [Int]
           %7 = empty_list [[<error>]]
           return %7
     ");
@@ -335,16 +335,16 @@ fn test_lower_comparison_operators() {
         bb0:
           %0 = const_int 1 [Int]
           %1 = const_int 2 [Int]
-          %2 = lt %0, %1 [Bool]
+          %2 = lt %0:int, %1:int [Bool]
           %3 = const_int 3 [Int]
           %4 = const_int 3 [Int]
-          %5 = le %3, %4 [Bool]
+          %5 = le %3:int, %4:int [Bool]
           %6 = const_int 5 [Int]
           %7 = const_int 4 [Int]
-          %8 = gt %6, %7 [Bool]
+          %8 = gt %6:int, %7:int [Bool]
           %9 = const_int 6 [Int]
           %10 = const_int 6 [Int]
-          %11 = ge %9, %10 [Bool]
+          %11 = ge %9:int, %10:int [Bool]
           %12 = const_int 1 [Int]
           %13 = const_int 2 [Int]
           %14 = ne %12, %13 [Bool]
@@ -430,14 +430,17 @@ fn test_lower_float_literal() {
         bb0:
           %0 = const_float 1.5 [Float]
           %1 = const_float 2.5 [Float]
-          %2 = add %0, %1 [Float]
+          %2 = add %0:float, %1:float [Float]
           %3 = empty_list [[<error>]]
           return %3
     ");
 }
 
-/// An `Int` and a `Float` operand, in either order. Both results are
-/// `Float`, so the instruction's own type does not distinguish them.
+/// Operands are recorded separately and may disagree. This is what the
+/// instruction's own type cannot supply: the result is `Float` either way
+/// round, so only the operands say which side the promotion falls on.
+/// Placing it is the next pass's job — HIR states the types and nothing
+/// more.
 #[test]
 fn test_lower_mixed_arithmetic() {
     let result = lower_and_pretty("observer {} /true/ { 1 + 2.5; 2.5 + 1; [] }");
@@ -451,10 +454,10 @@ fn test_lower_mixed_arithmetic() {
         bb0:
           %0 = const_int 1 [Int]
           %1 = const_float 2.5 [Float]
-          %2 = add %0, %1 [Float]
+          %2 = add %0:int, %1:float [Float]
           %3 = const_float 2.5 [Float]
           %4 = const_int 1 [Int]
-          %5 = add %3, %4 [Float]
+          %5 = add %3:float, %4:int [Float]
           %6 = empty_list [[<error>]]
           return %6
     ");
@@ -707,7 +710,7 @@ fn test_lower_multiple_lets_and_arithmetic() {
         bb0:
           %0 = const_int 1 [Int]
           %1 = const_int 2 [Int]
-          %2 = add %0, %1 [Int]
+          %2 = add %0:int, %1:int [Int]
           %3 = empty_list [[<error>]]
           return %3
     ");
@@ -883,7 +886,7 @@ fn test_lower_mutator_with_computation() {
         bb0:
           %1 = const_int 100 [Int]
           %2 = const_int 2 [Int]
-          %3 = mul %1, %2 [Int]
+          %3 = mul %1:int, %2:int [Int]
           %4 = const_int 0 [Int]
           %5 = const_int 255 [Int]
           %6 = call clamp(%3, %4, %5) [Int]

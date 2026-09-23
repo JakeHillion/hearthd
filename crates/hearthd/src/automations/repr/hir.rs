@@ -94,6 +94,14 @@ pub enum Op {
         left: Tmp,
         right: Tmp,
     },
+    /// A `BinOp` whose operands have a type committed to them.
+    TypedBinOp {
+        op: HirBinOp,
+        left: Tmp,
+        left_ty: NumTy,
+        right: Tmp,
+        right_ty: NumTy,
+    },
 
     // === Unary ===
     Neg(Tmp),
@@ -148,7 +156,33 @@ pub enum Op {
     Copy(Tmp),
 }
 
-/// Binary operators in HIR. `And`/`Or` are excluded because they use
+/// The static type of a numeric operand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumTy {
+    Int,
+    Float,
+}
+
+impl NumTy {
+    /// `Float` wins over `Int`.
+    pub fn join(self, other: NumTy) -> NumTy {
+        match (self, other) {
+            (NumTy::Int, NumTy::Int) => NumTy::Int,
+            _ => NumTy::Float,
+        }
+    }
+}
+
+impl std::fmt::Display for NumTy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NumTy::Int => write!(f, "int"),
+            NumTy::Float => write!(f, "float"),
+        }
+    }
+}
+
+/// Binary operators. `And`/`Or` are excluded because they use
 /// short-circuit branching instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirBinOp {

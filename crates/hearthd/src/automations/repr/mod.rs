@@ -23,15 +23,15 @@ mod typed_pretty_print;
 pub use ast::*;
 // Re-export bytecode types
 pub use bytecode::{
-    BinOpTag, Bytecode, BytecodeAutomation, BytecodeParam, BytecodeProgram, Const, FunctionTag,
-    Opcode, StructFieldTag,
+    Bytecode, BytecodeAutomation, BytecodeParam, BytecodeProgram, Const, FunctionTag, Opcode,
+    StructFieldTag,
 };
 // Re-export function identities
 pub use function::FunctionIdentity;
 // Re-export HIR types
 pub use hir::{
     BasicBlock, BlockId, HirAutomation, HirBinOp, HirFunction, HirProgram, HirStructField,
-    Instruction, Op, Param, Terminator, Tmp,
+    Instruction, NumTy, Op, Param, Terminator, Tmp,
 };
 // Re-export LIR types
 pub use lir::{
