@@ -300,6 +300,16 @@ impl Default for TypeChecker {
     }
 }
 
+/// `?` field access unwraps at runtime (the VM evaluates `OptionalField`
+/// identically to `Field`), so an `Option` is transparent for type checks:
+/// see through it to the value it would yield.
+fn peek_through_option(ty: &Ty) -> &Ty {
+    match ty {
+        Ty::Option(inner) => inner.as_ref(),
+        other => other,
+    }
+}
+
 impl TypeChecker {
     pub fn new() -> Self {
         Self {
@@ -768,12 +778,39 @@ impl TypeChecker {
                     }
                 } else {
                     let typed_items: Vec<_> = items.iter().map(|e| self.check_expr(e)).collect();
-                    let elem_ty = typed_items
+                    // A list is homogeneous. Start with the first type that
+                    // isn't an unconstrained Error, then require every element
+                    // to agree (Int/Float promote the same way the comparison
+                    // operators do). Without this check `[1h, 90deg]` would be
+                    // typed as `[Duration]` from its first element, so
+                    // `90deg in [1h, 90deg]` would be rejected while
+                    // `[1h, 90deg] == [1h, 90deg]` passed — same elements,
+                    // opposite verdicts.
+                    let mut elem_ty = typed_items
                         .iter()
                         .map(|e| &e.ty)
                         .find(|t| **t != Ty::Error)
                         .cloned()
                         .unwrap_or(Ty::Error);
+                    for item in &typed_items {
+                        if item.ty == Ty::Error || item.ty == elem_ty {
+                            continue;
+                        }
+                        if self.types_compatible_for_equality(&elem_ty, &item.ty) {
+                            // Numeric promotion: a Float contaminates an Int.
+                            if elem_ty == Ty::Int && item.ty == Ty::Float {
+                                elem_ty = Ty::Float;
+                            }
+                        } else {
+                            self.error(
+                                span,
+                                format!(
+                                    "list elements must have the same type, found {} and {}",
+                                    elem_ty, item.ty
+                                ),
+                            );
+                        }
+                    }
                     TypedExpr {
                         kind: TypedExprKind::List(typed_items),
                         ty: Ty::List(Box::new(elem_ty)),
@@ -868,9 +905,9 @@ impl TypeChecker {
 
             // Equality
             ast::BinOp::Eq | ast::BinOp::Ne => {
-                if self.supports_equality(left) && self.supports_equality(right) {
+                if self.types_compatible_for_equality(left, right) {
                     Ty::Bool
-                } else {
+                } else if !(self.supports_equality(left) && self.supports_equality(right)) {
                     self.error(
                         span,
                         format!(
@@ -880,24 +917,49 @@ impl TypeChecker {
                         ),
                     );
                     Ty::Error
+                } else {
+                    self.error(
+                        span,
+                        format!(
+                            "operator '{}' requires operands of the same type, found {} and {}",
+                            op, left, right
+                        ),
+                    );
+                    Ty::Error
                 }
             }
 
             // Membership
             ast::BinOp::In => match right {
-                Ty::List(_) | Ty::Set(_) | Ty::Map { .. } => {
+                Ty::List(inner) | Ty::Set(inner) | Ty::Map { key: inner, .. } => {
                     // Membership is equality against each element, so it
                     // carries the same restriction: `x in xs` must not
-                    // answer what `x == xs[0]` refuses to.
-                    if self.supports_equality(left) && self.supports_equality(right) {
+                    // answer what `x == xs[0]` refuses to. The left operand
+                    // is compared against the element (or key) type, not the
+                    // whole collection, so `1h in [90deg]` is rejected.
+                    // `types_compatible_for_equality` subsumes the
+                    // `supports_equality` gate, so a single call decides.
+                    if self.types_compatible_for_equality(left, inner) {
                         Ty::Bool
-                    } else {
+                    } else if !(self.supports_equality(left) && self.supports_equality(inner)) {
                         self.error(
                             span,
                             format!(
                                 "'in' is not supported for {} in {}: membership compares by \
                                  equality, which is only defined on scalars and collections of scalars",
                                 left, right
+                            ),
+                        );
+                        Ty::Error
+                    } else {
+                        self.error(
+                            span,
+                            format!(
+                                "'{op}' requires operands of the same type, found {left} and \
+                                 {inner}",
+                                op = op,
+                                left = left,
+                                inner = inner,
                             ),
                         );
                         Ty::Error
@@ -974,7 +1036,7 @@ impl TypeChecker {
     }
 
     fn is_numeric(&self, ty: &Ty) -> bool {
-        matches!(ty, Ty::Int | Ty::Float)
+        matches!(*peek_through_option(ty), Ty::Int | Ty::Float)
     }
 
     /// Whether `==` and `!=` are defined on `ty`.
@@ -1006,6 +1068,64 @@ impl TypeChecker {
             Ty::List(inner) | Ty::Set(inner) | Ty::Option(inner) => self.supports_equality(inner),
             Ty::Map { key, value } => self.supports_equality(key) && self.supports_equality(value),
             _ => true,
+        }
+    }
+
+    /// Whether equality (`==`/`!=` and the `in` membership comparison) is
+    /// defined between `a` and `b`.
+    ///
+    /// This subsumes `supports_equality`: types that carry no comparable
+    /// identity — named structs, enum variants, and futures — are rejected
+    /// here regardless of what they are paired with, so callers do not need
+    /// to gate on `supports_equality` before calling. It additionally requires
+    /// the two operands to be comparable to each other: comparing `1h` (a
+    /// Duration) against `90deg` (an Angle) would silently hold if neither had
+    /// a shared domain worth comparing, so the checker rejects mismatched
+    /// operands rather than answering them wrongly.
+    ///
+    /// An `Option` is transparent: `?` field access is unwrapped at runtime
+    /// (the VM evaluates `OptionalField` identically to `Field`), so an
+    /// `Option` compares as its element. This keeps `event?.node_id == 7` just
+    /// as valid as `event.node_id == 7`, and stops an `?.` result from having
+    /// no legal consumer.
+    ///
+    /// Numeric types (`Int`, `Float`) are mutually compatible, matching how
+    /// the arithmetic operators let a Float contaminate an Int; every other
+    /// comparable type is only compatible with itself. Containers recurse, so
+    /// `[Duration] == [Angle]` is rejected just as `Duration == Angle` is, and
+    /// a struct buried in a list compares as structurally as a bare one, so it
+    /// is rejected too.
+    ///
+    /// An unconstrained `Error` element — produced by an empty list literal
+    /// and by deferrable field access — is compatible with any otherwise
+    /// comparable type, so `1 in []` and `[1] == []` still check cleanly.
+    /// Because the non-comparable ban below runs first, an `Error` can't
+    /// smuggle a struct or Future past it (e.g. `event in [event.anything]`).
+    ///
+    /// When this returns `false`, a caller may still consult `supports_equality`
+    /// on the operands to report a precise error — a type that cannot be
+    /// compared at all versus two comparable types that differ.
+    fn types_compatible_for_equality(&self, a: &Ty, b: &Ty) -> bool {
+        let a = peek_through_option(a);
+        let b = peek_through_option(b);
+        match (a, b) {
+            // Types with no comparable identity are rejected up front, before
+            // the Error tolerance below, so an Error-typed field can't smuggle
+            // a struct or Future past the ban (`event in [event.anything]`).
+            (Ty::Named(_) | Ty::EnumVariant { .. } | Ty::Future(_), _)
+            | (_, Ty::Named(_) | Ty::EnumVariant { .. } | Ty::Future(_)) => false,
+            (Ty::Error, _) | (_, Ty::Error) => true,
+            (Ty::List(x), Ty::List(y)) | (Ty::Set(x), Ty::Set(y)) => {
+                self.types_compatible_for_equality(x, y)
+            }
+            (Ty::Map { key: k1, value: v1 }, Ty::Map { key: k2, value: v2 }) => {
+                self.types_compatible_for_equality(k1, k2)
+                    && self.types_compatible_for_equality(v1, v2)
+            }
+            _ => {
+                let numeric = |t: &Ty| matches!(t, Ty::Int | Ty::Float);
+                (numeric(a) && numeric(b)) || a == b
+            }
         }
     }
 
