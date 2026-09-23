@@ -1,7 +1,7 @@
 //! LIR (Low-level IR) types for the HearthD Automations language.
 //!
 //! The LIR is a flat, labeled, register-based instruction stream produced
-//! by lowering each [`crate::automations::lower::hir::HirFunction`]. Basic block terminators
+//! by lowering each [`crate::automations::hir::HirFunction`]. Basic block terminators
 //! become regular instructions (`Jump`, `JumpIf`, `IterNext`, `Return`),
 //! and `Tmp`s become numbered `Reg`s in a per-function namespace.
 //!
@@ -15,9 +15,9 @@
 
 use crate::automations::check::function::FunctionIdentity;
 use crate::automations::check::typed::Ty;
+use crate::automations::hir::HirBinOp;
+use crate::automations::hir::NumTy;
 use crate::automations::lexer::UnitType;
-use crate::automations::lower::hir::HirBinOp;
-use crate::automations::lower::hir::NumTy;
 use crate::automations::parser::ast;
 
 /// A numbered register within a function.

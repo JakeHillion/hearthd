@@ -2,7 +2,7 @@
 
 use super::error::VmError;
 use super::quantity::Quantity;
-use crate::automations::lower_bytecode::bytecode::Const;
+use crate::automations::bytecode::Const;
 
 /// One constant-pool slot, decoded into the form opcodes actually read.
 ///

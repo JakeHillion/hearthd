@@ -12,14 +12,8 @@
 
 use std::collections::HashMap;
 
-use self::bytecode::*;
-use crate::automations::lower_lir::lir::*;
-
-pub mod bytecode;
-mod disassemble;
-
-#[cfg(test)]
-mod tests;
+use super::bytecode::*;
+use crate::automations::lir::*;
 
 /// Lower an LIR program to bytecode.
 pub fn lower_bytecode_program(lir: &LirProgram) -> BytecodeProgram {

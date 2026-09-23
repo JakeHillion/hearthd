@@ -17,8 +17,8 @@ use super::suspension::Suspension;
 use super::value::IterState;
 use super::value::Pending;
 use super::value::Value;
+use crate::automations::bytecode::*;
 use crate::automations::check::function::FunctionIdentity;
-use crate::automations::lower_bytecode::bytecode::*;
 
 /// Where [`Vm::poll`] stopped.
 ///
