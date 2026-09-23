@@ -20,7 +20,7 @@ pub trait PrettyPrint {
 }
 
 /// Write indentation (two spaces per level).
-pub fn write_indent(indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+pub fn write_indent<W: std::fmt::Write>(indent: usize, f: &mut W) -> std::fmt::Result {
     for _ in 0..indent {
         write!(f, "  ")?;
     }
