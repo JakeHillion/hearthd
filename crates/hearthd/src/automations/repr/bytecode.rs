@@ -18,6 +18,7 @@ use strum::FromRepr;
 use super::ast;
 use super::function::FunctionIdentity;
 use super::hir::HirBinOp;
+use super::hir::NumTy;
 use super::typed::Ty;
 
 // ============================================================================
@@ -31,6 +32,12 @@ use super::typed::Ty;
 /// categorisable at a glance. New opcodes are appended within their own
 /// group to keep related values adjacent; the gaps exist to make that
 /// possible without renumbering anything already encoded.
+///
+/// An operation that the language defines over both `Int` and `Float` gets
+/// one opcode per type rather than a shared opcode and a type operand. The
+/// opcode is then the whole decision: the VM reads it and knows what its
+/// registers hold, with no second byte to branch on and nothing to inspect
+/// at the values themselves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
 #[repr(u8)]
 pub enum Opcode {
@@ -42,11 +49,17 @@ pub enum Opcode {
     LoadConstUnit = 0x05,
     Unit = 0x06,
 
-    // === 0x1_: unary and binary operators ===
-    BinOp = 0x10,
+    // === 0x1_: unary operators, and the binary ones that stay polymorphic ===
+    //
+    // 0x10 is retired: it held the single `BinOp` from before numeric
+    // operations were specialised.
     Neg = 0x11,
     Not = 0x12,
     Deref = 0x13,
+    ToFloat = 0x14,
+    Eq = 0x15,
+    Ne = 0x16,
+    In = 0x17,
 
     // === 0x2_: field access ===
     Field = 0x20,
@@ -77,67 +90,78 @@ pub enum Opcode {
 
     // === 0x8_: suspension ===
     Await = 0x80,
+
+    // === 0x9_: arithmetic and ordering over Int ===
+    //
+    // The low nibble names the operator and is shared with the 0xA_ group,
+    // so an opcode's dimension and its operator read off the two nibbles
+    // independently: 0x93 and 0xA3 are the same division, on either type.
+    AddInt = 0x90,
+    SubInt = 0x91,
+    MulInt = 0x92,
+    DivInt = 0x93,
+    ModInt = 0x94,
+    LtInt = 0x95,
+    LeInt = 0x96,
+    GtInt = 0x97,
+    GeInt = 0x98,
+
+    // === 0xA_: arithmetic and ordering over Float ===
+    AddFloat = 0xA0,
+    SubFloat = 0xA1,
+    MulFloat = 0xA2,
+    DivFloat = 0xA3,
+    ModFloat = 0xA4,
+    LtFloat = 0xA5,
+    LeFloat = 0xA6,
+    GtFloat = 0xA7,
+    GeFloat = 0xA8,
 }
 
-/// Tag byte for `BinOp` instructions. Stable values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
-#[repr(u8)]
-pub enum BinOpTag {
-    Add = 0,
-    Sub = 1,
-    Mul = 2,
-    Div = 3,
-    Mod = 4,
-    Eq = 5,
-    Ne = 6,
-    Lt = 7,
-    Le = 8,
-    Gt = 9,
-    Ge = 10,
-    In = 11,
-}
-
-impl From<HirBinOp> for BinOpTag {
-    fn from(op: HirBinOp) -> Self {
-        match op {
-            HirBinOp::Add => BinOpTag::Add,
-            HirBinOp::Sub => BinOpTag::Sub,
-            HirBinOp::Mul => BinOpTag::Mul,
-            HirBinOp::Div => BinOpTag::Div,
-            HirBinOp::Mod => BinOpTag::Mod,
-            HirBinOp::Eq => BinOpTag::Eq,
-            HirBinOp::Ne => BinOpTag::Ne,
-            HirBinOp::Lt => BinOpTag::Lt,
-            HirBinOp::Le => BinOpTag::Le,
-            HirBinOp::Gt => BinOpTag::Gt,
-            HirBinOp::Ge => BinOpTag::Ge,
-            HirBinOp::In => BinOpTag::In,
+impl Opcode {
+    /// The opcode `op` specialised to `ty` encodes as.
+    pub fn typed_binop(op: HirBinOp, ty: NumTy) -> Opcode {
+        match (op, ty) {
+            (HirBinOp::Add, NumTy::Int) => Opcode::AddInt,
+            (HirBinOp::Sub, NumTy::Int) => Opcode::SubInt,
+            (HirBinOp::Mul, NumTy::Int) => Opcode::MulInt,
+            (HirBinOp::Div, NumTy::Int) => Opcode::DivInt,
+            (HirBinOp::Mod, NumTy::Int) => Opcode::ModInt,
+            (HirBinOp::Lt, NumTy::Int) => Opcode::LtInt,
+            (HirBinOp::Le, NumTy::Int) => Opcode::LeInt,
+            (HirBinOp::Gt, NumTy::Int) => Opcode::GtInt,
+            (HirBinOp::Ge, NumTy::Int) => Opcode::GeInt,
+            (HirBinOp::Add, NumTy::Float) => Opcode::AddFloat,
+            (HirBinOp::Sub, NumTy::Float) => Opcode::SubFloat,
+            (HirBinOp::Mul, NumTy::Float) => Opcode::MulFloat,
+            (HirBinOp::Div, NumTy::Float) => Opcode::DivFloat,
+            (HirBinOp::Mod, NumTy::Float) => Opcode::ModFloat,
+            (HirBinOp::Lt, NumTy::Float) => Opcode::LtFloat,
+            (HirBinOp::Le, NumTy::Float) => Opcode::LeFloat,
+            (HirBinOp::Gt, NumTy::Float) => Opcode::GtFloat,
+            (HirBinOp::Ge, NumTy::Float) => Opcode::GeFloat,
+            (op, ty) => unreachable!("{:?} has no {:?} specialisation", op, ty),
         }
     }
-}
 
-impl From<BinOpTag> for HirBinOp {
-    fn from(tag: BinOpTag) -> Self {
-        match tag {
-            BinOpTag::Add => HirBinOp::Add,
-            BinOpTag::Sub => HirBinOp::Sub,
-            BinOpTag::Mul => HirBinOp::Mul,
-            BinOpTag::Div => HirBinOp::Div,
-            BinOpTag::Mod => HirBinOp::Mod,
-            BinOpTag::Eq => HirBinOp::Eq,
-            BinOpTag::Ne => HirBinOp::Ne,
-            BinOpTag::Lt => HirBinOp::Lt,
-            BinOpTag::Le => HirBinOp::Le,
-            BinOpTag::Gt => HirBinOp::Gt,
-            BinOpTag::Ge => HirBinOp::Ge,
-            BinOpTag::In => HirBinOp::In,
+    /// The opcode `op` encodes as when its operands keep whatever type
+    /// they hold.
+    pub fn binop(op: HirBinOp) -> Opcode {
+        match op {
+            HirBinOp::Eq => Opcode::Eq,
+            HirBinOp::Ne => Opcode::Ne,
+            HirBinOp::In => Opcode::In,
+            op => unreachable!("{:?} is only encoded with an operand type", op),
         }
     }
 }
 
 /// Tag byte identifying the function a `Call` instruction targets. Stable
-/// values, mirroring [`super::function::FunctionIdentity`] the way
-/// [`BinOpTag`] mirrors [`HirBinOp`].
+/// values, mirroring [`super::function::FunctionIdentity`].
+///
+/// A tag rather than an opcode per function, unlike the numeric operators:
+/// a builtin's identity does not tell the VM what its registers hold, so
+/// there is nothing for the opcode to commit to.
 ///
 /// Calls are resolved by the checker, so the callee is a tag rather than a
 /// constant-pool name: nothing below the checker looks a function up by

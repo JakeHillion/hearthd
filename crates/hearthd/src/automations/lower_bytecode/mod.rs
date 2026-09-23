@@ -217,15 +217,31 @@ fn emit(enc: &mut Encoder, instr: &LirInstr) {
             enc.write_u8(Opcode::Unit as u8);
             enc.write_reg(*dst);
         }
-        LirInstr::BinOp { dst, op, lhs, rhs } => {
-            enc.write_u8(Opcode::BinOp as u8);
+        LirInstr::TypedBinOp {
+            dst,
+            op,
+            ty,
+            lhs,
+            rhs,
+        } => {
+            enc.write_u8(Opcode::typed_binop(*op, *ty) as u8);
             enc.write_reg(*dst);
-            enc.write_u8(BinOpTag::from(*op) as u8);
+            enc.write_reg(*lhs);
+            enc.write_reg(*rhs);
+        }
+        LirInstr::BinOp { dst, op, lhs, rhs } => {
+            enc.write_u8(Opcode::binop(*op) as u8);
+            enc.write_reg(*dst);
             enc.write_reg(*lhs);
             enc.write_reg(*rhs);
         }
         LirInstr::Neg { dst, src } => {
             enc.write_u8(Opcode::Neg as u8);
+            enc.write_reg(*dst);
+            enc.write_reg(*src);
+        }
+        LirInstr::ToFloat { dst, src } => {
+            enc.write_u8(Opcode::ToFloat as u8);
             enc.write_reg(*dst);
             enc.write_reg(*src);
         }

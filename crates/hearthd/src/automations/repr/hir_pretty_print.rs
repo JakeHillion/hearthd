@@ -110,6 +110,13 @@ fn write_op(op: &Op, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Op::ConstBool(b) => write!(f, "const_bool {}", b),
         Op::ConstUnit { value, unit } => write!(f, "const_unit {}{}", value, unit),
         Op::Unit => write!(f, "unit"),
+        Op::TypedBinOp {
+            op,
+            left,
+            left_ty,
+            right,
+            right_ty,
+        } => write!(f, "{} {}:{}, {}:{}", op, left, left_ty, right, right_ty),
         Op::BinOp { op, left, right } => write!(f, "{} {}, {}", op, left, right),
         Op::Neg(tmp) => write!(f, "neg {}", tmp),
         Op::Not(tmp) => write!(f, "not {}", tmp),

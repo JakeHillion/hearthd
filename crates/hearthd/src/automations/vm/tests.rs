@@ -24,7 +24,6 @@ use super::Quantity;
 use super::Suspension;
 use super::Value;
 use super::VmError;
-use crate::automations::repr::BinOpTag;
 use crate::automations::repr::Bytecode;
 use crate::automations::repr::BytecodeAutomation;
 use crate::automations::repr::BytecodeProgram;
@@ -902,9 +901,8 @@ fn test_vm_iter_next_on_non_iter_is_an_error() {
 /// only reachable if a runtime value contradicts its static type.
 #[test]
 fn test_vm_in_on_non_collection_is_an_error() {
-    let mut code = vec![Opcode::BinOp as u8];
+    let mut code = vec![Opcode::In as u8];
     code.extend_from_slice(&0u32.to_le_bytes()); // dst
-    code.push(BinOpTag::In as u8);
     code.extend_from_slice(&0u32.to_le_bytes()); // needle, left Unit
     code.extend_from_slice(&0u32.to_le_bytes()); // haystack, left Unit
     insta::assert_snapshot!(build_and_run_raw(1, code), @"error: VM invariant violated: in on Unit");

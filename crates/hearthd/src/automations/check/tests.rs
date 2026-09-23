@@ -1289,32 +1289,98 @@ fn test_membership_on_scalars_still_checks() {
 }
 
 // =============================================================================
-// Numeric operands the checker could not type
+// Numeric operands must be statically typed
 // =============================================================================
 
-/// `Event` field access is deferred, so `event.level` types as an error
-/// without one being reported.
+/// Arithmetic commits to an `Int` or `Float` opcode below the checker, so
+/// an operand whose type is merely unknown has nothing to compile to and
+/// is reported here rather than deferred to the VM.
+///
+/// `Event` field access is the one way to reach this without a diagnostic
+/// already standing behind it: its typing is deferred, so `event.level`
+/// types as an error without being one. Arithmetic on it used to run and
+/// answer whatever the runtime value happened to be.
 #[test]
 fn test_arithmetic_on_an_untyped_operand() {
     let result = check_errors("observer { event, ... } /event.level + 1 > 2/ { [event] }");
-    insta::assert_snapshot!(result, @"");
+    insta::assert_snapshot!(result, @"
+    Error: arithmetic operator '+' requires numeric operands, found <error> and Int
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /event.level + 1 > 2/ { [event] }
+       │                          ───────┬───────  
+       │                                 ╰───────── arithmetic operator '+' requires numeric operands, found <error> and Int
+    ───╯
+    Error: comparison operator '>' requires numeric operands, found <error> and Int
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /event.level + 1 > 2/ { [event] }
+       │                          ─────────┬─────────  
+       │                                   ╰─────────── comparison operator '>' requires numeric operands, found <error> and Int
+    ───╯
+    ");
 }
 
 #[test]
 fn test_ordering_on_an_untyped_operand() {
     let result = check_errors("observer { event, ... } /event.level < 5/ { [event] }");
-    insta::assert_snapshot!(result, @"");
+    insta::assert_snapshot!(result, @"
+    Error: comparison operator '<' requires numeric operands, found <error> and Int
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /event.level < 5/ { [event] }
+       │                          ───────┬───────  
+       │                                 ╰───────── comparison operator '<' requires numeric operands, found <error> and Int
+    ───╯
+    ");
 }
 
 #[test]
 fn test_negation_of_an_untyped_operand() {
     let result = check_errors("observer { event, ... } /-event.level > 0/ { [event] }");
-    insta::assert_snapshot!(result, @"");
+    insta::assert_snapshot!(result, @"
+    Error: comparison operator '>' requires numeric operands, found <error> and Int
+       ╭─[ <test>:1:26 ]
+       │
+     1 │ observer { event, ... } /-event.level > 0/ { [event] }
+       │                          ────────┬───────  
+       │                                  ╰───────── comparison operator '>' requires numeric operands, found <error> and Int
+    ───╯
+    ");
 }
 
-/// An empty list has no element type, so the loop variable has none.
+/// A loop variable drawn from a collection with no element type is
+/// untyped the same way, so arithmetic on it is rejected too.
 #[test]
 fn test_arithmetic_on_an_untyped_loop_variable() {
     let result = check_errors("observer { event, ... } /[x + 1 for x in []] == []/ { [event] }");
-    insta::assert_snapshot!(result, @"");
+    insta::assert_snapshot!(result, @"
+    Error: arithmetic operator '+' requires numeric operands, found <error> and Int
+       ╭─[ <test>:1:27 ]
+       │
+     1 │ observer { event, ... } /[x + 1 for x in []] == []/ { [event] }
+       │                           ──┬──  
+       │                             ╰──── arithmetic operator '+' requires numeric operands, found <error> and Int
+    ───╯
+    ");
+}
+
+/// Equality and membership still accept an untyped operand: they stay
+/// polymorphic, so there is no overload to choose and nothing to reject.
+#[test]
+fn test_equality_on_an_untyped_operand_still_checks() {
+    for src in [
+        "observer { event, ... } /event.level == 1/ { [event] }",
+        "observer { event, ... } /event.level in [1, 2]/ { [event] }",
+        "observer { event, ... } /[x for x in []] == []/ { [event] }",
+    ] {
+        let program = crate::automations::parse(src).expect("source should parse");
+        let lowered = crate::automations::desugar_program(program);
+        let checked = check_program(&lowered);
+        assert!(
+            checked.errors.is_empty(),
+            "{src} should check cleanly, got {:?}",
+            checked.errors,
+        );
+    }
 }

@@ -184,8 +184,8 @@ fn test_lower_lir_binary_arithmetic() {
         r0 = const_int 1
         r1 = const_int 2
         r2 = const_int 3
-        r3 = mul r1, r2
-        r4 = add r0, r3
+        r3 = mul_int r1, r2
+        r4 = add_int r0, r3
         r5 = empty_list
         return r5
     ");
@@ -206,7 +206,7 @@ fn test_lower_lir_float_literal() {
       L0:
         r0 = const_float 1.5
         r1 = const_float 2.5
-        r2 = add r0, r1
+        r2 = add_float r0, r1
         r3 = empty_list
         return r3
     ");
@@ -485,9 +485,12 @@ fn test_lower_lir_template() {
 }
 
 // =============================================================================
-// Mixed Int/Float operands
+// Numeric promotion
 // =============================================================================
 
+/// A `Float` on either side contaminates, so the `Int` operand is widened
+/// into a scratch register before a float opcode consumes it. The register
+/// count grows past the highest `Tmp` to hold it.
 #[test]
 fn test_lower_lir_mixed_arithmetic_int_lhs() {
     let result = lower_and_pretty("observer {} /true/ { 1 + 2.5; [] }");
@@ -499,11 +502,12 @@ fn test_lower_lir_mixed_arithmetic_int_lhs() {
         r0 = const_bool true
         return r0
       body:
-        regs: 4
+        regs: 5
       L0:
         r0 = const_int 1
         r1 = const_float 2.5
-        r2 = add r0, r1
+        r4 = to_float r0
+        r2 = add_float r4, r1
         r3 = empty_list
         return r3
     ");
@@ -520,27 +524,31 @@ fn test_lower_lir_mixed_arithmetic_int_rhs() {
         r0 = const_bool true
         return r0
       body:
-        regs: 4
+        regs: 5
       L0:
         r0 = const_float 2.5
         r1 = const_int 1
-        r2 = add r0, r1
+        r4 = to_float r1
+        r2 = add_float r0, r4
         r3 = empty_list
         return r3
     ");
 }
 
+/// A comparison's operands are promoted the same way, though its result
+/// type says nothing about them.
 #[test]
 fn test_lower_lir_mixed_comparison() {
     let result = lower_and_pretty("observer {} /1 < 2.5/ { [] }");
     insta::assert_snapshot!(result, @"
     Automation: observer
       filter:
-        regs: 3
+        regs: 4
       L0:
         r0 = const_int 1
         r1 = const_float 2.5
-        r2 = lt r0, r1
+        r3 = to_float r0
+        r2 = lt_float r3, r1
         return r2
       body:
         regs: 1
@@ -550,6 +558,8 @@ fn test_lower_lir_mixed_comparison() {
     ");
 }
 
+/// Equality stays polymorphic, so neither side is promoted and no opcode
+/// commits to a type.
 #[test]
 fn test_lower_lir_mixed_equality() {
     let result = lower_and_pretty("observer {} /1 == 2.5/ { [] }");
