@@ -40,138 +40,173 @@ fn lower_automation(auto: &HirAutomation) -> LirAutomation {
 }
 
 fn lower_function(func: &HirFunction) -> LirFunction {
-    let mut instrs = Vec::new();
-    let mut max_reg = 0;
-
     let params: Vec<LirParam> = func
         .params
         .iter()
-        .map(|p| {
-            max_reg = max_reg.max(p.tmp.0);
-            LirParam {
-                name: p.name.clone(),
-                reg: Reg(p.tmp.0),
-                ty: p.ty.clone(),
-            }
+        .map(|p| LirParam {
+            name: p.name.clone(),
+            reg: Reg(p.tmp.0),
+            ty: p.ty.clone(),
         })
         .collect();
 
+    let mut lowerer = FunctionLowerer::new(max_tmp(func) + 1);
+
     for block in &func.blocks {
-        instrs.push(LirInstr::Label(Label(block.id.0)));
+        lowerer.push(LirInstr::Label(Label(block.id.0)));
         for instr in &block.instructions {
-            max_reg = max_reg.max(instr.dst.0);
-            for r in op_input_tmps(&instr.op) {
-                max_reg = max_reg.max(r);
-            }
-            instrs.push(lower_instr(instr));
+            lowerer.lower_instr(instr);
         }
-        for r in terminator_input_tmps(&block.terminator) {
-            max_reg = max_reg.max(r);
-        }
-        instrs.push(lower_terminator(&block.terminator));
+        lowerer.push(lower_terminator(&block.terminator));
     }
 
     LirFunction {
         params,
-        num_regs: max_reg + 1,
-        instrs,
+        num_regs: lowerer.next_reg,
+        instrs: lowerer.instrs,
     }
 }
 
-fn lower_instr(instr: &Instruction) -> LirInstr {
-    let dst = Reg(instr.dst.0);
-    match &instr.op {
-        Op::ConstInt(value) => LirInstr::ConstInt { dst, value: *value },
-        Op::ConstFloat(value) => LirInstr::ConstFloat { dst, value: *value },
-        Op::ConstString(value) => LirInstr::ConstString {
-            dst,
-            value: value.clone(),
-        },
-        Op::ConstBool(value) => LirInstr::ConstBool { dst, value: *value },
-        Op::ConstUnit { value, unit } => LirInstr::ConstUnit {
-            dst,
-            value: value.clone(),
-            unit: *unit,
-        },
-        Op::Unit => LirInstr::Unit { dst },
-        Op::BinOp { op, left, right } => LirInstr::BinOp {
-            dst,
-            op: *op,
-            lhs: Reg(left.0),
-            rhs: Reg(right.0),
-        },
-        Op::Neg(src) => LirInstr::Neg {
-            dst,
-            src: Reg(src.0),
-        },
-        Op::Not(src) => LirInstr::Not {
-            dst,
-            src: Reg(src.0),
-        },
-        Op::Deref(src) => LirInstr::Deref {
-            dst,
-            src: Reg(src.0),
-        },
-        Op::Await(src) => LirInstr::Await {
-            dst,
-            src: Reg(src.0),
-        },
-        Op::Field { base, field } => LirInstr::Field {
-            dst,
-            base: Reg(base.0),
-            field: field.clone(),
-        },
-        Op::OptionalField { base, field } => LirInstr::OptionalField {
-            dst,
-            base: Reg(base.0),
-            field: field.clone(),
-        },
-        Op::Call { function, args } => LirInstr::Call {
-            dst,
-            function: *function,
-            args: args.iter().map(|t| Reg(t.0)).collect(),
-        },
-        Op::Variant {
-            enum_name,
-            variant,
-            args,
-        } => LirInstr::Variant {
-            dst,
-            enum_name: enum_name.clone(),
-            variant: variant.clone(),
-            args: args.iter().map(|t| Reg(t.0)).collect(),
-        },
-        Op::EmptyList => LirInstr::EmptyList { dst },
-        Op::List(elems) => LirInstr::List {
-            dst,
-            elems: elems.iter().map(|t| Reg(t.0)).collect(),
-        },
-        Op::ListPush { list, value } => LirInstr::ListPush {
-            list: Reg(list.0),
-            value: Reg(value.0),
-        },
-        Op::IterInit(src) => LirInstr::IterInit {
-            dst,
-            src: Reg(src.0),
-        },
-        Op::Struct { name, fields } => LirInstr::Struct {
-            dst,
-            name: name.clone(),
-            fields: fields
-                .iter()
-                .map(|f| match f {
-                    HirStructField::Set { name, value } => LirStructField::Set {
-                        name: name.clone(),
-                        value: Reg(value.0),
-                    },
-                    HirStructField::Spread(src) => LirStructField::Spread(Reg(src.0)),
-                })
-                .collect(),
-        },
-        Op::Copy(src) => LirInstr::Copy {
-            dst,
-            src: Reg(src.0),
-        },
+/// The highest `Tmp` the function mentions, as a parameter, a destination
+/// or an input.
+fn max_tmp(func: &HirFunction) -> usize {
+    let mut max = 0;
+    for p in &func.params {
+        max = max.max(p.tmp.0);
+    }
+    for block in &func.blocks {
+        for instr in &block.instructions {
+            max = max.max(instr.dst.0);
+            for t in op_input_tmps(&instr.op) {
+                max = max.max(t);
+            }
+        }
+        for t in terminator_input_tmps(&block.terminator) {
+            max = max.max(t);
+        }
+    }
+    max
+}
+
+// ============================================================================
+// Function lowerer
+// ============================================================================
+
+struct FunctionLowerer {
+    instrs: Vec<LirInstr>,
+    /// Next register to hand out, and — once lowering finishes — the
+    /// function's register count.
+    next_reg: usize,
+}
+
+impl FunctionLowerer {
+    fn new(next_reg: usize) -> Self {
+        Self {
+            instrs: Vec::new(),
+            next_reg,
+        }
+    }
+
+    fn push(&mut self, instr: LirInstr) {
+        self.instrs.push(instr);
+    }
+
+    fn lower_instr(&mut self, instr: &Instruction) {
+        let dst = Reg(instr.dst.0);
+        let lowered = match &instr.op {
+            Op::ConstInt(value) => LirInstr::ConstInt { dst, value: *value },
+            Op::ConstFloat(value) => LirInstr::ConstFloat { dst, value: *value },
+            Op::ConstString(value) => LirInstr::ConstString {
+                dst,
+                value: value.clone(),
+            },
+            Op::ConstBool(value) => LirInstr::ConstBool { dst, value: *value },
+            Op::ConstUnit { value, unit } => LirInstr::ConstUnit {
+                dst,
+                value: value.clone(),
+                unit: *unit,
+            },
+            Op::Unit => LirInstr::Unit { dst },
+            Op::BinOp { op, left, right } => LirInstr::BinOp {
+                dst,
+                op: *op,
+                lhs: Reg(left.0),
+                rhs: Reg(right.0),
+            },
+            Op::Neg(src) => LirInstr::Neg {
+                dst,
+                src: Reg(src.0),
+            },
+            Op::Not(src) => LirInstr::Not {
+                dst,
+                src: Reg(src.0),
+            },
+            Op::Deref(src) => LirInstr::Deref {
+                dst,
+                src: Reg(src.0),
+            },
+            Op::Await(src) => LirInstr::Await {
+                dst,
+                src: Reg(src.0),
+            },
+            Op::Field { base, field } => LirInstr::Field {
+                dst,
+                base: Reg(base.0),
+                field: field.clone(),
+            },
+            Op::OptionalField { base, field } => LirInstr::OptionalField {
+                dst,
+                base: Reg(base.0),
+                field: field.clone(),
+            },
+            Op::Call { function, args } => LirInstr::Call {
+                dst,
+                function: *function,
+                args: args.iter().map(|t| Reg(t.0)).collect(),
+            },
+            Op::Variant {
+                enum_name,
+                variant,
+                args,
+            } => LirInstr::Variant {
+                dst,
+                enum_name: enum_name.clone(),
+                variant: variant.clone(),
+                args: args.iter().map(|t| Reg(t.0)).collect(),
+            },
+            Op::EmptyList => LirInstr::EmptyList { dst },
+            Op::List(elems) => LirInstr::List {
+                dst,
+                elems: elems.iter().map(|t| Reg(t.0)).collect(),
+            },
+            Op::ListPush { list, value } => LirInstr::ListPush {
+                list: Reg(list.0),
+                value: Reg(value.0),
+            },
+            Op::IterInit(src) => LirInstr::IterInit {
+                dst,
+                src: Reg(src.0),
+            },
+            Op::Struct { name, fields } => LirInstr::Struct {
+                dst,
+                name: name.clone(),
+                fields: fields
+                    .iter()
+                    .map(|f| match f {
+                        HirStructField::Set { name, value } => LirStructField::Set {
+                            name: name.clone(),
+                            value: Reg(value.0),
+                        },
+                        HirStructField::Spread(src) => LirStructField::Spread(Reg(src.0)),
+                    })
+                    .collect(),
+            },
+            Op::Copy(src) => LirInstr::Copy {
+                dst,
+                src: Reg(src.0),
+            },
+        };
+        self.push(lowered);
     }
 }
 
