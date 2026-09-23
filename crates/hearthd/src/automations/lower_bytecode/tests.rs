@@ -570,3 +570,27 @@ fn test_lower_bytecode_template() {
               0000: return             r0
     ");
 }
+
+#[test]
+fn test_lower_bytecode_mixed_arithmetic() {
+    let result = lower_and_pretty("observer {} /true/ { 1 + 2.5; [] }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      filter:
+        regs: 1
+        code:
+          0000: load_const_bool    r0, true
+          0006: return             r0
+      body:
+        regs: 4
+        consts:
+          #0 = int 1
+          #1 = float 2.5
+        code:
+          0000: load_const_int     r0, #0 (int 1)
+          0009: load_const_float   r1, #1 (float 2.5)
+          0018: binop              r2, add, r0, r1
+          0032: empty_list         r3
+          0037: return             r3
+    ");
+}

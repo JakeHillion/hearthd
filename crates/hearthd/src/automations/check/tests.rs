@@ -1287,3 +1287,34 @@ fn test_membership_on_scalars_still_checks() {
         );
     }
 }
+
+// =============================================================================
+// Numeric operands the checker could not type
+// =============================================================================
+
+/// `Event` field access is deferred, so `event.level` types as an error
+/// without one being reported.
+#[test]
+fn test_arithmetic_on_an_untyped_operand() {
+    let result = check_errors("observer { event, ... } /event.level + 1 > 2/ { [event] }");
+    insta::assert_snapshot!(result, @"");
+}
+
+#[test]
+fn test_ordering_on_an_untyped_operand() {
+    let result = check_errors("observer { event, ... } /event.level < 5/ { [event] }");
+    insta::assert_snapshot!(result, @"");
+}
+
+#[test]
+fn test_negation_of_an_untyped_operand() {
+    let result = check_errors("observer { event, ... } /-event.level > 0/ { [event] }");
+    insta::assert_snapshot!(result, @"");
+}
+
+/// An empty list has no element type, so the loop variable has none.
+#[test]
+fn test_arithmetic_on_an_untyped_loop_variable() {
+    let result = check_errors("observer { event, ... } /[x + 1 for x in []] == []/ { [event] }");
+    insta::assert_snapshot!(result, @"");
+}
