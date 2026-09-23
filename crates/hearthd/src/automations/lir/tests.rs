@@ -6,7 +6,7 @@ fn lower_and_pretty(input: &str) -> String {
     let lowered = crate::automations::desugar_program(program);
     let result = crate::automations::check_program(&lowered);
     let hir = crate::automations::lower_program(&result);
-    let lir = crate::automations::lower_lir::lower_lir_program(&hir);
+    let lir = crate::automations::lir::lower_lir_program(&hir);
     lir.to_pretty_string()
 }
 

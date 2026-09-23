@@ -8,16 +8,10 @@ use std::collections::HashMap;
 
 use facet::Facet as _;
 
-use self::hir::*;
+use super::hir::*;
 use crate::automations::check::typed::*;
 use crate::automations::parser::ast;
 use crate::engine::state;
-
-pub mod hir;
-mod pretty_print;
-
-#[cfg(test)]
-mod tests;
 
 // ============================================================================
 // Facet reflection helpers (duplicated from check for module decoupling)

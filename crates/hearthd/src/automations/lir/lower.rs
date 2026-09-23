@@ -11,14 +11,8 @@
 //! on the value flowing into `src`, which is produced by an earlier `Call`
 //! to an async builtin.
 
-use self::lir::*;
-use crate::automations::lower::hir::*;
-
-pub mod lir;
-mod pretty_print;
-
-#[cfg(test)]
-mod tests;
+use super::lir::*;
+use crate::automations::hir::*;
 
 /// Lower an HIR program to LIR.
 pub fn lower_lir_program(hir: &HirProgram) -> LirProgram {
