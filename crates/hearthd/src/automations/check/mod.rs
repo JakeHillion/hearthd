@@ -80,19 +80,15 @@ struct EnumInfo {
 ///
 /// Struct types are resolved directly from facet's `&'static Shape` data
 /// (already in `.rodata`), so no runtime HashMap is needed for them.
-/// Only enums and entity registries require runtime state.
+/// Only enums require runtime state.
 struct TypeRegistry {
     enums: HashMap<String, EnumInfo>,
-    /// Types where field access produces EntityConstraints instead of
-    /// looking up static fields. Maps type name -> inner entity type.
-    entity_registries: HashMap<String, Ty>,
 }
 
 impl TypeRegistry {
     fn new() -> Self {
         let mut reg = Self {
             enums: HashMap::new(),
-            entity_registries: HashMap::new(),
         };
         reg.register_enums();
         reg
@@ -165,11 +161,6 @@ impl TypeRegistry {
     fn lookup_field(&self, ty: &Ty, field: &str) -> Option<Ty> {
         match ty {
             Ty::Named(name) => {
-                // Check entity registries first
-                if let Some(inner) = self.entity_registries.get(name.as_str()) {
-                    return Some(inner.clone());
-                }
-
                 // Query facet shape directly
                 let shape = Self::shape_for_type(name)?;
                 if let facet::Type::User(facet::UserType::Struct(st)) = &shape.ty {
@@ -180,21 +171,6 @@ impl TypeRegistry {
                     }
                 }
                 None
-            }
-            _ => None,
-        }
-    }
-
-    /// Check if a named type is an entity registry.
-    fn is_entity_registry(&self, ty: &Ty) -> bool {
-        matches!(ty, Ty::Named(name) if self.entity_registries.contains_key(name.as_str()))
-    }
-
-    /// Get the domain name for an entity registry type.
-    fn entity_registry_domain(&self, ty: &Ty) -> Option<String> {
-        match ty {
-            Ty::Named(name) if self.entity_registries.contains_key(name.as_str()) => {
-                Some(name.to_lowercase())
             }
             _ => None,
         }
@@ -1039,17 +1015,6 @@ impl TypeChecker {
         // Event field access is permissive (deferred)
         if matches!(ty, Ty::Named(n) if n == "Event") {
             return Ty::Error;
-        }
-
-        // Check entity registry
-        if self.registry.is_entity_registry(ty) {
-            if let Some(domain) = self.registry.entity_registry_domain(ty) {
-                self.constraints.push(EntityConstraint {
-                    domain,
-                    entity: field.to_string(),
-                    span,
-                });
-            }
         }
 
         if let Some(field_ty) = self.registry.lookup_field(ty, field) {
