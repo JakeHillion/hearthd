@@ -1,6 +1,6 @@
 //! Failures the VM reports, split by who is at fault.
 
-use crate::automations::repr::function::FunctionIdentity;
+use crate::automations::check::function::FunctionIdentity;
 
 /// An error returned by the VM.
 ///

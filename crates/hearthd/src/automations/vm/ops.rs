@@ -7,7 +7,7 @@ use super::error::VmError;
 use super::quantity::Quantity;
 use super::value::Pending;
 use super::value::Value;
-use crate::automations::repr::function::FunctionIdentity;
+use crate::automations::check::function::FunctionIdentity;
 
 pub(super) fn field_access(base: &Value, field: &str) -> Result<Value, VmError> {
     match base {

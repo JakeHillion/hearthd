@@ -12,22 +12,26 @@ use chumsky::span::SimpleSpan;
 use chumsky::span::Span;
 use facet::Facet;
 
+use self::function::FunctionIdentity;
+use self::typed::CheckResult;
+use self::typed::EntityConstraint;
+use self::typed::Ty;
+use self::typed::TypeError;
+use self::typed::TypedArg;
+use self::typed::TypedAutomation;
+use self::typed::TypedExpr;
+use self::typed::TypedExprKind;
+use self::typed::TypedProgram;
+use self::typed::TypedStmt;
+use self::typed::TypedStructField;
 use super::desugar::lowered;
 use super::lexer::UnitType;
 use super::parser::ast;
-use super::repr::function::FunctionIdentity;
-use super::repr::typed::CheckResult;
-use super::repr::typed::EntityConstraint;
-use super::repr::typed::Ty;
-use super::repr::typed::TypeError;
-use super::repr::typed::TypedArg;
-use super::repr::typed::TypedAutomation;
-use super::repr::typed::TypedExpr;
-use super::repr::typed::TypedExprKind;
-use super::repr::typed::TypedProgram;
-use super::repr::typed::TypedStmt;
-use super::repr::typed::TypedStructField;
 use crate::engine::state;
+
+pub mod function;
+mod pretty_print;
+pub mod typed;
 
 #[cfg(test)]
 mod tests;
