@@ -5,20 +5,22 @@
 
 use std::rc::Rc;
 
+use self::lowered::LoweredArg;
+use self::lowered::LoweredAutomation;
+use self::lowered::LoweredExpr;
+use self::lowered::LoweredProgram;
+use self::lowered::LoweredStmt;
+use self::lowered::LoweredStructField;
+use self::lowered::Origin;
+use self::lowered::Spanned;
 use super::parser::ast;
 use super::parser::ast::Arg;
 use super::parser::ast::Expr;
 use super::parser::ast::Stmt;
 use super::parser::ast::StructField;
-use super::repr::lowered::LoweredArg;
-use super::repr::lowered::LoweredAutomation;
-use super::repr::lowered::LoweredExpr;
-use super::repr::lowered::LoweredProgram;
-use super::repr::lowered::LoweredStmt;
-use super::repr::lowered::LoweredStructField;
-use super::repr::lowered::Origin;
-use super::repr::lowered::Spanned;
 
+pub mod lowered;
+mod pretty_print;
 #[cfg(test)]
 mod tests;
 

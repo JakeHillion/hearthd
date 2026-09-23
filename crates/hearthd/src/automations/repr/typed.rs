@@ -5,7 +5,7 @@
 //! collected for runtime validation.
 
 use super::function::FunctionIdentity;
-use super::lowered::Origin;
+use crate::automations::desugar::lowered::Origin;
 use crate::automations::lexer::UnitType;
 use crate::automations::parser::ast;
 

@@ -12,10 +12,10 @@ use chumsky::span::SimpleSpan;
 use chumsky::span::Span;
 use facet::Facet;
 
+use super::desugar::lowered;
 use super::lexer::UnitType;
 use super::parser::ast;
 use super::repr::function::FunctionIdentity;
-use super::repr::lowered;
 use super::repr::typed::CheckResult;
 use super::repr::typed::EntityConstraint;
 use super::repr::typed::Ty;
