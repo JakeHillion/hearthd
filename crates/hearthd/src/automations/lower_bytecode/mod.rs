@@ -12,8 +12,8 @@
 
 use std::collections::HashMap;
 
+use crate::automations::lower_lir::lir::*;
 use crate::automations::repr::bytecode::*;
-use crate::automations::repr::lir::*;
 
 #[cfg(test)]
 mod tests;

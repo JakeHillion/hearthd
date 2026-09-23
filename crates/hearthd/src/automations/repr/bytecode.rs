@@ -1,6 +1,6 @@
 //! Bytecode encoding for the HearthD Automations language.
 //!
-//! `Bytecode` is the compact, encoded form of a [`super::lir::LirFunction`]
+//! `Bytecode` is the compact, encoded form of a [`crate::automations::lower_lir::lir::LirFunction`]
 //! ready for VM consumption. Opcodes are a single byte; operands are
 //! fixed-width little-endian `u32` register indices and constant-pool
 //! indices. Jumps store the absolute byte offset of their target instead

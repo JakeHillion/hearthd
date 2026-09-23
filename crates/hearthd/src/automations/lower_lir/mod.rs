@@ -11,8 +11,11 @@
 //! on the value flowing into `src`, which is produced by an earlier `Call`
 //! to an async builtin.
 
+use self::lir::*;
 use crate::automations::lower::hir::*;
-use crate::automations::repr::lir::*;
+
+pub mod lir;
+mod pretty_print;
 
 #[cfg(test)]
 mod tests;
