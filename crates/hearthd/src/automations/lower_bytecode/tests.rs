@@ -1,7 +1,15 @@
 use crate::automations::repr::pretty_print::PrettyPrint;
 
 /// Compile a program all the way to bytecode and pretty-print its
-/// disassembly.
+/// disassembly, without the byte offset each instruction line opens with.
+///
+/// The disassembler prints offsets because they are what make a jump
+/// target readable, but in a snapshot they tie every line to the total
+/// width of everything before it: change one instruction's encoding and
+/// every later line reports a different offset, burying the change in a
+/// diff the length of the function.
+///
+/// Jump operands are still offsets, so a jump line does still move.
 fn lower_and_pretty(input: &str) -> String {
     let program = crate::automations::parse(input).expect("parsing should succeed");
     let lowered = crate::automations::desugar_program(program);
@@ -9,7 +17,29 @@ fn lower_and_pretty(input: &str) -> String {
     let hir = crate::automations::lower_program(&result);
     let lir = crate::automations::lower_lir::lower_lir_program(&hir);
     let bc = crate::automations::lower_bytecode::lower_bytecode_program(&lir);
-    bc.to_pretty_string()
+    strip_offsets(&bc.to_pretty_string())
+}
+
+/// Drop the `NNNN: ` an instruction line opens with, keeping its indent.
+///
+/// Only a run of digits followed by `": "` counts, so the surrounding
+/// structure — `regs: 1`, `consts:`, `#0 = int 1` — is left alone.
+fn strip_offsets(rendered: &str) -> String {
+    let mut out = String::with_capacity(rendered.len());
+    for line in rendered.lines() {
+        let indent = line.len() - line.trim_start().len();
+        match line[indent..].split_once(": ") {
+            Some((offset, instr))
+                if !offset.is_empty() && offset.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                out.push_str(&line[..indent]);
+                out.push_str(instr);
+            }
+            _ => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
 }
 
 // =============================================================================
@@ -19,39 +49,39 @@ fn lower_and_pretty(input: &str) -> String {
 #[test]
 fn test_lower_bytecode_empty_list_observer() {
     let result = lower_and_pretty("observer {} /true/ { [] }");
-    insta::assert_snapshot!(result, @r"
+    insta::assert_snapshot!(result, @"
     Automation: observer
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 1
         code:
-          0000: empty_list         r0
-          0005: return             r0
+          empty_list         r0
+          return             r0
     ");
 }
 
 #[test]
 fn test_lower_bytecode_let_binding() {
     let result = lower_and_pretty("observer {} /true/ { let x = 42; [] }");
-    insta::assert_snapshot!(result, @r"
+    insta::assert_snapshot!(result, @"
     Automation: observer
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 2
         consts:
           #0 = int 42
         code:
-          0000: load_const_int     r0, #0 (int 42)
-          0009: empty_list         r1
-          0014: return             r1
+          load_const_int     r0, #0 (int 42)
+          empty_list         r1
+          return             r1
     ");
 }
 
@@ -67,20 +97,20 @@ fn test_lower_bytecode_if_else() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 4
         code:
-          0000: load_const_bool    r1, true
-          0006: jump_if            r1, 0019, 0038
-          0019: empty_list         r2
-          0024: copy               r0, r2
-          0033: jump               0057
-          0038: empty_list         r3
-          0043: copy               r0, r3
-          0052: jump               0057
-          0057: return             r0
+          load_const_bool    r1, true
+          jump_if            r1, 0019, 0038
+          empty_list         r2
+          copy               r0, r2
+          jump               0057
+          empty_list         r3
+          copy               r0, r3
+          jump               0057
+          return             r0
     ");
 }
 
@@ -106,9 +136,9 @@ fn test_lower_bytecode_list_comprehension() {
         consts:
           #0 = ident nodes
         code:
-          0000: field              r1, r0, #0 (nodes)
-          0013: load_const_bool    r2, true
-          0019: return             r2
+          field              r1, r0, #0 (nodes)
+          load_const_bool    r2, true
+          return             r2
       body:
         regs: 8
         params:
@@ -118,16 +148,16 @@ fn test_lower_bytecode_list_comprehension() {
           #1 = ident Event
           #2 = ident OnOffChanged
         code:
-          0000: field              r1, r0, #0 (nodes)
-          0013: empty_list         r2
-          0018: call               r3, keys, [r1]
-          0032: iter_init          r4, r3
-          0041: jump               0046
-          0046: iter_next          r4, r5, 0063, 0098
-          0063: variant            r6, #1 (Event), #2 (OnOffChanged), [r5]
-          0084: list_push          r2, r6
-          0093: jump               0046
-          0098: return             r2
+          field              r1, r0, #0 (nodes)
+          empty_list         r2
+          call               r3, keys, [r1]
+          iter_init          r4, r3
+          jump               0046
+          iter_next          r4, r5, 0063, 0098
+          variant            r6, #1 (Event), #2 (OnOffChanged), [r5]
+          list_push          r2, r6
+          jump               0046
+          return             r2
     ");
 }
 
@@ -146,24 +176,24 @@ fn test_lower_bytecode_sleep_unique() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 6
         consts:
           #0 = unit 5min
         code:
-          0000: load_const_unit    r1, #0 (5min)
-          0009: call               r2, sleep_unique, [r1]
-          0023: await              r3, r2
-          0032: jump_if            r3, 0045, 0064
-          0045: empty_list         r4
-          0050: copy               r0, r4
-          0059: jump               0083
-          0064: empty_list         r5
-          0069: copy               r0, r5
-          0078: jump               0083
-          0083: return             r0
+          load_const_unit    r1, #0 (5min)
+          call               r2, sleep_unique, [r1]
+          await              r3, r2
+          jump_if            r3, 0045, 0064
+          empty_list         r4
+          copy               r0, r4
+          jump               0083
+          empty_list         r5
+          copy               r0, r5
+          jump               0083
+          return             r0
     ");
 }
 
@@ -179,8 +209,8 @@ fn test_lower_bytecode_binary_arithmetic() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 6
         consts:
@@ -188,13 +218,13 @@ fn test_lower_bytecode_binary_arithmetic() {
           #1 = int 2
           #2 = int 3
         code:
-          0000: load_const_int     r0, #0 (int 1)
-          0009: load_const_int     r1, #1 (int 2)
-          0018: load_const_int     r2, #2 (int 3)
-          0027: binop              r3, mul, r1, r2
-          0041: binop              r4, add, r0, r3
-          0055: empty_list         r5
-          0060: return             r5
+          load_const_int     r0, #0 (int 1)
+          load_const_int     r1, #1 (int 2)
+          load_const_int     r2, #2 (int 3)
+          binop              r3, mul, r1, r2
+          binop              r4, add, r0, r3
+          empty_list         r5
+          return             r5
     ");
 }
 
@@ -206,19 +236,19 @@ fn test_lower_bytecode_float_literal() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 4
         consts:
           #0 = float 1.5
           #1 = float 2.5
         code:
-          0000: load_const_float   r0, #0 (float 1.5)
-          0009: load_const_float   r1, #1 (float 2.5)
-          0018: binop              r2, add, r0, r1
-          0032: empty_list         r3
-          0037: return             r3
+          load_const_float   r0, #0 (float 1.5)
+          load_const_float   r1, #1 (float 2.5)
+          binop              r2, add, r0, r1
+          empty_list         r3
+          return             r3
     ");
 }
 
@@ -230,16 +260,16 @@ fn test_lower_bytecode_string_literal() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 2
         consts:
           #0 = string "hello"
         code:
-          0000: load_const_string  r0, #0 ("hello")
-          0009: empty_list         r1
-          0014: return             r1
+          load_const_string  r0, #0 ("hello")
+          empty_list         r1
+          return             r1
     "#);
 }
 
@@ -251,8 +281,8 @@ fn test_lower_bytecode_list_literal() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 5
         consts:
@@ -260,12 +290,12 @@ fn test_lower_bytecode_list_literal() {
           #1 = int 2
           #2 = int 3
         code:
-          0000: load_const_int     r0, #0 (int 1)
-          0009: load_const_int     r1, #1 (int 2)
-          0018: load_const_int     r2, #2 (int 3)
-          0027: list               r3, [r0, r1, r2]
-          0048: empty_list         r4
-          0053: return             r4
+          load_const_int     r0, #0 (int 1)
+          load_const_int     r1, #1 (int 2)
+          load_const_int     r2, #2 (int 3)
+          list               r3, [r0, r1, r2]
+          empty_list         r4
+          return             r4
     ");
 }
 
@@ -281,17 +311,17 @@ fn test_lower_bytecode_negation() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 3
         consts:
           #0 = int 10
         code:
-          0000: load_const_int     r0, #0 (int 10)
-          0009: neg                r1, r0
-          0018: empty_list         r2
-          0023: return             r2
+          load_const_int     r0, #0 (int 10)
+          neg                r1, r0
+          empty_list         r2
+          return             r2
     ");
 }
 
@@ -303,15 +333,15 @@ fn test_lower_bytecode_not() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 3
         code:
-          0000: load_const_bool    r0, true
-          0006: not                r1, r0
-          0015: empty_list         r2
-          0020: return             r2
+          load_const_bool    r0, true
+          not                r1, r0
+          empty_list         r2
+          return             r2
     ");
 }
 
@@ -323,17 +353,17 @@ fn test_lower_bytecode_deref() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 3
         consts:
           #0 = int 10
         code:
-          0000: load_const_int     r0, #0 (int 10)
-          0009: deref              r1, r0
-          0018: empty_list         r2
-          0023: return             r2
+          load_const_int     r0, #0 (int 10)
+          deref              r1, r0
+          empty_list         r2
+          return             r2
     ");
 }
 
@@ -358,8 +388,8 @@ fn test_lower_bytecode_optional_field() {
         params:
           r0: event [Event]
         code:
-          0000: load_const_bool    r1, true
-          0006: return             r1
+          load_const_bool    r1, true
+          return             r1
       body:
         regs: 3
         params:
@@ -367,9 +397,9 @@ fn test_lower_bytecode_optional_field() {
         consts:
           #0 = ident location
         code:
-          0000: optional_field     r1, r0, #0 (location)
-          0013: empty_list         r2
-          0018: return             r2
+          optional_field     r1, r0, #0 (location)
+          empty_list         r2
+          return             r2
     ");
 }
 
@@ -385,22 +415,22 @@ fn test_lower_bytecode_if_no_else() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 4
         consts:
           #0 = int 42
         code:
-          0000: load_const_bool    r1, true
-          0006: jump_if            r1, 0019, 0042
-          0019: load_const_int     r2, #0 (int 42)
-          0028: copy               r0, r2
-          0037: jump               0052
-          0042: unit               r0
-          0047: jump               0052
-          0052: empty_list         r3
-          0057: return             r3
+          load_const_bool    r1, true
+          jump_if            r1, 0019, 0042
+          load_const_int     r2, #0 (int 42)
+          copy               r0, r2
+          jump               0052
+          unit               r0
+          jump               0052
+          empty_list         r3
+          return             r3
     ");
 }
 
@@ -428,8 +458,8 @@ fn test_lower_bytecode_struct_inherit_spread() {
         params:
           r0: event [Event]
         code:
-          0000: load_const_bool    r1, true
-          0006: return             r1
+          load_const_bool    r1, true
+          return             r1
       body:
         regs: 3
         params:
@@ -439,9 +469,9 @@ fn test_lower_bytecode_struct_inherit_spread() {
           #1 = ident Event
           #2 = ident brightness
         code:
-          0000: load_const_int     r1, #0 (int 100)
-          0009: struct             r2, #1 (Event), { brightness: r1, ...r0 }
-          0036: return             r2
+          load_const_int     r1, #0 (int 100)
+          struct             r2, #1 (Event), { brightness: r1, ...r0 }
+          return             r2
     ");
 }
 
@@ -457,18 +487,18 @@ fn test_lower_bytecode_interns_repeated_int() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 4
         consts:
           #0 = int 1
         code:
-          0000: load_const_int     r0, #0 (int 1)
-          0009: load_const_int     r1, #0 (int 1)
-          0018: binop              r2, add, r0, r1
-          0032: empty_list         r3
-          0037: return             r3
+          load_const_int     r0, #0 (int 1)
+          load_const_int     r1, #0 (int 1)
+          binop              r2, add, r0, r1
+          empty_list         r3
+          return             r3
     ");
 }
 
@@ -480,8 +510,8 @@ fn test_lower_bytecode_interns_repeated_ident() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 9
         consts:
@@ -490,16 +520,16 @@ fn test_lower_bytecode_interns_repeated_ident() {
           #2 = int 9
           #3 = int 2
         code:
-          0000: load_const_int     r0, #0 (int 1)
-          0009: load_const_int     r1, #1 (int 0)
-          0018: load_const_int     r2, #2 (int 9)
-          0027: call               r3, clamp, [r0, r1, r2]
-          0049: load_const_int     r4, #3 (int 2)
-          0058: load_const_int     r5, #1 (int 0)
-          0067: load_const_int     r6, #2 (int 9)
-          0076: call               r7, clamp, [r4, r5, r6]
-          0098: empty_list         r8
-          0103: return             r8
+          load_const_int     r0, #0 (int 1)
+          load_const_int     r1, #1 (int 0)
+          load_const_int     r2, #2 (int 9)
+          call               r3, clamp, [r0, r1, r2]
+          load_const_int     r4, #3 (int 2)
+          load_const_int     r5, #1 (int 0)
+          load_const_int     r6, #2 (int 9)
+          call               r7, clamp, [r4, r5, r6]
+          empty_list         r8
+          return             r8
     ");
 }
 
@@ -515,8 +545,8 @@ fn test_lower_bytecode_no_filter() {
       body:
         regs: 1
         code:
-          0000: empty_list         r0
-          0005: return             r0
+          empty_list         r0
+          return             r0
     ");
 }
 
@@ -541,9 +571,9 @@ fn test_lower_bytecode_template() {
             consts:
               #0 = ident nodes
             code:
-              0000: field              r1, r0, #0 (nodes)
-              0013: load_const_bool    r2, true
-              0019: return             r2
+              field              r1, r0, #0 (nodes)
+              load_const_bool    r2, true
+              return             r2
           body:
             regs: 3
             params:
@@ -551,23 +581,23 @@ fn test_lower_bytecode_template() {
             consts:
               #0 = ident nodes
             code:
-              0000: field              r1, r0, #0 (nodes)
-              0013: empty_list         r2
-              0018: return             r2
+              field              r1, r0, #0 (nodes)
+              empty_list         r2
+              return             r2
         Automation: mutator
           filter:
             regs: 2
             params:
               r0: event [Event]
             code:
-              0000: load_const_bool    r1, true
-              0006: return             r1
+              load_const_bool    r1, true
+              return             r1
           body:
             regs: 1
             params:
               r0: event [Event]
             code:
-              0000: return             r0
+              return             r0
     ");
 }
 
@@ -579,18 +609,18 @@ fn test_lower_bytecode_mixed_arithmetic() {
       filter:
         regs: 1
         code:
-          0000: load_const_bool    r0, true
-          0006: return             r0
+          load_const_bool    r0, true
+          return             r0
       body:
         regs: 4
         consts:
           #0 = int 1
           #1 = float 2.5
         code:
-          0000: load_const_int     r0, #0 (int 1)
-          0009: load_const_float   r1, #1 (float 2.5)
-          0018: binop              r2, add, r0, r1
-          0032: empty_list         r3
-          0037: return             r3
+          load_const_int     r0, #0 (int 1)
+          load_const_float   r1, #1 (float 2.5)
+          binop              r2, add, r0, r1
+          empty_list         r3
+          return             r3
     ");
 }
