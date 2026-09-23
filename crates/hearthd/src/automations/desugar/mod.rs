@@ -25,7 +25,7 @@ mod pretty_print;
 mod tests;
 
 /// State for generating unique variable names during desugaring.
-pub struct Desugarer {
+struct Desugarer {
     counter: usize,
 }
 

@@ -12,5 +12,12 @@ mod pretty_print;
 #[cfg(test)]
 mod tests;
 
-pub use lir::*;
+pub use lir::Label;
+pub use lir::LirAutomation;
+pub use lir::LirFunction;
+pub use lir::LirInstr;
+pub use lir::LirParam;
+pub use lir::LirProgram;
+pub use lir::LirStructField;
+pub use lir::Reg;
 pub use lower::lower_lir_program;

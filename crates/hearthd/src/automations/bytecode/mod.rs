@@ -13,5 +13,12 @@ mod lower;
 #[cfg(test)]
 mod tests;
 
-pub use bytecode::*;
+pub use bytecode::Bytecode;
+pub use bytecode::BytecodeAutomation;
+pub use bytecode::BytecodeParam;
+pub use bytecode::BytecodeProgram;
+pub use bytecode::Const;
+pub use bytecode::FunctionTag;
+pub use bytecode::Opcode;
+pub use bytecode::StructFieldTag;
 pub use lower::lower_bytecode_program;

@@ -5,4 +5,6 @@ mod pretty_print;
 #[cfg(test)]
 mod tests;
 
-pub use parser::*;
+#[cfg(test)]
+pub(crate) use parser::expr_parser;
+pub use parser::parse;

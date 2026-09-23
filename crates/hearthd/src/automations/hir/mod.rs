@@ -12,5 +12,17 @@ mod pretty_print;
 #[cfg(test)]
 mod tests;
 
-pub use hir::*;
+pub use hir::BasicBlock;
+pub use hir::BlockId;
+pub use hir::HirAutomation;
+pub use hir::HirBinOp;
+pub use hir::HirFunction;
+pub use hir::HirProgram;
+pub use hir::HirStructField;
+pub use hir::Instruction;
+pub use hir::NumTy;
+pub use hir::Op;
+pub use hir::Param;
+pub use hir::Terminator;
+pub use hir::Tmp;
 pub use lower::lower_program;
