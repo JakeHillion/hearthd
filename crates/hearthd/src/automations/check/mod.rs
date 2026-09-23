@@ -292,7 +292,7 @@ impl TypeEnv {
 // =============================================================================
 
 /// The type checker. Validates a lowered AST and produces a typed AST.
-pub struct TypeChecker {
+struct TypeChecker {
     registry: TypeRegistry,
     env: TypeEnv,
     errors: Vec<TypeError>,
