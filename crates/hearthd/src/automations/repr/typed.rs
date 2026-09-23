@@ -4,10 +4,10 @@
 //! Every expression carries a resolved `Ty`, and entity constraints are
 //! collected for runtime validation.
 
-use super::ast;
 use super::function::FunctionIdentity;
 use super::lowered::Origin;
 use crate::automations::lexer::UnitType;
+use crate::automations::parser::ast;
 
 /// Internal semantic type. Distinct from the syntactic `ast::Type`.
 #[derive(Debug, Clone, PartialEq, Eq)]

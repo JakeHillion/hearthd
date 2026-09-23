@@ -1,12 +1,12 @@
 use chumsky::prelude::*;
 
+// Disambiguate `Spanned` from `chumsky::prelude::*`, which re-exports its own
+// `chumsky::span::Spanned` as of chumsky 0.13.
+use super::ast::Spanned;
+use super::ast::*;
 use super::expr_parser;
 use crate::automations::lexer::Token;
 use crate::automations::pretty_print::PrettyPrint;
-// Disambiguate `Spanned` from `chumsky::prelude::*`, which re-exports its own
-// `chumsky::span::Spanned` as of chumsky 0.13.
-use crate::automations::repr::ast::Spanned;
-use crate::automations::repr::ast::*;
 
 fn parse_expr(input: &str) -> Result<Spanned<Expr>, Vec<Rich<'static, Token>>> {
     let tokens = crate::automations::lexer::lexer()

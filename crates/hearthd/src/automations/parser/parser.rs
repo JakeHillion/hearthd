@@ -3,12 +3,12 @@
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
 
-use crate::automations::lexer::Token;
 // Disambiguate `Spanned` from `chumsky::prelude::*`, which re-exports its own
 // `chumsky::span::Spanned` as of chumsky 0.13. The explicit import binds the
 // crate's AST `Spanned` and takes precedence over both glob imports.
-use crate::automations::repr::ast::Spanned;
-use crate::automations::repr::ast::*;
+use super::ast::Spanned;
+use super::ast::*;
+use crate::automations::lexer::Token;
 
 /// Parse a complete automation program (either a single automation or a template).
 pub fn parse(input: &str) -> Result<Spanned<Program>, Vec<Rich<'static, Token>>> {

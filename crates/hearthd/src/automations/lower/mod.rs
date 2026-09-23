@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use facet::Facet as _;
 
-use crate::automations::repr::ast;
+use crate::automations::parser::ast;
 use crate::automations::repr::hir::*;
 use crate::automations::repr::typed::*;
 use crate::engine::state;
