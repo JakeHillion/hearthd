@@ -6,6 +6,7 @@ use crate::integrations::mqtt::discovery::entity_name;
 use crate::integrations::mqtt::discovery::parse_value_template_key;
 use crate::integrations::mqtt::light::Z2M_ENDPOINT;
 use crate::matter::Cluster;
+use crate::matter::DeviceType;
 use crate::matter::Endpoint;
 use crate::matter::Node;
 use crate::matter::RelativeHumidityMeasurementCluster;
@@ -159,12 +160,14 @@ impl Sensor {
                 crate::matter::CLUSTER_NAME_TEMPERATURE_MEASUREMENT.to_string(),
                 Cluster::TemperatureMeasurement(temp.cluster.clone()),
             );
+            endpoint.device_types.push(DeviceType::TemperatureSensor);
         }
         if let Some(humidity) = &self.humidity {
             endpoint.clusters.insert(
                 crate::matter::CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT.to_string(),
                 Cluster::RelativeHumidityMeasurement(humidity.cluster.clone()),
             );
+            endpoint.device_types.push(DeviceType::HumiditySensor);
         }
 
         let mut endpoints = std::collections::HashMap::new();
@@ -272,6 +275,28 @@ mod tests {
         );
         assert_eq!(Measurement::from_device_class(Some("battery")), None);
         assert_eq!(Measurement::from_device_class(None), None);
+    }
+
+    #[test]
+    fn each_channel_declares_its_sensor_type() {
+        let mut sensor = Sensor::from_discovery(
+            temperature_discovery(),
+            Measurement::Temperature,
+            "sensor.climate".to_string(),
+            "climate".to_string(),
+        )
+        .unwrap();
+        let endpoint = sensor.to_node("mqtt").endpoints[&Z2M_ENDPOINT].clone();
+        assert_eq!(endpoint.device_types, [DeviceType::TemperatureSensor]);
+        assert_eq!(endpoint.missing_mandatory_clusters(), []);
+
+        assert!(sensor.add_channel(Measurement::Humidity, &humidity_discovery()));
+        let endpoint = sensor.to_node("mqtt").endpoints[&Z2M_ENDPOINT].clone();
+        assert_eq!(
+            endpoint.device_types,
+            [DeviceType::TemperatureSensor, DeviceType::HumiditySensor]
+        );
+        assert_eq!(endpoint.missing_mandatory_clusters(), []);
     }
 
     #[test]
