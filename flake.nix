@@ -24,9 +24,12 @@
 
     advisory-db.url = "github:rustsec/advisory-db";
     advisory-db.flake = false;
+
+    connectedhomeip.url = "github:project-chip/connectedhomeip";
+    connectedhomeip.flake = false;
   };
 
-  outputs = { self, nixpkgs, flake-utils, treefmt-nix, fenix, crane, advisory-db }:
+  outputs = { self, nixpkgs, flake-utils, treefmt-nix, fenix, crane, advisory-db, connectedhomeip }:
     {
       nixosModules.default = { config, lib, pkgs, ... }: {
         imports = [ ./nixos/modules/hearthd.nix ];
@@ -111,11 +114,20 @@
 
           # Python environment configuration
           haPythonEnv = pkgs.callPackage ./nixos/pkgs/ha-python-env.nix { };
+
+          matterDeviceTypes = import ./nix/matter-device-types.nix {
+            inherit pkgs connectedhomeip;
+            specVersion = "1.4";
+            rustfmt = fmt-toolchain;
+            rustfmtConfig = ./rustfmt.toml;
+            src = self;
+          };
         in
         {
           packages = {
             inherit hearthd;
             default = hearthd;
+            matter-device-types = matterDeviceTypes.generated;
           };
 
           devShells.default = craneLib.devShell {
@@ -143,6 +155,8 @@
             });
 
             formatting = treefmtEval.config.build.check self;
+
+            matter-device-types = matterDeviceTypes.check;
 
             hearthd-audit = craneLib.cargoAudit {
               inherit advisory-db;
