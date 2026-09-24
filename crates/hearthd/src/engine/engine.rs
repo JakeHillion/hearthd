@@ -224,6 +224,18 @@ impl Engine {
                     map.insert(node_id, node.integration.clone());
                 }
 
+                for (endpoint_id, endpoint) in &node.endpoints {
+                    for (device_type, cluster_id) in endpoint.missing_mandatory_clusters() {
+                        warn!(
+                            "Node {} endpoint {} declares {} without its mandatory cluster {:#06x}",
+                            node_id,
+                            endpoint_id,
+                            device_type.name(),
+                            cluster_id
+                        );
+                    }
+                }
+
                 {
                     let mut state = State::clone(&self.state.load());
                     // Re-announcing an existing node is how an integration

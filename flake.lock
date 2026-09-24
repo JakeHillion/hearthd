@@ -16,6 +16,22 @@
         "type": "github"
       }
     },
+    "connectedhomeip": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790283320,
+        "narHash": "sha256-r8rfL2JZeR0Y96+usTMaCCB8qVD1Zf5iUZNmmC46QnM=",
+        "owner": "project-chip",
+        "repo": "connectedhomeip",
+        "rev": "49551352ecd6d4274cff1a1dde611cd4eb555f45",
+        "type": "github"
+      },
+      "original": {
+        "owner": "project-chip",
+        "repo": "connectedhomeip",
+        "type": "github"
+      }
+    },
     "crane": {
       "locked": {
         "lastModified": 1789760033,
@@ -89,6 +105,7 @@
     "root": {
       "inputs": {
         "advisory-db": "advisory-db",
+        "connectedhomeip": "connectedhomeip",
         "crane": "crane",
         "fenix": "fenix",
         "flake-utils": "flake-utils",

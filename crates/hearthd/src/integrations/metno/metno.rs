@@ -72,13 +72,11 @@ impl MetnoIntegration {
     }
 
     fn build_node(name: &str, entity_id: &str) -> Node {
-        let clusters = forecast::null_clusters()
-            .into_iter()
-            .map(|c| (c.name().to_string(), c))
-            .collect();
-
         let mut endpoints = HashMap::new();
-        endpoints.insert(METNO_ENDPOINT, Endpoint { clusters });
+        endpoints.insert(
+            METNO_ENDPOINT,
+            Endpoint::from_clusters(forecast::null_clusters()),
+        );
 
         Node {
             entity_id: entity_id.to_string(),
