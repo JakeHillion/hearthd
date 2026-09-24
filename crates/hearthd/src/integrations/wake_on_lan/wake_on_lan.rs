@@ -47,6 +47,7 @@ use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
+use crate::matter::DeviceType;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
 use crate::matter::Node;
@@ -322,7 +323,7 @@ fn build_magic_packet(mac: &[u8; 6]) -> [u8; 102] {
 
 /// Build the Matter `Node` snapshot for a host.
 fn node_for(host: &Host) -> Node {
-    let mut endpoint = Endpoint::default();
+    let mut endpoint = Endpoint::default().with_device_types([DeviceType::OnOffPlugInUnit]);
     endpoint.clusters.insert(
         crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
         Cluster::OnOff(OnOffCluster {
@@ -443,6 +444,30 @@ impl Integration for WolIntegration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_host_is_a_conformant_on_off_plug_in_unit() {
+        let host = Host {
+            key: "desktop".to_string(),
+            config: HostConfig {
+                host: "192.168.1.50".to_string(),
+                mac: "AA:BB:CC:DD:EE:FF".to_string(),
+                name: None,
+                port: 9,
+                ping_interval_ms: 30_000,
+                broadcast: None,
+                netmask: None,
+            },
+            node_id: NodeId::from_raw(1),
+            name: "Desktop".to_string(),
+            on_off: false,
+        };
+
+        let node = node_for(&host);
+        let endpoint = &node.endpoints[&WOL_ENDPOINT];
+        assert_eq!(endpoint.device_types, [DeviceType::OnOffPlugInUnit]);
+        assert_eq!(endpoint.missing_mandatory_clusters(), []);
+    }
 
     #[test]
     fn build_magic_packet_is_6_ffs_then_16_repeats_of_the_mac() {
