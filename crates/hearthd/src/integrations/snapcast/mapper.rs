@@ -10,6 +10,7 @@ use crate::integrations::snapcast::models::Volume;
 use crate::matter::BooleanStateCluster;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
+use crate::matter::DeviceType;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
 use crate::matter::InputInfo;
@@ -127,7 +128,7 @@ pub fn group_node(
 
 /// Build a Matter node for a Snapcast client.
 pub fn client_node(client: &Client, entity_id: &str) -> Node {
-    let mut endpoint = Endpoint::default();
+    let mut endpoint = Endpoint::default().with_device_types([DeviceType::Speaker]);
     endpoint.clusters.insert(
         crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
         Cluster::OnOff(OnOffCluster {

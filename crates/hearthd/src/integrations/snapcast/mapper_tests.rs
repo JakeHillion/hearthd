@@ -18,6 +18,7 @@ mod tests {
     use crate::integrations::snapcast::models::Volume;
     use crate::matter::Cluster;
     use crate::matter::ClusterCommand;
+    use crate::matter::DeviceType;
     use crate::matter::InputType;
     use crate::matter::LevelControlCommand;
     use crate::matter::MediaInputCommand;
@@ -560,6 +561,23 @@ mod tests {
             _ => panic!("missing BooleanState cluster"),
         };
         assert!(connected.state_value);
+    }
+
+    #[test]
+    fn a_client_is_a_speaker_and_a_group_declares_no_type() {
+        let c = client(false, 74, true);
+        let node = mapper::client_node(&c, "speaker.kitchen_speaker");
+        let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
+        assert_eq!(endpoint.device_types, [DeviceType::Speaker]);
+        assert_eq!(endpoint.missing_mandatory_clusters(), []);
+
+        // A group has playback and input selection but no volume, and the
+        // Device Library has no player type that does not also mandate
+        // Keypad Input.
+        let g = group("pipe");
+        let node = mapper::group_node(&g, &HashMap::new(), &HashMap::new(), "media_player.kitchen");
+        let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
+        assert_eq!(endpoint.device_types, []);
     }
 
     #[test]
