@@ -9,7 +9,9 @@ use crate::integrations::mqtt::discovery::DiscoveryMessage;
 use crate::integrations::mqtt::discovery::entity_name;
 use crate::integrations::mqtt::discovery::parse_value_template_key;
 use crate::integrations::mqtt::light::Z2M_ENDPOINT;
+use crate::matter::BooleanStateCluster;
 use crate::matter::Cluster;
+use crate::matter::DeviceType;
 use crate::matter::Endpoint;
 use crate::matter::Node;
 use crate::matter::OccupancySensingCluster;
@@ -99,12 +101,46 @@ impl From<String> for BinarySensorDeviceClass {
     }
 }
 
+/// Which Matter sensor a binary sensor is, chosen from its device class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinarySensorKind {
+    /// Motion, occupancy and presence: an Occupancy Sensor carrying
+    /// Occupancy Sensing.
+    Occupancy,
+    /// Doors, windows, openings and garage doors: a Contact Sensor carrying
+    /// Boolean State, whose value is true when the contact is closed, which
+    /// is also how Zigbee2MQTT reports `contact`.
+    Contact,
+}
+
+impl BinarySensorKind {
+    /// The kind a device class maps to, or `None` for classes hearthd has no
+    /// cluster for.
+    pub fn for_class(class: &BinarySensorDeviceClass) -> Option<Self> {
+        match class {
+            BinarySensorDeviceClass::Motion
+            | BinarySensorDeviceClass::Occupancy
+            | BinarySensorDeviceClass::Presence => Some(Self::Occupancy),
+            BinarySensorDeviceClass::Door
+            | BinarySensorDeviceClass::Window
+            | BinarySensorDeviceClass::Opening
+            | BinarySensorDeviceClass::GarageDoor => Some(Self::Contact),
+            _ => None,
+        }
+    }
+
+    fn device_type(self) -> DeviceType {
+        match self {
+            Self::Occupancy => DeviceType::OccupancySensor,
+            Self::Contact => DeviceType::ContactSensor,
+        }
+    }
+}
+
 /// MQTT-side binary sensor (motion, occupancy, door, etc.).
 ///
-/// Holds Z2M metadata plus the current OccupancySensing cluster state. The
-/// device class is preserved for future use (e.g. choosing a different
-/// Matter cluster for door sensors) but isn't yet surfaced through the
-/// engine border.
+/// Holds Z2M metadata plus the current boolean, rendered as the cluster its
+/// kind calls for.
 #[derive(Debug, Clone)]
 pub struct BinarySensor {
     pub entity_id: String,
@@ -119,12 +155,14 @@ pub struct BinarySensor {
     pub state_topic: String,
     value_template: Option<String>,
 
-    pub occupancy: OccupancySensingCluster,
+    pub kind: BinarySensorKind,
+    pub active: bool,
 }
 
 impl BinarySensor {
     pub fn from_discovery(
         discovery: DiscoveryMessage,
+        kind: BinarySensorKind,
         entity_id: String,
         node_id: String,
     ) -> Result<Self, Box<dyn Error>> {
@@ -150,17 +188,27 @@ impl BinarySensor {
             device_info: discovery.device,
             state_topic,
             value_template: discovery.value_template,
-            occupancy: OccupancySensingCluster::default(),
+            kind,
+            active: false,
         })
+    }
+
+    /// The current value as the cluster this sensor kind carries.
+    pub fn cluster(&self) -> Cluster {
+        match self.kind {
+            BinarySensorKind::Occupancy => Cluster::OccupancySensing(OccupancySensingCluster {
+                occupancy: self.active,
+            }),
+            BinarySensorKind::Contact => Cluster::BooleanState(BooleanStateCluster {
+                state_value: self.active,
+            }),
+        }
     }
 
     /// Build the Matter `Node` snapshot for this sensor.
     pub fn to_node(&self, integration: &str) -> Node {
-        let mut endpoint = Endpoint::default();
-        endpoint.clusters.insert(
-            crate::matter::CLUSTER_NAME_OCCUPANCY_SENSING.to_string(),
-            Cluster::OccupancySensing(self.occupancy.clone()),
-        );
+        let endpoint =
+            Endpoint::from_clusters([self.cluster()]).with_device_types([self.kind.device_type()]);
 
         let mut endpoints = std::collections::HashMap::new();
         endpoints.insert(Z2M_ENDPOINT, endpoint);
@@ -189,12 +237,12 @@ impl BinarySensor {
             .unwrap_or("state");
 
         if let Some(value) = state_update.get(key) {
-            self.occupancy.occupancy = match value {
+            self.active = match value {
                 serde_json::Value::Bool(b) => *b,
                 serde_json::Value::String(s) => s == "ON" || s == "true",
                 _ => false,
             };
-            return Ok(Some(Cluster::OccupancySensing(self.occupancy.clone())));
+            return Ok(Some(self.cluster()));
         }
 
         Ok(None)
@@ -231,6 +279,7 @@ mod tests {
     fn from_discovery_sets_defaults() {
         let sensor = BinarySensor::from_discovery(
             motion_discovery(),
+            BinarySensorKind::Occupancy,
             "binary_sensor.living_room".to_string(),
             "living_room".to_string(),
         )
@@ -239,7 +288,7 @@ mod tests {
         assert_eq!(sensor.name, "Living Room Motion");
         assert_eq!(sensor.device_class, Some(BinarySensorDeviceClass::Motion));
         assert_eq!(sensor.state_topic, "zigbee2mqtt/motion_sensor");
-        assert!(!sensor.occupancy.occupancy);
+        assert!(!sensor.active);
     }
 
     #[test]
@@ -248,6 +297,7 @@ mod tests {
         discovery.state_topic = None;
         let result = BinarySensor::from_discovery(
             discovery,
+            BinarySensorKind::Occupancy,
             "binary_sensor.test".to_string(),
             "test".to_string(),
         );
@@ -258,6 +308,7 @@ mod tests {
     fn apply_state_payload_updates_occupancy() {
         let mut sensor = BinarySensor::from_discovery(
             motion_discovery(),
+            BinarySensorKind::Occupancy,
             "binary_sensor.test".to_string(),
             "test".to_string(),
         )
@@ -267,13 +318,13 @@ mod tests {
             .apply_state_payload(br#"{"occupancy": true, "battery": 95}"#)
             .unwrap();
         assert!(matches!(changed, Some(Cluster::OccupancySensing(_))));
-        assert!(sensor.occupancy.occupancy);
+        assert!(sensor.active);
 
         let changed = sensor
             .apply_state_payload(br#"{"occupancy": false}"#)
             .unwrap();
         assert!(matches!(changed, Some(Cluster::OccupancySensing(_))));
-        assert!(!sensor.occupancy.occupancy);
+        assert!(!sensor.active);
     }
 
     #[test]
@@ -282,12 +333,75 @@ mod tests {
         discovery.value_template = None;
         let mut sensor = BinarySensor::from_discovery(
             discovery,
+            BinarySensorKind::Occupancy,
             "binary_sensor.test".to_string(),
             "test".to_string(),
         )
         .unwrap();
 
         sensor.apply_state_payload(br#"{"state": "ON"}"#).unwrap();
-        assert!(sensor.occupancy.occupancy);
+        assert!(sensor.active);
+    }
+
+    #[test]
+    fn device_classes_map_to_a_kind_or_nothing() {
+        use BinarySensorDeviceClass as C;
+        for class in [C::Motion, C::Occupancy, C::Presence] {
+            assert_eq!(
+                BinarySensorKind::for_class(&class),
+                Some(BinarySensorKind::Occupancy)
+            );
+        }
+        for class in [C::Door, C::Window, C::Opening, C::GarageDoor] {
+            assert_eq!(
+                BinarySensorKind::for_class(&class),
+                Some(BinarySensorKind::Contact)
+            );
+        }
+        assert_eq!(BinarySensorKind::for_class(&C::Vibration), None);
+        assert_eq!(BinarySensorKind::for_class(&C::Unknown("x".into())), None);
+    }
+
+    #[test]
+    fn a_motion_sensor_is_a_conformant_occupancy_sensor() {
+        let sensor = BinarySensor::from_discovery(
+            motion_discovery(),
+            BinarySensorKind::Occupancy,
+            "binary_sensor.test".to_string(),
+            "test".to_string(),
+        )
+        .unwrap();
+        let endpoint = sensor.to_node("mqtt").endpoints[&Z2M_ENDPOINT].clone();
+        assert_eq!(endpoint.device_types, [DeviceType::OccupancySensor]);
+        assert_eq!(endpoint.missing_mandatory_clusters(), []);
+    }
+
+    #[test]
+    fn a_door_sensor_is_a_contact_sensor_carrying_boolean_state() {
+        let mut discovery = motion_discovery();
+        discovery.device_class = Some("door".to_string());
+        discovery.value_template = Some("{{ value_json.contact }}".to_string());
+        let mut sensor = BinarySensor::from_discovery(
+            discovery,
+            BinarySensorKind::Contact,
+            "binary_sensor.test".to_string(),
+            "test".to_string(),
+        )
+        .unwrap();
+
+        let endpoint = sensor.to_node("mqtt").endpoints[&Z2M_ENDPOINT].clone();
+        assert_eq!(endpoint.device_types, [DeviceType::ContactSensor]);
+        assert_eq!(endpoint.missing_mandatory_clusters(), []);
+        assert!(!endpoint.clusters.contains_key("OccupancySensing"));
+
+        // Zigbee2MQTT reports `contact: true` for a closed door, which is
+        // what Boolean State means by true on a contact sensor.
+        let changed = sensor.apply_state_payload(br#"{"contact": true}"#).unwrap();
+        assert_eq!(
+            changed,
+            Some(Cluster::BooleanState(BooleanStateCluster {
+                state_value: true
+            }))
+        );
     }
 }

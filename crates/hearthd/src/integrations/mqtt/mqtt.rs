@@ -11,6 +11,8 @@ use tracing::warn;
 
 use super::MqttConfig;
 use super::binary_sensor::BinarySensor;
+use super::binary_sensor::BinarySensorDeviceClass;
+use super::binary_sensor::BinarySensorKind;
 use super::client::MqttClient;
 use super::client::MqttMessage;
 use super::discovery::DiscoveryMessage;
@@ -260,29 +262,33 @@ impl<C: MqttClient> MqttIntegration<C> {
         let discovery: DiscoveryMessage = serde_json::from_slice(&msg.payload)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
 
-        // Only motion-style sensors map to Matter's OccupancySensing cluster.
-        // Z2M reports many other binary-sensor device classes (door, vibration,
-        // battery, ...) on the same discovery topic; skip those until we model
-        // their clusters.
-        match discovery.device_class.as_deref() {
-            Some("motion") | Some("occupancy") | Some("presence") => {}
-            other => {
-                warn!(
-                    "Skipping binary sensor {} with unsupported device_class {:?}",
-                    entity_id, other
-                );
-                return Ok(());
-            }
-        }
+        // Z2M reports many binary-sensor device classes (vibration, battery,
+        // ...) on the same discovery topic; skip those with no cluster yet.
+        let kind = discovery
+            .device_class
+            .clone()
+            .map(BinarySensorDeviceClass::from)
+            .and_then(|class| BinarySensorKind::for_class(&class));
+        let Some(kind) = kind else {
+            warn!(
+                "Skipping binary sensor {} with unsupported device_class {:?}",
+                entity_id, discovery.device_class
+            );
+            return Ok(());
+        };
 
-        let sensor =
-            BinarySensor::from_discovery(discovery, entity_id.clone(), z2m_node_id.to_string())
-                .map_err(|e| -> Box<dyn Error + Send> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        e.to_string(),
-                    ))
-                })?;
+        let sensor = BinarySensor::from_discovery(
+            discovery,
+            kind,
+            entity_id.clone(),
+            z2m_node_id.to_string(),
+        )
+        .map_err(|e| -> Box<dyn Error + Send> {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            ))
+        })?;
 
         let state_topic = sensor.state_topic.clone();
         let node = sensor.to_node(INTEGRATION_NAME);
