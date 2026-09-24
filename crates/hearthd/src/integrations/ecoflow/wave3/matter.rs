@@ -58,6 +58,7 @@ use crate::matter::ClusterCommand;
 use crate::matter::ControlSequenceOfOperation;
 use crate::matter::DehumidificationControlCluster;
 use crate::matter::DehumidificationControlCommand;
+use crate::matter::DeviceType;
 use crate::matter::ElectricalPowerMeasurementCluster;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
@@ -331,6 +332,7 @@ fn temperature_endpoint(celsius: Option<f32>) -> Endpoint {
             measured_value: celsius.map(celsius_to_centi),
         },
     )])
+    .with_device_types([DeviceType::TemperatureSensor])
 }
 
 fn power_cluster(
@@ -389,12 +391,14 @@ pub fn build_endpoints(state: &DeviceState) -> HashMap<EndpointId, Endpoint> {
             Cluster::DehumidificationControl(dehumidification(state)),
             Cluster::ThermostatUserInterfaceConfiguration(user_interface(state)),
             Cluster::ModeSelect(preset_mode_select(state)),
-        ]),
+        ])
+        .with_device_types([DeviceType::RoomAirConditioner]),
     );
 
     endpoints.insert(
         EP_BATTERY,
-        Endpoint::from_clusters([Cluster::PowerSource(power_source(state))]),
+        Endpoint::from_clusters([Cluster::PowerSource(power_source(state))])
+            .with_device_types([DeviceType::PowerSource]),
     );
 
     endpoints.insert(
@@ -1674,5 +1678,34 @@ mod tests {
             result,
             Err(CommandError::UnsupportedOnEndpoint { .. })
         ));
+    }
+
+    #[test]
+    fn declared_device_types_are_conformant_before_any_telemetry() {
+        let endpoints = build_endpoints(&DeviceState::default());
+
+        assert_eq!(
+            endpoints[&EP_AIR_CONDITIONER].device_types,
+            [DeviceType::RoomAirConditioner]
+        );
+        assert_eq!(
+            endpoints[&EP_BATTERY].device_types,
+            [DeviceType::PowerSource]
+        );
+        for endpoint in [
+            EP_TEMP_OUTLET_AIR,
+            EP_TEMP_OUTDOOR,
+            EP_TEMP_CONDENSER,
+            EP_TEMP_EVAPORATOR,
+            EP_TEMP_COMPRESSOR_DISCHARGE,
+        ] {
+            assert_eq!(
+                endpoints[&endpoint].device_types,
+                [DeviceType::TemperatureSensor]
+            );
+        }
+        for (id, endpoint) in &endpoints {
+            assert_eq!(endpoint.missing_mandatory_clusters(), [], "endpoint {id}");
+        }
     }
 }
