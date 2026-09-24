@@ -33,11 +33,13 @@ use super::models::Client;
 use super::models::GetStatusResult;
 use super::models::Group;
 use super::models::Stream;
+use crate::engine::Announcement;
 use crate::engine::FromIntegrationMessage;
 use crate::engine::FromIntegrationSender;
 use crate::engine::Integration;
+use crate::engine::IntegrationRegistry;
 use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
+use crate::engine::RegisteredNode;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
@@ -108,15 +110,44 @@ struct Inner {
     /// Current client state.
     clients: HashMap<String, Client>,
     /// Last node published for each id, so a refresh can report what actually
-    /// changed instead of re-announcing everything.
+    /// changed instead of re-announcing everything. The `entity_id` recorded
+    /// here is the one the registry assigned, not the one derived from the
+    /// Snapcast name, so that a node admitted under a suffix is not diffed
+    /// against a name it never held and re-announced on every refresh.
     published: HashMap<NodeId, Node>,
+    /// Registration handle per node: the only way to announce or remove one.
+    registrations: HashMap<NodeId, RegisteredNode>,
+}
+
+/// A Snapcast object that has just appeared and has yet to be registered.
+///
+/// Registration is async and sends to the engine, so it happens once the
+/// status lock is released; this records which object the resulting node id
+/// belongs to.
+enum Subject {
+    Group(String),
+    Client(String),
+}
+
+/// What a refresh decided to tell the engine, to be sent once the lock is
+/// released.
+#[derive(Default)]
+struct Outgoing {
+    /// Re-announcements of nodes that are already registered.
+    announcements: Vec<Announcement>,
+    /// Attribute updates for nodes whose identity has not changed.
+    updates: Vec<FromIntegrationMessage>,
+    /// Objects seen for the first time, still to be registered.
+    new: Vec<(Subject, Node)>,
+    /// Handles for nodes that have gone away.
+    departed: Vec<RegisteredNode>,
 }
 
 /// Everything built during `setup` and shared with the background tasks.
 struct State {
     client: SnapcastRpcClient,
     to_engine: FromIntegrationSender,
-    node_ids: NodeIdAllocator,
+    nodes: IntegrationRegistry,
     refresh_tx: mpsc::Sender<()>,
     inner: Mutex<Inner>,
 }
@@ -131,9 +162,9 @@ pub struct SnapcastIntegration {
 impl SnapcastIntegration {
     /// Create a new integration from configuration.
     ///
-    /// Node ids are not allocated here: the engine hands the allocator to
-    /// `setup`, and that one is the only one whose ids are unique across
-    /// integrations.
+    /// No nodes are declared here: the engine hands the registry to `setup`,
+    /// and registering through it is what makes a node's id and entity id
+    /// unique across integrations.
     pub fn new(config: Config) -> Self {
         Self {
             config,
@@ -197,7 +228,7 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
     let status: GetStatusResult = state.client.request("Server.GetStatus", ()).await?;
     let status = status.server;
 
-    let messages = {
+    let outgoing = {
         let mut inner = state.inner.lock().await;
 
         inner.streams.clear();
@@ -215,7 +246,7 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
             inner.stream_by_index.insert(index, stream.id.clone());
         }
 
-        let mut messages = Vec::new();
+        let mut outgoing = Outgoing::default();
 
         let mut live_groups: HashMap<String, NodeId> = HashMap::new();
         let mut live_clients: HashMap<String, NodeId> = HashMap::new();
@@ -223,31 +254,37 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
         let mut clients = HashMap::new();
 
         for group in &status.groups {
-            let node_id = match inner.group_node_ids.get(&group.id) {
-                Some(id) => *id,
-                None => state.node_ids.allocate(),
-            };
-            live_groups.insert(group.id.clone(), node_id);
-            groups.insert(group.id.clone(), group.clone());
-
             let node = mapper::group_node(
                 group,
                 &inner.streams,
                 &inner.stream_indices,
                 &mapper::group_entity_id(group),
             );
-            publish(&mut inner, &mut messages, node_id, node);
+            groups.insert(group.id.clone(), group.clone());
+
+            match inner.group_node_ids.get(&group.id).copied() {
+                Some(node_id) => {
+                    live_groups.insert(group.id.clone(), node_id);
+                    publish(&mut inner, &mut outgoing, node_id, node);
+                }
+                // Registered outside the lock, and only then does it have a
+                // node id to be live under.
+                None => outgoing.new.push((Subject::Group(group.id.clone()), node)),
+            }
 
             for client in &group.clients {
-                let node_id = match inner.client_node_ids.get(&client.id) {
-                    Some(id) => *id,
-                    None => state.node_ids.allocate(),
-                };
-                live_clients.insert(client.id.clone(), node_id);
+                let node = mapper::client_node(client, &mapper::client_entity_id(client));
                 clients.insert(client.id.clone(), client.clone());
 
-                let node = mapper::client_node(client, &mapper::client_entity_id(client));
-                publish(&mut inner, &mut messages, node_id, node);
+                match inner.client_node_ids.get(&client.id).copied() {
+                    Some(node_id) => {
+                        live_clients.insert(client.id.clone(), node_id);
+                        publish(&mut inner, &mut outgoing, node_id, node);
+                    }
+                    None => outgoing
+                        .new
+                        .push((Subject::Client(client.id.clone()), node)),
+                }
             }
         }
 
@@ -264,8 +301,13 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
             .map(|(_, node_id)| *node_id)
             .collect();
         for node_id in departed {
-            messages.push(FromIntegrationMessage::NodeRemoved { node_id });
             inner.published.remove(&node_id);
+            // The handle is what says the node is gone, and dropping it
+            // silently would leave the node in engine state, so it is carried
+            // out of here and consumed by `remove()`.
+            if let Some(registration) = inner.registrations.remove(&node_id) {
+                outgoing.departed.push(registration);
+            }
         }
 
         inner.node_to_group = live_groups.iter().map(|(k, v)| (*v, k.clone())).collect();
@@ -276,52 +318,125 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
         inner.clients = clients;
 
         debug!(
-            "Snapcast status applied: {} groups, {} clients, {} streams, {} updates",
+            "Snapcast status applied: {} groups, {} clients, {} streams, {} updates, {} new, {} departed",
             inner.groups.len(),
             inner.clients.len(),
             inner.streams.len(),
-            messages.len(),
+            outgoing.announcements.len() + outgoing.updates.len(),
+            outgoing.new.len(),
+            outgoing.departed.len(),
         );
 
-        messages
+        outgoing
     };
 
-    // Sent with the lock released: the engine channel is bounded, so holding
-    // it here would stall command handling behind a slow consumer.
-    for message in messages {
+    // Everything below runs with the lock released: the engine channel is
+    // bounded, so holding it here would stall command handling behind a slow
+    // consumer, and registering sends on that channel too.
+    for announcement in outgoing.announcements {
+        announcement.send().await;
+    }
+    for message in outgoing.updates {
         if state.to_engine.send(message).await.is_err() {
             return Err(RefreshError::EngineGone);
         }
+    }
+    for registration in outgoing.departed {
+        registration.remove().await;
+    }
+
+    for (subject, node) in outgoing.new {
+        let registration = match state.nodes.register(node.clone()).await {
+            Ok(registration) => registration,
+            // One unusable name costs one device, not the whole server. The
+            // object stays unregistered, so the next refresh tries again.
+            Err(e) => {
+                warn!("Cannot register Snapcast node {}: {}", node.entity_id, e);
+                continue;
+            }
+        };
+        let node_id = registration.node_id();
+
+        // Record the name the registry assigned rather than the one asked
+        // for, so the next refresh diffs against what the engine was actually
+        // told.
+        let mut node = node;
+        node.entity_id = registration.entity_id().to_string();
+
+        // Registering announces the node, so between that and this lock the
+        // engine knows a node the routing tables do not. A command arriving in
+        // that window is refused rather than misrouted, and the entry is
+        // permanent once written, so the window closes on its own.
+        let mut inner = state.inner.lock().await;
+        match subject {
+            Subject::Group(id) => {
+                inner.node_to_group.insert(node_id, id.clone());
+                inner.group_node_ids.insert(id, node_id);
+            }
+            Subject::Client(id) => {
+                inner.node_to_client.insert(node_id, id.clone());
+                inner.client_node_ids.insert(id, node_id);
+            }
+        }
+        inner.published.insert(node_id, node);
+        inner.registrations.insert(node_id, registration);
     }
 
     Ok(())
 }
 
-/// Queue the messages that move a node from its published form to `node`.
+/// Queue whatever moves an already-registered node from its published form to
+/// `node`.
 ///
-/// A node the engine has not seen is announced whole; one it already has
-/// reports only the clusters whose contents differ, which is what makes the
-/// engine emit attribute-change events rather than repeated discovery.
-fn publish(
-    inner: &mut Inner,
-    messages: &mut Vec<FromIntegrationMessage>,
-    node_id: NodeId,
-    node: Node,
-) {
-    match inner.published.get(&node_id) {
-        // Identity is only carried by NodeAdded, so a device renamed in
-        // Snapcast has to be re-announced rather than described by a cluster
-        // diff that has no field for it.
-        Some(previous) if previous.entity_id != node.entity_id || previous.name != node.name => {
-            messages.push(FromIntegrationMessage::NodeAdded {
-                node_id,
-                node: node.clone(),
-            });
+/// A node whose identity changed is re-announced whole; otherwise only the
+/// clusters whose contents differ are reported, which is what makes the engine
+/// emit attribute-change events rather than repeated discovery.
+///
+/// Nodes seen for the first time are not handled here: they have no id yet,
+/// and acquiring one means registering, which cannot happen under this lock.
+fn publish(inner: &mut Inner, outgoing: &mut Outgoing, node_id: NodeId, mut node: Node) {
+    // Split so the registration and the published copy can be held at once:
+    // the rename below needs the handle mutably while the diff reads the copy.
+    let Inner {
+        published,
+        registrations,
+        ..
+    } = inner;
+
+    let Some(registration) = registrations.get_mut(&node_id) else {
+        warn!("No registration for Snapcast node {node_id}; dropping update");
+        return;
+    };
+
+    // An entity id derived from a Snapcast name changes when the operator
+    // renames the device, and the name is a reservation in a keyspace shared
+    // with every other integration — so moving it is the registry's decision,
+    // not something that can be stamped onto the node here.
+    if registration.entity_id() != node.entity_id {
+        if let Err(e) = registration.rename(&node.entity_id) {
+            warn!(
+                "Cannot rename Snapcast node {} to '{}': {}",
+                node_id, node.entity_id, e
+            );
         }
-        None => messages.push(FromIntegrationMessage::NodeAdded {
-            node_id,
-            node: node.clone(),
-        }),
+    }
+    // Whatever the rename settled on, including a refusal that left the old
+    // name in place. Recording the requested name instead would make the next
+    // refresh see an identity change that never happened, every time.
+    node.entity_id = registration.entity_id().to_string();
+
+    match published.get(&node_id) {
+        // Identity is only carried by NodeAdded, so a renamed device has to be
+        // re-announced rather than described by a cluster diff that has no
+        // field for it.
+        Some(previous) if previous.entity_id != node.entity_id || previous.name != node.name => {
+            outgoing
+                .announcements
+                .push(registration.announce(node.clone()));
+        }
+        None => outgoing
+            .announcements
+            .push(registration.announce(node.clone())),
         Some(previous) => {
             for (endpoint_id, endpoint) in &node.endpoints {
                 for (name, cluster) in &endpoint.clusters {
@@ -331,18 +446,20 @@ fn publish(
                         .and_then(|e| e.clusters.get(name))
                         .is_some_and(|p| p == cluster);
                     if !unchanged {
-                        messages.push(FromIntegrationMessage::AttributeChanged {
-                            node_id,
-                            endpoint_id: *endpoint_id,
-                            cluster: cluster.clone(),
-                        });
+                        outgoing
+                            .updates
+                            .push(FromIntegrationMessage::AttributeChanged {
+                                node_id,
+                                endpoint_id: *endpoint_id,
+                                cluster: cluster.clone(),
+                            });
                     }
                 }
             }
         }
     }
 
-    inner.published.insert(node_id, node);
+    published.insert(node_id, node);
 }
 
 #[async_trait]
@@ -354,7 +471,7 @@ impl Integration for SnapcastIntegration {
     async fn setup(
         &mut self,
         tx: FromIntegrationSender,
-        node_ids: NodeIdAllocator,
+        nodes: IntegrationRegistry,
     ) -> Result<(), Box<dyn Error + Send>> {
         let (client, mut events) = SnapcastRpcClient::new(
             self.config.host.clone(),
@@ -369,7 +486,7 @@ impl Integration for SnapcastIntegration {
         let state = Arc::new(State {
             client,
             to_engine: tx,
-            node_ids,
+            nodes,
             refresh_tx: refresh_tx.clone(),
             inner: Mutex::new(Inner::default()),
         });
@@ -479,48 +596,90 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_node_the_engine_has_not_seen_is_announced_whole() {
-        let mut inner = Inner::default();
-        let mut messages = Vec::new();
-        let id = NodeId::from_raw(1);
+    /// An `Inner` holding one registered node, plus the channel the registry
+    /// announces on. `published` is left empty, so the node is in the state a
+    /// freshly registered one is in: known to the registry, not yet diffed.
+    async fn registered(
+        entity_id: &str,
+    ) -> (Inner, NodeId, mpsc::Receiver<FromIntegrationMessage>) {
+        let (tx, mut rx) = mpsc::channel(16);
+        let registry = IntegrationRegistry::for_test(INTEGRATION_NAME, tx);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        let registration = registry
+            .register(node(entity_id, "seed", true))
+            .await
+            .expect("the first claim on a name is always free");
+        let node_id = registration.node_id();
+        // The NodeAdded that registering sends, so the tests below see only
+        // what `publish` produced.
+        let _ = rx.recv().await;
+
+        let inner = Inner {
+            registrations: HashMap::from([(node_id, registration)]),
+            ..Default::default()
+        };
+        (inner, node_id, rx)
+    }
+
+    /// Everything an `Outgoing` would put on the wire, in the order `refresh`
+    /// sends it. Announcements are opaque, so they are read back off the
+    /// channel rather than inspected in place.
+    async fn drain(
+        outgoing: Outgoing,
+        rx: &mut mpsc::Receiver<FromIntegrationMessage>,
+    ) -> Vec<FromIntegrationMessage> {
+        let mut sent = Vec::new();
+        for announcement in outgoing.announcements {
+            announcement.send().await;
+            sent.push(rx.recv().await.expect("an announcement should arrive"));
+        }
+        sent.extend(outgoing.updates);
+        sent
+    }
+
+    #[tokio::test]
+    async fn a_node_the_engine_has_not_seen_is_announced_whole() {
+        let (mut inner, id, mut rx) = registered("speaker.a").await;
+        let mut outgoing = Outgoing::default();
+
+        publish(&mut inner, &mut outgoing, id, node("speaker.a", "A", true));
 
         assert!(matches!(
-            messages.as_slice(),
+            drain(outgoing, &mut rx).await.as_slice(),
             [FromIntegrationMessage::NodeAdded { node_id, .. }] if *node_id == id
         ));
     }
 
-    #[test]
-    fn republishing_an_identical_node_says_nothing() {
+    #[tokio::test]
+    async fn republishing_an_identical_node_says_nothing() {
         // Snapserver notifies on any change and the whole status is refetched
         // each time, so most refreshes find nothing new. Re-announcing them
         // would turn every unrelated volume change into an event for every
         // node on the server.
-        let mut inner = Inner::default();
-        let mut messages = Vec::new();
-        let id = NodeId::from_raw(1);
+        let (mut inner, id, mut rx) = registered("speaker.a").await;
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
-        messages.clear();
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        let mut first = Outgoing::default();
+        publish(&mut inner, &mut first, id, node("speaker.a", "A", true));
+        drain(first, &mut rx).await;
 
-        assert!(messages.is_empty());
+        let mut second = Outgoing::default();
+        publish(&mut inner, &mut second, id, node("speaker.a", "A", true));
+
+        assert!(drain(second, &mut rx).await.is_empty());
     }
 
-    #[test]
-    fn only_the_clusters_that_differ_are_reported() {
-        let mut inner = Inner::default();
-        let mut messages = Vec::new();
-        let id = NodeId::from_raw(1);
+    #[tokio::test]
+    async fn only_the_clusters_that_differ_are_reported() {
+        let (mut inner, id, mut rx) = registered("speaker.a").await;
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
-        messages.clear();
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", false));
+        let mut first = Outgoing::default();
+        publish(&mut inner, &mut first, id, node("speaker.a", "A", true));
+        drain(first, &mut rx).await;
 
-        match messages.as_slice() {
+        let mut second = Outgoing::default();
+        publish(&mut inner, &mut second, id, node("speaker.a", "A", false));
+
+        match drain(second, &mut rx).await.as_slice() {
             [
                 FromIntegrationMessage::AttributeChanged {
                     node_id,
@@ -536,25 +695,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_renamed_node_is_reannounced() {
+    #[tokio::test]
+    async fn a_renamed_node_is_reannounced_under_the_new_name() {
         // An attribute change has no field for the name or the entity id, so
         // a device renamed in Snapcast can only be reported by announcing it
-        // again under the same node id.
-        let mut inner = Inner::default();
-        let mut messages = Vec::new();
-        let id = NodeId::from_raw(1);
+        // again under the same node id. The entity id is a reservation in a
+        // shared keyspace, so the move goes through the registry.
+        let (mut inner, id, mut rx) = registered("speaker.a").await;
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
-        messages.clear();
+        let mut first = Outgoing::default();
+        publish(&mut inner, &mut first, id, node("speaker.a", "A", true));
+        drain(first, &mut rx).await;
+
+        let mut second = Outgoing::default();
         publish(
             &mut inner,
-            &mut messages,
+            &mut second,
             id,
             node("speaker.kitchen", "Kitchen", true),
         );
 
-        match messages.as_slice() {
+        match drain(second, &mut rx).await.as_slice() {
             [FromIntegrationMessage::NodeAdded { node_id, node }] => {
                 assert_eq!(*node_id, id);
                 assert_eq!(node.entity_id, "speaker.kitchen");
@@ -562,5 +723,50 @@ mod tests {
             }
             other => panic!("expected a re-announcement, got {other:?}"),
         }
+
+        assert_eq!(
+            inner.registrations[&id].entity_id(),
+            "speaker.kitchen",
+            "the registry should hold the new name, not just the announcement"
+        );
+    }
+
+    /// A node admitted under a suffix keeps re-deriving the name it asked for,
+    /// because that is what the Snapcast name slugs to. Reporting that as a
+    /// rename every time would re-announce the node on every refresh forever.
+    #[tokio::test]
+    async fn a_node_admitted_under_a_suffix_settles_instead_of_reannouncing() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let registry = IntegrationRegistry::for_test(INTEGRATION_NAME, tx);
+
+        let _holder = registry.register(node("speaker.a", "Held", true)).await;
+        let registration = registry
+            .register(node("speaker.a", "A", true))
+            .await
+            .expect("the default policy admits it under a suffix");
+        let id = registration.node_id();
+        assert_eq!(registration.entity_id(), "speaker.a_2");
+
+        let mut inner = Inner {
+            registrations: HashMap::from([(id, registration)]),
+            ..Default::default()
+        };
+        while rx.try_recv().is_ok() {}
+
+        // Three refreshes all deriving the same requested name.
+        let mut first = Outgoing::default();
+        publish(&mut inner, &mut first, id, node("speaker.a", "A", true));
+        assert_eq!(drain(first, &mut rx).await.len(), 1, "the first is new");
+
+        for _ in 0..2 {
+            let mut again = Outgoing::default();
+            publish(&mut inner, &mut again, id, node("speaker.a", "A", true));
+            assert!(
+                drain(again, &mut rx).await.is_empty(),
+                "a settled suffix is not a rename"
+            );
+        }
+
+        assert_eq!(inner.registrations[&id].entity_id(), "speaker.a_2");
     }
 }
