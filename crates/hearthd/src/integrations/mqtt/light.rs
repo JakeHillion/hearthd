@@ -9,6 +9,7 @@ use crate::matter::ClusterCommand;
 use crate::matter::ColorControlCluster;
 use crate::matter::ColorControlCommand;
 use crate::matter::ColorMode;
+use crate::matter::DeviceType;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
 use crate::matter::LevelControlCluster;
@@ -119,9 +120,27 @@ impl Light {
         self.supported_color_modes.contains(mode)
     }
 
+    /// The light type whose mandatory clusters this light carries.
+    ///
+    /// Colour without brightness has no type in the Device Library, since
+    /// every colour light mandates Level Control, so such a light is an
+    /// On/Off Light with an extra cluster.
+    fn device_type(&self) -> DeviceType {
+        match (&self.level_control, &self.color_control) {
+            (Some(_), Some(_))
+                if self.supports_color_mode("hs") || self.supports_color_mode("xy") =>
+            {
+                DeviceType::ExtendedColorLight
+            }
+            (Some(_), Some(_)) => DeviceType::ColorTemperatureLight,
+            (Some(_), None) => DeviceType::DimmableLight,
+            (None, _) => DeviceType::OnOffLight,
+        }
+    }
+
     /// Build the Matter `Node` snapshot for this entity.
     pub fn to_node(&self, integration: &str) -> Node {
-        let mut endpoint = Endpoint::default();
+        let mut endpoint = Endpoint::default().with_device_types([self.device_type()]);
         endpoint.clusters.insert(
             crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
             Cluster::OnOff(self.on_off.clone()),
@@ -399,6 +418,44 @@ mod tests {
             device_class: None,
             value_template: None,
         }
+    }
+
+    fn device_type_of(discovery: DiscoveryMessage) -> DeviceType {
+        let light =
+            Light::from_discovery(discovery, "light.test".to_string(), "test_node".to_string())
+                .unwrap();
+        let node = light.to_node("mqtt");
+        let endpoint = &node.endpoints[&Z2M_ENDPOINT];
+        assert_eq!(endpoint.missing_mandatory_clusters(), []);
+        assert_eq!(endpoint.device_types.len(), 1);
+        endpoint.device_types[0]
+    }
+
+    #[test]
+    fn the_light_type_follows_the_discovered_features() {
+        assert_eq!(
+            device_type_of(discovery_with_brightness(false)),
+            DeviceType::OnOffLight
+        );
+        assert_eq!(
+            device_type_of(discovery_with_brightness(true)),
+            DeviceType::DimmableLight
+        );
+        assert_eq!(
+            device_type_of(discovery_with_color_modes(&["color_temp"])),
+            DeviceType::ColorTemperatureLight
+        );
+        assert_eq!(
+            device_type_of(discovery_with_color_modes(&["xy", "color_temp"])),
+            DeviceType::ExtendedColorLight
+        );
+    }
+
+    #[test]
+    fn colour_without_brightness_is_an_on_off_light() {
+        let mut discovery = discovery_with_color_modes(&["hs"]);
+        discovery.brightness = Some(false);
+        assert_eq!(device_type_of(discovery), DeviceType::OnOffLight);
     }
 
     #[test]
