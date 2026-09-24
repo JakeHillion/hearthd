@@ -19,6 +19,7 @@ use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
+use crate::matter::DeviceType;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
 use crate::matter::Node;
@@ -75,7 +76,11 @@ impl MetnoIntegration {
         let mut endpoints = HashMap::new();
         endpoints.insert(
             METNO_ENDPOINT,
-            Endpoint::from_clusters(forecast::null_clusters()),
+            Endpoint::from_clusters(forecast::null_clusters()).with_device_types([
+                DeviceType::TemperatureSensor,
+                DeviceType::HumiditySensor,
+                DeviceType::PressureSensor,
+            ]),
         );
 
         Node {
@@ -279,6 +284,15 @@ mod tests {
         assert_eq!(endpoint.clusters.len(), 9);
         assert!(endpoint.clusters.contains_key("WeatherCondition"));
         assert!(endpoint.clusters.contains_key("WindMeasurement"));
+        assert_eq!(
+            endpoint.device_types,
+            [
+                DeviceType::TemperatureSensor,
+                DeviceType::HumiditySensor,
+                DeviceType::PressureSensor,
+            ]
+        );
+        assert_eq!(endpoint.missing_mandatory_clusters(), []);
     }
 
     /// reqwest is built with `rustls-no-provider`, so a client built without an
