@@ -70,7 +70,7 @@ impl MetnoIntegration {
         Self { sites, _task: None }
     }
 
-    fn build_node(name: &str, entity_id: &str) -> Node {
+    fn build_node(name: &str) -> Node {
         let mut endpoints = HashMap::new();
         endpoints.insert(
             METNO_ENDPOINT,
@@ -83,8 +83,7 @@ impl MetnoIntegration {
 
         Node {
             key: LocalKey::from(name),
-            entity_id: entity_id.to_string(),
-            name: Some(format!("{name} weather")),
+            name: Some(name.to_string()),
             endpoints,
         }
     }
@@ -201,13 +200,12 @@ impl Integration for MetnoIntegration {
 
         let mut sites = Vec::with_capacity(self.sites.len());
         for site in self.sites.drain(..) {
-            let entity_id = format!("weather.{}", site.name);
-            let node = Self::build_node(&site.name, &entity_id);
+            let node = Self::build_node(&site.name);
             let key = node.key.clone();
             // Seed the diff baseline with the same clusters we announce.
             let last = node.endpoints[&METNO_ENDPOINT].clusters.clone();
 
-            info!("metno: discovered weather node {} ({})", entity_id, key);
+            info!("metno: discovered weather node {}", key);
             Self::send_node_added(node, &tx).await;
 
             sites.push(SiteState {
@@ -254,8 +252,7 @@ mod tests {
 
     #[test]
     fn build_node_advertises_all_weather_clusters() {
-        let node = MetnoIntegration::build_node("home", "weather.home");
-        assert_eq!(node.entity_id, "weather.home");
+        let node = MetnoIntegration::build_node("home");
         assert_eq!(node.key, LocalKey::from("home"));
         let endpoint = node.endpoints.get(&METNO_ENDPOINT).unwrap();
         assert_eq!(endpoint.clusters.len(), 9);

@@ -168,7 +168,6 @@ impl<C: MqttClient> MqttIntegration<C> {
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let key = Light::key_for(z2m_node_id);
-        let entity_id = format!("light.{}", z2m_node_id);
 
         // Empty payload = retained discovery deletion
         if msg.payload.is_empty() {
@@ -188,7 +187,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         let discovery: DiscoveryMessage = serde_json::from_slice(&msg.payload)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
 
-        let light = Light::from_discovery(discovery, entity_id, z2m_node_id.to_string()).map_err(
+        let light = Light::from_discovery(discovery, z2m_node_id.to_string()).map_err(
             |e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -230,7 +229,6 @@ impl<C: MqttClient> MqttIntegration<C> {
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let key = BinarySensor::key_for(z2m_node_id);
-        let entity_id = format!("binary_sensor.{}", z2m_node_id);
 
         if msg.payload.is_empty() {
             Self::remove_entity(&key, inner, to_engine).await;
@@ -263,14 +261,13 @@ impl<C: MqttClient> MqttIntegration<C> {
             return Ok(());
         };
 
-        let sensor =
-            BinarySensor::from_discovery(discovery, kind, entity_id, z2m_node_id.to_string())
-                .map_err(|e| -> Box<dyn Error + Send> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        e.to_string(),
-                    ))
-                })?;
+        let sensor = BinarySensor::from_discovery(discovery, kind, z2m_node_id.to_string())
+            .map_err(|e| -> Box<dyn Error + Send> {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                ))
+            })?;
 
         let state_topic = sensor.state_topic.clone();
         let node = sensor.to_node();
@@ -304,7 +301,6 @@ impl<C: MqttClient> MqttIntegration<C> {
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let key = Sensor::key_for(z2m_node_id);
-        let entity_id = format!("sensor.{}", z2m_node_id);
 
         if msg.payload.is_empty() {
             Self::remove_entity(&key, inner, to_engine).await;
@@ -356,14 +352,13 @@ impl<C: MqttClient> MqttIntegration<C> {
             return Ok(());
         }
 
-        let sensor =
-            Sensor::from_discovery(discovery, measurement, entity_id, z2m_node_id.to_string())
-                .map_err(|e| -> Box<dyn Error + Send> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        e.to_string(),
-                    ))
-                })?;
+        let sensor = Sensor::from_discovery(discovery, measurement, z2m_node_id.to_string())
+            .map_err(|e| -> Box<dyn Error + Send> {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                ))
+            })?;
 
         let state_topic = sensor.state_topic.clone();
         let node = sensor.to_node();

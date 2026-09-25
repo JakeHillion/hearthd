@@ -36,7 +36,6 @@ pub struct Light {
     /// `light/<zigbee2mqtt node id>`: the component keeps a device that is
     /// also, say, a sensor from claiming the same key twice.
     pub key: LocalKey,
-    pub entity_id: String,
     pub name: String,
     #[allow(dead_code)]
     pub unique_id: String,
@@ -64,7 +63,6 @@ impl Light {
     /// Create a Light entity from a Zigbee2MQTT discovery message
     pub fn from_discovery(
         discovery: DiscoveryMessage,
-        entity_id: String,
         node_id: String,
     ) -> Result<Self, Box<dyn Error>> {
         let unique_id = discovery
@@ -107,7 +105,6 @@ impl Light {
 
         Ok(Self {
             key: Self::key_for(&node_id),
-            entity_id,
             name,
             unique_id,
             device_info: discovery.device,
@@ -173,7 +170,6 @@ impl Light {
 
         Node {
             key: self.key.clone(),
-            entity_id: self.entity_id.clone(),
             name: Some(self.name.clone()),
             endpoints,
         }
@@ -286,23 +282,21 @@ impl Light {
             }
             ClusterCommand::LevelControl(LevelControlCommand::MoveToLevel { level, .. }) => {
                 if !self.supports_brightness() {
-                    return Err(
-                        format!("Light {} does not expose LevelControl", self.entity_id).into(),
-                    );
+                    return Err(format!("Light {} does not expose LevelControl", self.key).into());
                 }
                 serde_json::json!({ "state": "ON", "brightness": level })
             }
             ClusterCommand::ColorControl(ColorControlCommand::MoveToHue { .. }) => {
                 return Err(format!(
                     "Light {} only supports hue+saturation commands; use MoveToHueAndSaturation",
-                    self.entity_id
+                    self.key
                 )
                 .into());
             }
             ClusterCommand::ColorControl(ColorControlCommand::MoveToSaturation { .. }) => {
                 return Err(format!(
                     "Light {} only supports hue+saturation commands; use MoveToHueAndSaturation",
-                    self.entity_id
+                    self.key
                 )
                 .into());
             }
@@ -312,11 +306,9 @@ impl Light {
                 ..
             }) => {
                 if !self.supports_color_mode("hs") {
-                    return Err(format!(
-                        "Light {} does not support hs colour mode",
-                        self.entity_id
-                    )
-                    .into());
+                    return Err(
+                        format!("Light {} does not support hs colour mode", self.key).into(),
+                    );
                 }
                 serde_json::json!({
                     "state": "ON",
@@ -325,11 +317,9 @@ impl Light {
             }
             ClusterCommand::ColorControl(ColorControlCommand::MoveToColor { x, y, .. }) => {
                 if !self.supports_color_mode("xy") {
-                    return Err(format!(
-                        "Light {} does not support xy colour mode",
-                        self.entity_id
-                    )
-                    .into());
+                    return Err(
+                        format!("Light {} does not support xy colour mode", self.key).into(),
+                    );
                 }
                 serde_json::json!({
                     "state": "ON",
@@ -343,7 +333,7 @@ impl Light {
                 if !self.supports_color_mode("color_temp") {
                     return Err(format!(
                         "Light {} does not support color_temp colour mode",
-                        self.entity_id
+                        self.key
                     )
                     .into());
                 }
@@ -355,7 +345,7 @@ impl Light {
             other => {
                 return Err(format!(
                     "Light {} does not expose cluster 0x{:04X}",
-                    self.entity_id,
+                    self.key,
                     other.cluster_id()
                 )
                 .into());
@@ -431,9 +421,7 @@ mod tests {
     }
 
     fn device_type_of(discovery: DiscoveryMessage) -> DeviceType {
-        let light =
-            Light::from_discovery(discovery, "light.test".to_string(), "test_node".to_string())
-                .unwrap();
+        let light = Light::from_discovery(discovery, "test_node".to_string()).unwrap();
         let node = light.to_node();
         let endpoint = &node.endpoints[&Z2M_ENDPOINT];
         assert_eq!(endpoint.missing_mandatory_clusters(), []);
@@ -470,12 +458,8 @@ mod tests {
 
     #[test]
     fn light_with_brightness_has_level_control() {
-        let light = Light::from_discovery(
-            discovery_with_brightness(true),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let light = Light::from_discovery(discovery_with_brightness(true), "test_node".to_string())
+            .unwrap();
         assert!(light.supports_brightness());
         assert_eq!(light.on_off, OnOffCluster::default());
         assert_eq!(light.level_control, Some(LevelControlCluster::default()));
@@ -483,24 +467,18 @@ mod tests {
 
     #[test]
     fn light_without_brightness_omits_level_control() {
-        let light = Light::from_discovery(
-            discovery_with_brightness(false),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let light =
+            Light::from_discovery(discovery_with_brightness(false), "test_node".to_string())
+                .unwrap();
         assert!(!light.supports_brightness());
         assert!(light.level_control.is_none());
     }
 
     #[test]
     fn apply_state_payload_updates_both_clusters() {
-        let mut light = Light::from_discovery(
-            discovery_with_brightness(true),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let mut light =
+            Light::from_discovery(discovery_with_brightness(true), "test_node".to_string())
+                .unwrap();
 
         let changed = light
             .apply_state_payload(br#"{"state": "ON", "brightness": 128}"#)
@@ -515,12 +493,8 @@ mod tests {
 
     #[test]
     fn command_payload_for_move_to_level() {
-        let light = Light::from_discovery(
-            discovery_with_brightness(true),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let light = Light::from_discovery(discovery_with_brightness(true), "test_node".to_string())
+            .unwrap();
         let payload = light
             .command_payload(&ClusterCommand::LevelControl(
                 LevelControlCommand::MoveToLevel {
@@ -536,12 +510,9 @@ mod tests {
 
     #[test]
     fn command_payload_for_toggle_uses_cached_state() {
-        let mut light = Light::from_discovery(
-            discovery_with_brightness(true),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let mut light =
+            Light::from_discovery(discovery_with_brightness(true), "test_node".to_string())
+                .unwrap();
         light.on_off.on_off = true;
         let payload = light
             .command_payload(&ClusterCommand::OnOff(OnOffCommand::Toggle))
@@ -554,7 +525,6 @@ mod tests {
     fn light_with_color_modes_has_color_control() {
         let light = Light::from_discovery(
             discovery_with_color_modes(&["hs", "color_temp"]),
-            "light.test".to_string(),
             "test_node".to_string(),
         )
         .unwrap();
@@ -563,12 +533,8 @@ mod tests {
 
     #[test]
     fn light_without_color_modes_omits_color_control() {
-        let light = Light::from_discovery(
-            discovery_with_brightness(true),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let light = Light::from_discovery(discovery_with_brightness(true), "test_node".to_string())
+            .unwrap();
         assert!(light.color_control.is_none());
     }
 
@@ -576,7 +542,6 @@ mod tests {
     fn apply_state_payload_updates_color_control_hs_and_temp() {
         let mut light = Light::from_discovery(
             discovery_with_color_modes(&["hs", "color_temp"]),
-            "light.test".to_string(),
             "test_node".to_string(),
         )
         .unwrap();
@@ -601,12 +566,9 @@ mod tests {
 
     #[test]
     fn apply_state_payload_updates_color_control_xy() {
-        let mut light = Light::from_discovery(
-            discovery_with_color_modes(&["xy"]),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let mut light =
+            Light::from_discovery(discovery_with_color_modes(&["xy"]), "test_node".to_string())
+                .unwrap();
 
         let changed = light
             .apply_state_payload(br#"{"color": {"x": 30000, "y": 15000}, "color_mode": "xy"}"#)
@@ -623,12 +585,9 @@ mod tests {
 
     #[test]
     fn command_payload_for_move_to_hue_and_saturation() {
-        let light = Light::from_discovery(
-            discovery_with_color_modes(&["hs"]),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let light =
+            Light::from_discovery(discovery_with_color_modes(&["hs"]), "test_node".to_string())
+                .unwrap();
         let payload = light
             .command_payload(&ClusterCommand::ColorControl(
                 ColorControlCommand::MoveToHueAndSaturation {
@@ -646,12 +605,9 @@ mod tests {
 
     #[test]
     fn command_payload_for_move_to_color_xy() {
-        let light = Light::from_discovery(
-            discovery_with_color_modes(&["xy"]),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let light =
+            Light::from_discovery(discovery_with_color_modes(&["xy"]), "test_node".to_string())
+                .unwrap();
         let payload = light
             .command_payload(&ClusterCommand::ColorControl(
                 ColorControlCommand::MoveToColor {
@@ -671,7 +627,6 @@ mod tests {
     fn command_payload_for_move_to_color_temperature() {
         let light = Light::from_discovery(
             discovery_with_color_modes(&["color_temp"]),
-            "light.test".to_string(),
             "test_node".to_string(),
         )
         .unwrap();
@@ -690,12 +645,9 @@ mod tests {
 
     #[test]
     fn unsupported_color_command_returns_error() {
-        let light = Light::from_discovery(
-            discovery_with_color_modes(&["hs"]),
-            "light.test".to_string(),
-            "test_node".to_string(),
-        )
-        .unwrap();
+        let light =
+            Light::from_discovery(discovery_with_color_modes(&["hs"]), "test_node".to_string())
+                .unwrap();
         let result = light.command_payload(&ClusterCommand::ColorControl(
             ColorControlCommand::MoveToColor {
                 x: 30000,

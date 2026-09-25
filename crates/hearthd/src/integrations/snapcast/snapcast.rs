@@ -230,19 +230,14 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
         for group in &status.groups {
             groups.insert(group.id.clone(), group.clone());
 
-            let node = mapper::group_node(
-                group,
-                &inner.streams,
-                &inner.stream_indices,
-                &mapper::group_entity_id(group),
-            );
+            let node = mapper::group_node(group, &inner.streams, &inner.stream_indices);
             live.insert(node.key.clone());
             publish(&mut inner, &mut messages, node);
 
             for client in &group.clients {
                 clients.insert(client.id.clone(), client.clone());
 
-                let node = mapper::client_node(client, &mapper::client_entity_id(client));
+                let node = mapper::client_node(client);
                 live.insert(node.key.clone());
                 publish(&mut inner, &mut messages, node);
             }
@@ -300,10 +295,10 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
 /// engine emit attribute-change events rather than repeated discovery.
 fn publish(inner: &mut Inner, messages: &mut Vec<Outgoing>, node: Node) {
     match inner.published.get(&node.key) {
-        // Identity is only carried by NodeAdded, so a device renamed in
+        // The name is only carried by NodeAdded, so a device renamed in
         // Snapcast has to be re-announced rather than described by a cluster
         // diff that has no field for it.
-        Some(previous) if previous.entity_id != node.entity_id || previous.name != node.name => {
+        Some(previous) if previous.name != node.name => {
             messages.push(Outgoing::Added(node.clone()));
         }
         None => messages.push(Outgoing::Added(node.clone())),
@@ -442,7 +437,7 @@ mod tests {
     use crate::matter::Endpoint;
     use crate::matter::OnOffCluster;
 
-    fn node(entity_id: &str, name: &str, on_off: bool) -> Node {
+    fn node(name: &str, on_off: bool) -> Node {
         let mut endpoint = Endpoint::default();
         endpoint.clusters.insert(
             crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
@@ -452,7 +447,6 @@ mod tests {
         endpoints.insert(mapper::SNAPCAST_ENDPOINT, endpoint);
         Node {
             key: LocalKey::from("client/a"),
-            entity_id: entity_id.to_string(),
             name: Some(name.to_string()),
             endpoints,
         }
@@ -463,7 +457,7 @@ mod tests {
         let mut inner = Inner::default();
         let mut messages = Vec::new();
 
-        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("A", true));
 
         assert!(matches!(
             messages.as_slice(),
@@ -480,9 +474,9 @@ mod tests {
         let mut inner = Inner::default();
         let mut messages = Vec::new();
 
-        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("A", true));
         messages.clear();
-        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("A", true));
 
         assert!(messages.is_empty());
     }
@@ -492,9 +486,9 @@ mod tests {
         let mut inner = Inner::default();
         let mut messages = Vec::new();
 
-        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("A", true));
         messages.clear();
-        publish(&mut inner, &mut messages, node("speaker.a", "A", false));
+        publish(&mut inner, &mut messages, node("A", false));
 
         match messages.as_slice() {
             [
@@ -514,24 +508,19 @@ mod tests {
 
     #[test]
     fn a_renamed_node_is_reannounced() {
-        // An attribute change has no field for the name or the entity id, so
+        // An attribute change has no field for the name, so
         // a device renamed in Snapcast can only be reported by announcing it
         // again under the same key.
         let mut inner = Inner::default();
         let mut messages = Vec::new();
 
-        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("A", true));
         messages.clear();
-        publish(
-            &mut inner,
-            &mut messages,
-            node("speaker.kitchen", "Kitchen", true),
-        );
+        publish(&mut inner, &mut messages, node("Kitchen", true));
 
         match messages.as_slice() {
             [Outgoing::Added(node)] => {
                 assert_eq!(node.key, LocalKey::from("client/a"));
-                assert_eq!(node.entity_id, "speaker.kitchen");
                 assert_eq!(node.name.as_deref(), Some("Kitchen"));
             }
             other => panic!("expected a re-announcement, got {other:?}"),
