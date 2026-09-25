@@ -389,18 +389,37 @@ fn test_check_field_access() {
 
 #[test]
 fn test_check_enum_path() {
-    let result = check_and_pretty("observer {} { Event::OnOffChanged }");
+    let result = check_and_pretty("observer {} { Event::Report }");
     insta::assert_snapshot!(result, @"
     Automation: observer
       Pattern:
         PatternStruct:
       Body:
         ExprStmt:
-          Path: [type: Event::OnOffChanged]
+          Path: [type: Event::Report]
             Segment: Event
-            Segment: OnOffChanged
+            Segment: Report
     Errors:
-      type error at 14..33: observer body must return [Event], found Event::OnOffChanged
+      type error at 14..27: observer body must return [Event], found Event::Report
+    ");
+}
+
+/// Every variant of the Rust enum is known, not only the ones a hand-written
+/// list happened to mention.
+#[test]
+fn test_check_enum_variants_come_from_the_shape() {
+    let result = check_and_pretty("observer {} { Event::NodeRemoved }");
+    insta::assert_snapshot!(result, @"
+    Automation: observer
+      Pattern:
+        PatternStruct:
+      Body:
+        ExprStmt:
+          Path: [type: Event::NodeRemoved]
+            Segment: Event
+            Segment: NodeRemoved
+    Errors:
+      type error at 14..32: observer body must return [Event], found Event::NodeRemoved
     ");
 }
 
@@ -559,7 +578,7 @@ fn test_check_if_without_else() {
 #[test]
 fn test_check_list_comp() {
     let result = check_and_pretty(
-        "observer { state = { nodes, ... }, ... } /true/ { [Event::OnOffChanged(l) for l in keys(nodes)] }",
+        "observer { state = { nodes, ... }, ... } /true/ { [Event::Report(l) for l in keys(nodes)] }",
     );
     insta::assert_snapshot!(result, @"
     Automation: observer
@@ -587,7 +606,7 @@ fn test_check_list_comp() {
                       Ident: nodes [type: Map<NodeId, Node>]
                 Body:
                   Push: __result0
-                    VariantCtor: Event::OnOffChanged [type: Event]
+                    VariantCtor: Event::Report [type: Event]
                       Args:
                         Ident: l [type: NodeId]
             Result:
@@ -712,7 +731,7 @@ fn test_check_lights_off_automation() {
   },
   ...
 } /true/ {
-  [ Event::OnOffChanged(l) for l in keys(nodes) ]
+  [ Event::Report(l) for l in keys(nodes) ]
 }"#;
     let result = check_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -742,7 +761,7 @@ fn test_check_lights_off_automation() {
                       Ident: nodes [type: Map<NodeId, Node>]
                 Body:
                   Push: __result0
-                    VariantCtor: Event::OnOffChanged [type: Event]
+                    VariantCtor: Event::Report [type: Event]
                       Args:
                         Ident: l [type: NodeId]
             Result:

@@ -137,7 +137,7 @@ pub enum TypedExprKind {
         args: Vec<TypedArg>,
     },
 
-    /// Enum variant construction, e.g. `Event::OnOffChanged(…)`. Shares call
+    /// Enum variant construction, e.g. `Event::Report(…)`. Shares call
     /// syntax with [`TypedExprKind::Call`] but is a different operation, so
     /// lowering does not have to tell them apart by inspecting the callee.
     VariantCtor {

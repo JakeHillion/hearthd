@@ -184,7 +184,7 @@ fn test_lower_list_comprehension() {
   state = { nodes, ... },
   ...
 } /true/ {
-  [ Event::OnOffChanged(l) for l in keys(nodes) ]
+  [ Event::Report(l) for l in keys(nodes) ]
 }"#;
     let result = lower_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -208,7 +208,7 @@ fn test_lower_list_comprehension() {
         bb1:
           iter_next %4 -> %5, bb2, bb3
         bb2:
-          %6 = variant Event::OnOffChanged(%5) [Event]
+          %6 = variant Event::Report(%5) [Event]
           %7 = list_push %2, %6 [()]
           jump -> bb1
         bb3:
@@ -726,7 +726,7 @@ fn test_lower_list_comprehension_with_filter() {
   state = { nodes, ... },
   ...
 } /true/ {
-  [ Event::OnOffChanged(l) for l in keys(nodes) if true ]
+  [ Event::Report(l) for l in keys(nodes) if true ]
 }"#;
     let result = lower_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -755,7 +755,7 @@ fn test_lower_list_comprehension_with_filter() {
         bb3:
           return %2
         bb4:
-          %8 = variant Event::OnOffChanged(%5) [Event]
+          %8 = variant Event::Report(%5) [Event]
           %9 = list_push %2, %8 [()]
           %10 = unit [()]
           %6 = copy %10 [()]
@@ -825,7 +825,7 @@ fn test_lower_lights_off_observer() {
   },
   ...
 } /true/ {
-  [ Event::OnOffChanged(l) for l in keys(nodes) ]
+  [ Event::Report(l) for l in keys(nodes) ]
 }"#;
     let result = lower_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -851,7 +851,7 @@ fn test_lower_lights_off_observer() {
         bb1:
           iter_next %5 -> %6, bb2, bb3
         bb2:
-          %7 = variant Event::OnOffChanged(%6) [Event]
+          %7 = variant Event::Report(%6) [Event]
           %8 = list_push %3, %7 [()]
           jump -> bb1
         bb3:
@@ -915,7 +915,7 @@ fn test_lower_observer_if_else_with_events() {
   ...
 } /true/ {
   if true {
-    [ Event::OnOffChanged(l) for l in keys(nodes) ]
+    [ Event::Report(l) for l in keys(nodes) ]
   } else {
     []
   }
@@ -953,7 +953,7 @@ fn test_lower_observer_if_else_with_events() {
         bb4:
           iter_next %7 -> %8, bb5, bb6
         bb5:
-          %9 = variant Event::OnOffChanged(%8) [Event]
+          %9 = variant Event::Report(%8) [Event]
           %10 = list_push %5, %9 [()]
           jump -> bb4
         bb6:

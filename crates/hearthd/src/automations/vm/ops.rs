@@ -17,7 +17,7 @@ pub(super) fn field_access(base: &Value, field: &str) -> Result<Value, VmError> 
             .ok_or_else(|| VmError::InvariantViolation(format!("unknown field `{}`", field))),
         Value::Variant { args, .. } if args.len() == 1 => {
             // Single-arg variants behave like tuple structs: field access
-            // delegates to the inner value (e.g. `event.attributes`).
+            // delegates to the inner value (e.g. `event.cluster`).
             field_access(&args[0], field)
         }
         other => Err(VmError::InvariantViolation(format!(
@@ -55,7 +55,7 @@ fn checked_int(result: Option<i64>, op: &str, a: i64, b: i64) -> Result<Value, V
 /// The checker rejects equality on every named type, but not yet on every
 /// path to one: `Event` field access is deferred and types as `Ty::Error`,
 /// which short-circuits the equality check. So
-/// `event.attributes == event.attributes` reaches here today. The
+/// `event.cluster == event.cluster` reaches here today. The
 /// `InvariantViolation` is the right answer — the defect is that checker
 /// gap, not the automation — but this is not yet the unreachable assertion
 /// it becomes once `Event` field access is typed.
