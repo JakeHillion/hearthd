@@ -6,10 +6,10 @@
 //!
 //! Snapserver pushes a notification whenever anything changes but the
 //! notifications carry partial state, so every one of them is answered with a
-//! fresh `Server.GetStatus` and the result diffed against what was last
-//! published. Refreshes are coalesced through a one-slot channel: a volume
-//! slider drag produces a burst of notifications, and there is no value in
-//! more than one refresh behind the last of them.
+//! fresh `Server.GetStatus` and the result handed to the engine's publisher,
+//! which works out what actually changed. Refreshes are coalesced through a
+//! one-slot channel: a volume slider drag produces a burst of notifications,
+//! and there is no value in more than one refresh behind the last of them.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -36,9 +36,10 @@ use super::models::Group;
 use super::models::Stream;
 use crate::engine::Integration;
 use crate::engine::IntegrationSender;
+use crate::engine::Publisher;
+use crate::engine::StreamClosed;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::AttributeWrite;
-use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
 use crate::matter::LocalKey;
@@ -55,7 +56,7 @@ enum RefreshError {
 
     /// The engine is gone, so there is nobody left to publish to.
     #[error("engine channel closed")]
-    EngineGone,
+    EngineGone(#[from] StreamClosed),
 }
 
 /// Why a command from the engine could not be carried out.
@@ -106,28 +107,12 @@ struct Inner {
     groups: HashMap<String, Group>,
     /// Current client state.
     clients: HashMap<String, Client>,
-    /// Last node published for each key, so a refresh can report what actually
-    /// changed instead of re-announcing everything.
-    published: HashMap<LocalKey, Node>,
-}
-
-/// What a refresh found to tell the engine, collected under the lock and
-/// sent once it is released.
-#[derive(Debug)]
-enum Outgoing {
-    Added(Node),
-    Report {
-        key: LocalKey,
-        endpoint_id: EndpointId,
-        cluster: Cluster,
-    },
-    Removed(LocalKey),
 }
 
 /// Everything built during `setup` and shared with the background tasks.
 struct State {
     client: SnapcastRpcClient,
-    to_engine: IntegrationSender,
+    publisher: Publisher,
     refresh_tx: mpsc::Sender<()>,
     inner: Mutex<Inner>,
 }
@@ -203,7 +188,7 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
     let status: GetStatusResult = state.client.request("Server.GetStatus", ()).await?;
     let status = status.server;
 
-    let messages = {
+    let nodes: Vec<Node> = {
         let mut inner = state.inner.lock().await;
 
         inner.streams.clear();
@@ -221,108 +206,50 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
             inner.stream_by_index.insert(index, stream.id.clone());
         }
 
-        let mut messages = Vec::new();
-
-        let mut live: HashSet<LocalKey> = HashSet::new();
+        let mut nodes = Vec::new();
         let mut groups = HashMap::new();
         let mut clients = HashMap::new();
 
         for group in &status.groups {
             groups.insert(group.id.clone(), group.clone());
-
-            let node = mapper::group_node(group, &inner.streams, &inner.stream_indices);
-            live.insert(node.key.clone());
-            publish(&mut inner, &mut messages, node);
+            nodes.push(mapper::group_node(
+                group,
+                &inner.streams,
+                &inner.stream_indices,
+            ));
 
             for client in &group.clients {
                 clients.insert(client.id.clone(), client.clone());
-
-                let node = mapper::client_node(client);
-                live.insert(node.key.clone());
-                publish(&mut inner, &mut messages, node);
+                nodes.push(mapper::client_node(client));
             }
-        }
-
-        let departed: Vec<LocalKey> = inner
-            .published
-            .keys()
-            .filter(|key| !live.contains(*key))
-            .cloned()
-            .collect();
-        for key in departed {
-            inner.published.remove(&key);
-            messages.push(Outgoing::Removed(key));
         }
 
         inner.groups = groups;
         inner.clients = clients;
 
         debug!(
-            "Snapcast status applied: {} groups, {} clients, {} streams, {} updates",
+            "Snapcast status applied: {} groups, {} clients, {} streams",
             inner.groups.len(),
             inner.clients.len(),
             inner.streams.len(),
-            messages.len(),
         );
 
-        messages
+        nodes
     };
 
-    // Sent with the lock released: the engine channel is bounded, so holding
-    // it here would stall command handling behind a slow consumer.
-    for message in messages {
-        let sent = match message {
-            Outgoing::Added(node) => state.to_engine.node_added(node).await,
-            Outgoing::Report {
-                key,
-                endpoint_id,
-                cluster,
-            } => state.to_engine.report(&key, endpoint_id, cluster).await,
-            Outgoing::Removed(key) => state.to_engine.node_removed(&key).await,
-        };
-        if sent.is_err() {
-            return Err(RefreshError::EngineGone);
+    // Published with the lock released: the engine channel is bounded, so
+    // holding it here would stall command handling behind a slow consumer.
+    let live: HashSet<LocalKey> = nodes.iter().map(|node| node.key.clone()).collect();
+    for node in nodes {
+        state.publisher.publish(node).await?;
+    }
+    for key in state.publisher.published_keys().await {
+        if !live.contains(&key) {
+            state.publisher.remove(&key).await?;
         }
     }
 
     Ok(())
-}
-
-/// Queue the messages that move a node from its published form to `node`.
-///
-/// A node the engine has not seen is announced whole; one it already has
-/// reports only the clusters whose contents differ, which is what makes the
-/// engine emit attribute-change events rather than repeated discovery.
-fn publish(inner: &mut Inner, messages: &mut Vec<Outgoing>, node: Node) {
-    match inner.published.get(&node.key) {
-        // The name is only carried by NodeAdded, so a device renamed in
-        // Snapcast has to be re-announced rather than described by a cluster
-        // diff that has no field for it.
-        Some(previous) if previous.name != node.name => {
-            messages.push(Outgoing::Added(node.clone()));
-        }
-        None => messages.push(Outgoing::Added(node.clone())),
-        Some(previous) => {
-            for (endpoint_id, endpoint) in &node.endpoints {
-                for (name, cluster) in &endpoint.clusters {
-                    let unchanged = previous
-                        .endpoints
-                        .get(endpoint_id)
-                        .and_then(|e| e.clusters.get(name))
-                        .is_some_and(|p| p == cluster);
-                    if !unchanged {
-                        messages.push(Outgoing::Report {
-                            key: node.key.clone(),
-                            endpoint_id: *endpoint_id,
-                            cluster: cluster.clone(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    inner.published.insert(node.key.clone(), node);
 }
 
 #[async_trait]
@@ -344,7 +271,7 @@ impl Integration for SnapcastIntegration {
 
         let state = Arc::new(State {
             client,
-            to_engine: tx,
+            publisher: Publisher::new(tx),
             refresh_tx: refresh_tx.clone(),
             inner: Mutex::new(Inner::default()),
         });
@@ -392,7 +319,7 @@ impl Integration for SnapcastIntegration {
                     // The exception: there is no publishing to be done once
                     // the engine is gone, so retrying that would spin for as
                     // long as the process lived.
-                    if matches!(e, RefreshError::EngineGone) {
+                    if matches!(e, RefreshError::EngineGone(_)) {
                         debug!("Snapcast refresh stopping: {e}");
                         break 'refresh;
                     }
@@ -428,102 +355,5 @@ impl Integration for SnapcastIntegration {
         }
         self.state = None;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::matter::Endpoint;
-    use crate::matter::OnOffCluster;
-
-    fn node(name: &str, on_off: bool) -> Node {
-        let mut endpoint = Endpoint::default();
-        endpoint.clusters.insert(
-            crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
-            Cluster::OnOff(OnOffCluster { on_off }),
-        );
-        let mut endpoints = HashMap::new();
-        endpoints.insert(mapper::SNAPCAST_ENDPOINT, endpoint);
-        Node {
-            key: LocalKey::from("client/a"),
-            name: Some(name.to_string()),
-            endpoints,
-        }
-    }
-
-    #[test]
-    fn a_node_the_engine_has_not_seen_is_announced_whole() {
-        let mut inner = Inner::default();
-        let mut messages = Vec::new();
-
-        publish(&mut inner, &mut messages, node("A", true));
-
-        assert!(matches!(
-            messages.as_slice(),
-            [Outgoing::Added(node)] if node.key == LocalKey::from("client/a")
-        ));
-    }
-
-    #[test]
-    fn republishing_an_identical_node_says_nothing() {
-        // Snapserver notifies on any change and the whole status is refetched
-        // each time, so most refreshes find nothing new. Re-announcing them
-        // would turn every unrelated volume change into an event for every
-        // node on the server.
-        let mut inner = Inner::default();
-        let mut messages = Vec::new();
-
-        publish(&mut inner, &mut messages, node("A", true));
-        messages.clear();
-        publish(&mut inner, &mut messages, node("A", true));
-
-        assert!(messages.is_empty());
-    }
-
-    #[test]
-    fn only_the_clusters_that_differ_are_reported() {
-        let mut inner = Inner::default();
-        let mut messages = Vec::new();
-
-        publish(&mut inner, &mut messages, node("A", true));
-        messages.clear();
-        publish(&mut inner, &mut messages, node("A", false));
-
-        match messages.as_slice() {
-            [
-                Outgoing::Report {
-                    key,
-                    endpoint_id,
-                    cluster: Cluster::OnOff(c),
-                },
-            ] => {
-                assert_eq!(*key, LocalKey::from("client/a"));
-                assert_eq!(*endpoint_id, mapper::SNAPCAST_ENDPOINT);
-                assert!(!c.on_off);
-            }
-            other => panic!("expected one OnOff attribute change, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_renamed_node_is_reannounced() {
-        // An attribute change has no field for the name, so
-        // a device renamed in Snapcast can only be reported by announcing it
-        // again under the same key.
-        let mut inner = Inner::default();
-        let mut messages = Vec::new();
-
-        publish(&mut inner, &mut messages, node("A", true));
-        messages.clear();
-        publish(&mut inner, &mut messages, node("Kitchen", true));
-
-        match messages.as_slice() {
-            [Outgoing::Added(node)] => {
-                assert_eq!(node.key, LocalKey::from("client/a"));
-                assert_eq!(node.name.as_deref(), Some("Kitchen"));
-            }
-            other => panic!("expected a re-announcement, got {other:?}"),
-        }
     }
 }
