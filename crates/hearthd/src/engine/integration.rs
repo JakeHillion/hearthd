@@ -7,8 +7,13 @@ use tokio::sync::mpsc;
 
 use super::event::Event;
 use super::message::ToIntegrationMessage;
+use super::node_id::NodeId;
 use super::node_id::NodeIdAllocator;
 use crate::config::Config;
+use crate::matter::Cluster;
+use crate::matter::EndpointId;
+use crate::matter::LocalKey;
+use crate::matter::Node;
 
 /// Who put an event on the stream.
 ///
@@ -94,6 +99,40 @@ impl IntegrationSender {
     /// eventually collide with one of theirs.
     pub fn allocator(&self) -> NodeIdAllocator {
         self.node_ids.clone()
+    }
+
+    fn node_id(&self, key: &LocalKey) -> NodeId {
+        NodeId::derive(&self.integration, key)
+    }
+
+    /// Announce a node, or re-announce one whose shape or name changed. Its
+    /// id is derived from this integration's name and the node's key.
+    pub async fn node_added(&self, node: Node) -> Result<(), StreamClosed> {
+        let node_id = self.node_id(&node.key);
+        self.send(Event::NodeAdded { node_id, node }).await
+    }
+
+    /// Report a cluster snapshot for the node this integration calls `key`.
+    pub async fn report(
+        &self,
+        key: &LocalKey,
+        endpoint_id: EndpointId,
+        cluster: Cluster,
+    ) -> Result<(), StreamClosed> {
+        self.send(Event::Report {
+            node_id: self.node_id(key),
+            endpoint_id,
+            cluster,
+        })
+        .await
+    }
+
+    /// Withdraw the node this integration calls `key`.
+    pub async fn node_removed(&self, key: &LocalKey) -> Result<(), StreamClosed> {
+        self.send(Event::NodeRemoved {
+            node_id: self.node_id(key),
+        })
+        .await
     }
 }
 

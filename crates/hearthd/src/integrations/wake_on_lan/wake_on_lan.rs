@@ -39,10 +39,8 @@ use tracing::warn;
 
 use super::config::Config;
 use super::config::HostConfig;
-use crate::engine::Event;
 use crate::engine::Integration;
 use crate::engine::IntegrationSender;
-use crate::engine::NodeId;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
@@ -64,10 +62,10 @@ const WOL_ENDPOINT: EndpointId = 1;
 /// Mutable runtime view of one configured host.
 #[derive(Debug, Clone)]
 struct Host {
-    /// Configuration key, used for the entity id (`switch.<key>`).
-    key: String,
+    /// Configuration key: the node's local key, also used for the entity id
+    /// (`switch.<key>`).
+    key: LocalKey,
     config: HostConfig,
-    node_id: NodeId,
     /// Display name.
     name: String,
     /// Whether the host last answered a ping.
@@ -95,10 +93,6 @@ pub struct WolIntegration {
 
 impl WolIntegration {
     /// Create a new integration from configuration.
-    ///
-    /// Node ids are not allocated here: the engine hands the allocator to
-    /// `setup`, and that one is the only one whose ids are unique across
-    /// integrations.
     pub fn new(config: Config) -> Self {
         Self {
             config,
@@ -107,24 +101,24 @@ impl WolIntegration {
         }
     }
 
-    /// Read what the engine last published for `node_id`.
-    async fn is_on(&self, state: &Arc<State>, node_id: NodeId) -> bool {
+    /// Read what the engine last published for the host called `key`.
+    async fn is_on(&self, state: &Arc<State>, key: &LocalKey) -> bool {
         state
             .hosts
             .lock()
             .await
             .iter()
-            .any(|h| h.node_id == node_id && h.on_off)
+            .any(|h| h.key == *key && h.on_off)
     }
 
-    /// Send a magic packet to wake the host owning `node_id`.
-    async fn wake(&self, state: &Arc<State>, node_id: NodeId) -> Result<()> {
+    /// Send a magic packet to wake the host called `key`.
+    async fn wake(&self, state: &Arc<State>, key: &LocalKey) -> Result<()> {
         let (socket, host) = {
             let hosts = state.hosts.lock().await;
             let host = hosts
                 .iter()
-                .find(|h| h.node_id == node_id)
-                .context("no WoL host for node")?
+                .find(|h| h.key == *key)
+                .context("no WoL host for key")?
                 .clone();
             (state.socket.clone(), host)
         };
@@ -134,7 +128,7 @@ impl WolIntegration {
 
         socket.send_to(&build_magic_packet(&mac), target).await?;
         info!(
-            "WoL magic packet sent to {} for {node_id} ({})",
+            "WoL magic packet sent to {} for {key} ({})",
             target, host.name
         );
         Ok(())
@@ -149,51 +143,50 @@ impl WolIntegration {
 
         match msg {
             ToIntegrationMessage::InvokeCommand {
-                node_id,
+                key,
                 endpoint_id,
                 command,
                 ..
             } => {
                 if endpoint_id != WOL_ENDPOINT {
-                    anyhow::bail!("unknown endpoint {endpoint_id} on node {node_id}");
+                    anyhow::bail!("unknown endpoint {endpoint_id} on host {key}");
                 }
 
                 match command {
-                    ClusterCommand::OnOff(OnOffCommand::On) => self.wake(state, node_id).await,
+                    ClusterCommand::OnOff(OnOffCommand::On) => self.wake(state, &key).await,
                     ClusterCommand::OnOff(OnOffCommand::Toggle) => {
                         // A toggle is only meaningful in the "on" direction:
                         // there is no way to power a host off, so a toggle on
                         // an already-up host does nothing.
-                        if self.is_on(state, node_id).await {
+                        if self.is_on(state, &key).await {
                             Ok(())
                         } else {
-                            self.wake(state, node_id).await
+                            self.wake(state, &key).await
                         }
                     }
                     ClusterCommand::OnOff(OnOffCommand::Off) => {
                         // No standard, unprivileged way to power a host down:
                         // a no-op, as turning a WoL switch "off" must not send
                         // anything.
-                        debug!("wake_on_lan: Off on {node_id} is a no-op");
+                        debug!("wake_on_lan: Off on {key} is a no-op");
                         Ok(())
                     }
-                    other => anyhow::bail!("no WoL mapping for node {node_id} command {other:?}"),
+                    other => anyhow::bail!("no WoL mapping for host {key} command {other:?}"),
                 }
             }
             ToIntegrationMessage::WriteAttribute {
-                node_id,
+                key,
                 endpoint_id,
                 write,
                 ..
             } => anyhow::bail!(
-                "wake_on_lan does not accept attribute writes: node {node_id} endpoint {endpoint_id} {write:?}"
+                "wake_on_lan does not accept attribute writes: host {key} endpoint {endpoint_id} {write:?}"
             ),
         }
     }
 
     /// Shared `setup` body, so the trait boundary can box the error once.
     async fn setup_inner(&mut self, tx: IntegrationSender) -> Result<()> {
-        let node_ids = tx.allocator();
         let client =
             Client::new(&PingConfig::default()).context("failed to open the ICMP ping socket")?;
 
@@ -214,9 +207,8 @@ impl WolIntegration {
             .hosts
             .iter()
             .map(|(key, cfg)| Host {
-                key: key.clone(),
+                key: LocalKey::from(key.as_str()),
                 config: cfg.clone(),
-                node_id: node_ids.allocate(),
                 name: cfg.name.clone().unwrap_or_else(|| key.clone()),
                 on_off: false,
             })
@@ -225,12 +217,9 @@ impl WolIntegration {
         // Announce every host. They start offline until the first ping says
         // otherwise, and flip up individually as their own ping task fires.
         for host in &hosts {
-            tx.send(Event::NodeAdded {
-                node_id: host.node_id,
-                node: node_for(host),
-            })
-            .await
-            .context("engine channel closed")?;
+            tx.node_added(node_for(host))
+                .await
+                .context("engine channel closed")?;
         }
 
         let state = Arc::new(State {
@@ -340,7 +329,7 @@ fn node_for(host: &Host) -> Node {
     endpoints.insert(WOL_ENDPOINT, endpoint);
 
     Node {
-        key: LocalKey::from(host.key.as_str()),
+        key: host.key.clone(),
         entity_id: format!("switch.{}", host.key),
         name: Some(host.name.clone()),
         endpoints,
@@ -368,7 +357,7 @@ fn spawn_ping_task(state: Arc<State>, host: Host) -> JoinHandle<()> {
                         host.name,
                         if online { "online" } else { "offline" }
                     );
-                    report_reachability(&state, host.node_id, online).await;
+                    report_reachability(&state, &host.key, online).await;
                 }
                 Err(e) => warn!("wake_on_lan: failed to resolve {}: {e}", host.config.host),
             }
@@ -378,10 +367,10 @@ fn spawn_ping_task(state: Arc<State>, host: Host) -> JoinHandle<()> {
 }
 
 /// Record a ping result and, if reachability changed, publish it to the engine.
-async fn report_reachability(state: &Arc<State>, node_id: NodeId, on_off: bool) {
+async fn report_reachability(state: &Arc<State>, key: &LocalKey, on_off: bool) {
     let changed = {
         let mut hosts = state.hosts.lock().await;
-        if let Some(host) = hosts.iter_mut().find(|h| h.node_id == node_id) {
+        if let Some(host) = hosts.iter_mut().find(|h| h.key == *key) {
             if host.on_off != on_off {
                 host.on_off = on_off;
                 Some(OnOffCluster { on_off })
@@ -396,11 +385,7 @@ async fn report_reachability(state: &Arc<State>, node_id: NodeId, on_off: bool) 
     if let Some(cluster) = changed {
         if state
             .to_engine
-            .send(Event::Report {
-                node_id,
-                endpoint_id: WOL_ENDPOINT,
-                cluster: Cluster::OnOff(cluster),
-            })
+            .report(key, WOL_ENDPOINT, Cluster::OnOff(cluster))
             .await
             .is_err()
         {
@@ -450,7 +435,7 @@ mod tests {
     #[test]
     fn a_host_is_a_conformant_on_off_plug_in_unit() {
         let host = Host {
-            key: "desktop".to_string(),
+            key: LocalKey::from("desktop"),
             config: HostConfig {
                 host: "192.168.1.50".to_string(),
                 mac: "AA:BB:CC:DD:EE:FF".to_string(),
@@ -460,7 +445,6 @@ mod tests {
                 broadcast: None,
                 netmask: None,
             },
-            node_id: NodeId::from_raw(1),
             name: "Desktop".to_string(),
             on_off: false,
         };
