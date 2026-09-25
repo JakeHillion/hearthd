@@ -158,7 +158,6 @@ impl SnapcastIntegration {
                 key,
                 endpoint_id,
                 command,
-                ..
             } => {
                 if endpoint_id != mapper::SNAPCAST_ENDPOINT {
                     return Err(CommandError::UnknownEndpoint { key, endpoint_id });

@@ -251,7 +251,6 @@ impl Integration for MetnoIntegration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::NodeId;
 
     #[test]
     fn build_node_advertises_all_weather_clusters() {
@@ -277,10 +276,8 @@ mod tests {
     /// explicit provider panics rather than failing: setup has to supply one.
     #[tokio::test]
     async fn setup_builds_a_client() {
-        use crate::engine::NodeIdAllocator;
-
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        let tx = IntegrationSender::new(INTEGRATION_NAME, tx, NodeIdAllocator::for_test());
+        let tx = IntegrationSender::new(INTEGRATION_NAME, tx);
         // No sites: the poll task starts but makes no requests.
         let mut integration = MetnoIntegration::new(Vec::new());
 
@@ -298,7 +295,6 @@ mod tests {
         let mut integration = MetnoIntegration::new(Vec::new());
         let result = integration
             .handle_message(ToIntegrationMessage::InvokeCommand {
-                node_id: NodeId::from_raw(1),
                 key: LocalKey::from("home"),
                 endpoint_id: METNO_ENDPOINT,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
@@ -314,7 +310,6 @@ mod tests {
         let mut integration = MetnoIntegration::new(Vec::new());
         let result = integration
             .handle_message(ToIntegrationMessage::WriteAttribute {
-                node_id: NodeId::from_raw(1),
                 key: LocalKey::from("home"),
                 endpoint_id: METNO_ENDPOINT,
                 write: AttributeWrite {

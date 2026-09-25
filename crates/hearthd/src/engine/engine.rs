@@ -23,7 +23,6 @@ use super::node_id::NodeKey;
 use super::state::State;
 use crate::engine::IntegrationContext;
 use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
 
 /// hearthd engine
 ///
@@ -49,10 +48,6 @@ pub struct Engine {
 
     /// Handles for integration tasks
     integration_handles: Vec<JoinHandle<()>>,
-
-    /// Source of node ids for every integration, so that no two can name the
-    /// same node.
-    node_ids: NodeIdAllocator,
 }
 
 /// Capacity of the event stream. Provides backpressure when producers send
@@ -74,7 +69,6 @@ impl Engine {
             event_rx: Mutex::new(event_rx),
             event_tx,
             integration_handles: Vec::new(),
-            node_ids: NodeIdAllocator::new(),
         }
     }
 
@@ -105,7 +99,7 @@ impl Engine {
 
     /// The stream handle an integration of this name produces through.
     fn sender_for(&self, name: &str) -> IntegrationSender {
-        IntegrationSender::new(name, self.event_tx.clone(), self.node_ids.clone())
+        IntegrationSender::new(name, self.event_tx.clone())
     }
 
     /// Register an integration with the engine
@@ -349,7 +343,6 @@ impl Engine {
                     node_id, endpoint_id, command
                 );
                 self.send_to_owner(node_id, |key| ToIntegrationMessage::InvokeCommand {
-                    node_id,
                     key: key.local,
                     endpoint_id,
                     command,
@@ -365,7 +358,6 @@ impl Engine {
                     node_id, endpoint_id, write
                 );
                 self.send_to_owner(node_id, |key| ToIntegrationMessage::WriteAttribute {
-                    node_id,
                     key: key.local,
                     endpoint_id,
                     write,
@@ -461,16 +453,28 @@ mod tests {
         Running,
     ) {
         let (engine, rx, running) = running_engine();
-        let recorder = engine.sender_for("recorder");
-        let node_id = recorder.allocator().allocate();
-        recorder
-            .send(Event::NodeAdded {
-                node_id,
-                node: lamp("lamp-1"),
-            })
+        let node = lamp("lamp-1");
+        let node_id = NodeId::derive("recorder", &node.key);
+        engine
+            .sender_for("recorder")
+            .node_added(node)
             .await
             .expect("engine is running");
         (engine, node_id, rx, running)
+    }
+
+    /// Put `event` on the stream as if `integration` had sent it, without
+    /// the sender deriving the node id: how a test forges an announcement or
+    /// report for an id the sender would never produce.
+    async fn stamped_as(engine: &Engine, integration: &str, event: Event) {
+        engine
+            .event_tx
+            .send(Stamped {
+                source: Source::Integration(integration.into()),
+                event,
+            })
+            .await
+            .expect("engine is running");
     }
 
     /// Wait for the engine to have drained everything queued so far.
@@ -505,11 +509,10 @@ mod tests {
         assert!(matches!(
             msg,
             ToIntegrationMessage::InvokeCommand {
-                node_id: n,
                 key,
                 endpoint_id: 1,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
-            } if n == node_id && key == LocalKey::from("lamp-1")
+            } if key == LocalKey::from("lamp-1")
         ));
         running.abort();
     }
@@ -535,11 +538,10 @@ mod tests {
         assert!(matches!(
             msg,
             ToIntegrationMessage::WriteAttribute {
-                node_id: n,
                 key,
                 endpoint_id: 1,
                 write: w,
-            } if n == node_id && key == LocalKey::from("lamp-1") && w == write
+            } if key == LocalKey::from("lamp-1") && w == write
         ));
         running.abort();
     }
@@ -547,7 +549,7 @@ mod tests {
     #[tokio::test]
     async fn a_node_announced_by_the_api_is_refused() {
         let (engine, _rx, running) = running_engine();
-        let node_id = engine.node_ids.allocate();
+        let node_id = NodeId::derive("recorder", &LocalKey::from("lamp-1"));
         engine
             .submit(Event::NodeAdded {
                 node_id,
@@ -565,14 +567,15 @@ mod tests {
     #[tokio::test]
     async fn a_node_id_cannot_be_rebound_to_a_different_key() {
         let (engine, node_id, _rx, running) = engine_with_recorded_node().await;
-        engine
-            .sender_for("recorder")
-            .send(Event::NodeAdded {
+        stamped_as(
+            &engine,
+            "recorder",
+            Event::NodeAdded {
                 node_id,
                 node: lamp("lamp-2"),
-            })
-            .await
-            .expect("engine is running");
+            },
+        )
+        .await;
         settled(&engine).await;
 
         let binding = engine.binding(node_id).unwrap().expect("still bound");
@@ -587,23 +590,24 @@ mod tests {
     #[tokio::test]
     async fn a_report_from_an_integration_that_does_not_own_the_node_is_dropped() {
         let (engine, node_id, _rx, running) = engine_with_recorded_node().await;
-        let report = Event::Report {
-            node_id,
-            endpoint_id: 1,
-            cluster: Cluster::OnOff(OnOffCluster { on_off: true }),
-        };
+        let cluster = Cluster::OnOff(OnOffCluster { on_off: true });
 
-        engine
-            .sender_for("impostor")
-            .send(report.clone())
-            .await
-            .expect("engine is running");
+        stamped_as(
+            &engine,
+            "impostor",
+            Event::Report {
+                node_id,
+                endpoint_id: 1,
+                cluster: cluster.clone(),
+            },
+        )
+        .await;
         settled(&engine).await;
         assert!(engine.state_snapshot().nodes[&node_id].endpoints.is_empty());
 
         engine
             .sender_for("recorder")
-            .send(report)
+            .report(&LocalKey::from("lamp-1"), 1, cluster)
             .await
             .expect("engine is running");
         settled(&engine).await;
@@ -620,7 +624,7 @@ mod tests {
         let (engine, node_id, _rx, running) = engine_with_recorded_node().await;
         engine
             .sender_for("recorder")
-            .send(Event::NodeRemoved { node_id })
+            .node_removed(&LocalKey::from("lamp-1"))
             .await
             .expect("engine is running");
         settled(&engine).await;

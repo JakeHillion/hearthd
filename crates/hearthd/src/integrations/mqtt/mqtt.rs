@@ -617,7 +617,6 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
                 key,
                 endpoint_id,
                 command,
-                ..
             } => {
                 info!(
                     "Handling InvokeCommand for {} endpoint {}: {:?}",
@@ -629,7 +628,6 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
                 key,
                 endpoint_id,
                 write,
-                ..
             } => {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,

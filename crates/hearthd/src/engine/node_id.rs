@@ -5,13 +5,8 @@
 //! owning integration's name and that integration's own stable key for the
 //! device, so the same device gets the same id every run with nothing on
 //! disk, and two integrations can never name the same node.
-//!
-//! [`NodeIdAllocator`] is the previous scheme, a process-wide counter, and
-//! remains only until every integration has moved to derived ids.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -82,49 +77,6 @@ impl<'de> Deserialize<'de> for NodeId {
 }
 
 #[cfg(test)]
-impl NodeId {
-    /// Mint an identifier directly, for tests that need a node without an
-    /// engine to allocate one.
-    pub(crate) fn from_raw(raw: u64) -> Self {
-        Self(u128::from(raw))
-    }
-}
-
-/// Hands out node ids that are unique across every integration.
-///
-/// Cloning shares the counter rather than restarting it, so every integration
-/// draws from one sequence.
-#[derive(Debug, Clone)]
-pub struct NodeIdAllocator {
-    next: Arc<AtomicU64>,
-}
-
-impl NodeIdAllocator {
-    /// Create the allocator. Engine-internal: having exactly one per engine is
-    /// what makes the ids unique.
-    pub(super) fn new() -> Self {
-        Self {
-            next: Arc::new(AtomicU64::new(1)),
-        }
-    }
-
-    /// Take the next unused identifier.
-    pub fn allocate(&self) -> NodeId {
-        NodeId(u128::from(self.next.fetch_add(1, Ordering::Relaxed)))
-    }
-
-    /// An allocator for tests that drive an integration without an engine.
-    ///
-    /// Test-only: outside tests, a second allocator would count from 1 again
-    /// and hand out ids the real one has already given away, which is the
-    /// collision this type exists to prevent.
-    #[cfg(test)]
-    pub(crate) fn for_test() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -171,32 +123,5 @@ mod tests {
         let json = serde_json::to_string(&map).unwrap();
         let back: std::collections::HashMap<NodeId, i32> = serde_json::from_str(&json).unwrap();
         assert_eq!(back[&id], 1);
-    }
-
-    #[test]
-    fn clones_of_the_allocator_share_one_sequence() {
-        // Each integration holds its own handle. Without the sharing, two
-        // integrations both counting from 1 hand the same id to different
-        // devices.
-        let engine = NodeIdAllocator::new();
-        let first = engine.clone();
-        let second = engine.clone();
-
-        let ids = [
-            first.allocate(),
-            second.allocate(),
-            first.allocate(),
-            second.allocate(),
-        ];
-
-        let mut unique = ids.to_vec();
-        unique.sort_unstable();
-        unique.dedup();
-        assert_eq!(unique.len(), ids.len());
-    }
-
-    #[test]
-    fn allocation_starts_at_one() {
-        assert_eq!(NodeIdAllocator::new().allocate(), NodeId::from_raw(1));
     }
 }

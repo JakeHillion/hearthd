@@ -8,7 +8,6 @@ use tokio::sync::mpsc;
 use super::event::Event;
 use super::message::ToIntegrationMessage;
 use super::node_id::NodeId;
-use super::node_id::NodeIdAllocator;
 use crate::config::Config;
 use crate::matter::Cluster;
 use crate::matter::EndpointId;
@@ -65,26 +64,20 @@ pub type IntegrationFactoryResult = anyhow::Result<Option<Box<dyn Integration>>>
 pub struct IntegrationSender {
     integration: Arc<str>,
     tx: StreamSender,
-    node_ids: NodeIdAllocator,
 }
 
 impl IntegrationSender {
-    pub fn new(
-        integration: impl Into<Arc<str>>,
-        tx: StreamSender,
-        node_ids: NodeIdAllocator,
-    ) -> Self {
+    pub fn new(integration: impl Into<Arc<str>>, tx: StreamSender) -> Self {
         Self {
             integration: integration.into(),
             tx,
-            node_ids,
         }
     }
 
     /// Put an event on the stream under this integration's name. Waits while
     /// the queue is full, and fails only once the engine has stopped
     /// consuming.
-    pub async fn send(&self, event: Event) -> Result<(), StreamClosed> {
+    async fn send(&self, event: Event) -> Result<(), StreamClosed> {
         self.tx
             .send(Stamped {
                 source: Source::Integration(self.integration.clone()),
@@ -92,13 +85,6 @@ impl IntegrationSender {
             })
             .await
             .map_err(|_| StreamClosed)
-    }
-
-    /// The engine's node id allocator. Ids must come from here: the keyspace
-    /// is shared with every other integration, and one picked locally will
-    /// eventually collide with one of theirs.
-    pub fn allocator(&self) -> NodeIdAllocator {
-        self.node_ids.clone()
     }
 
     fn node_id(&self, key: &LocalKey) -> NodeId {

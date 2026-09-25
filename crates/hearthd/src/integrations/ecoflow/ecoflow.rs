@@ -628,13 +628,11 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
                 key,
                 endpoint_id,
                 command,
-                ..
             } => self.invoke_command(&key, endpoint_id, command).await,
             ToIntegrationMessage::WriteAttribute {
                 key,
                 endpoint_id,
                 write,
-                ..
             } => self.write_attribute(&key, endpoint_id, write).await,
         }
     }
@@ -660,7 +658,6 @@ mod tests {
     use super::*;
     use crate::engine::Event;
     use crate::engine::NodeId;
-    use crate::engine::NodeIdAllocator;
     use crate::engine::Stamped;
     use crate::integrations::ecoflow::cloud::auth::AuthError;
     use crate::integrations::ecoflow::cloud::auth::MqttCredentials;
@@ -790,10 +787,7 @@ mod tests {
     /// The integration's end of an engine stream, and the receiving end.
     fn engine_channel() -> (IntegrationSender, mpsc::Receiver<Stamped>) {
         let (tx, rx) = mpsc::channel(64);
-        (
-            IntegrationSender::new(INTEGRATION_NAME, tx, NodeIdAllocator::for_test()),
-            rx,
-        )
+        (IntegrationSender::new(INTEGRATION_NAME, tx), rx)
     }
 
     /// Await a message from the engine channel, failing rather than hanging.
@@ -963,7 +957,6 @@ mod tests {
         tokio::time::timeout(
             Duration::from_secs(5),
             integration.handle_message(ToIntegrationMessage::InvokeCommand {
-                node_id: NodeId::from_raw(1),
                 key: LocalKey::from(SERIAL),
                 endpoint_id: wave3_matter::EP_AIR_CONDITIONER,
                 command: ClusterCommand::OnOff(OnOffCommand::Off),
@@ -1005,7 +998,6 @@ mod tests {
 
         integration
             .handle_message(ToIntegrationMessage::WriteAttribute {
-                node_id: NodeId::from_raw(1),
                 key: LocalKey::from(SERIAL),
                 endpoint_id: wave3_matter::EP_AIR_CONDITIONER,
                 write: AttributeWrite {
@@ -1043,7 +1035,6 @@ mod tests {
 
         integration
             .handle_message(ToIntegrationMessage::InvokeCommand {
-                node_id: NodeId::from_raw(1),
                 key: LocalKey::from(SERIAL),
                 endpoint_id: wave3_matter::EP_BEEPER,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
@@ -1075,7 +1066,6 @@ mod tests {
 
         let result = integration
             .handle_message(ToIntegrationMessage::InvokeCommand {
-                node_id: NodeId::from_raw(99),
                 key: LocalKey::from("SOMEONE-ELSE"),
                 endpoint_id: wave3_matter::EP_AIR_CONDITIONER,
                 command: ClusterCommand::OnOff(OnOffCommand::On),

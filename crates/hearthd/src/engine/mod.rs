@@ -16,5 +16,4 @@ pub use integration::REGISTRY as INTEGRATION_REGISTRY;
 pub use integration::Stamped;
 pub use message::ToIntegrationMessage;
 pub use node_id::NodeId;
-pub use node_id::NodeIdAllocator;
 pub use state::State;
