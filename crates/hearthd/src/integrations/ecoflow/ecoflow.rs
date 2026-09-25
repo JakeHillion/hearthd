@@ -42,10 +42,8 @@ use super::wave3::codec::ConfigWrite;
 use super::wave3::matter as wave3_matter;
 use super::wave3::state::DeviceState;
 use super::wave3::wire;
-use crate::engine::Event;
 use crate::engine::Integration;
 use crate::engine::IntegrationSender;
-use crate::engine::NodeId;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::AttributeWrite;
 use crate::matter::Cluster;
@@ -68,7 +66,6 @@ const STALENESS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_
 
 /// One declared device and everything known about it.
 struct Device {
-    node_id: NodeId,
     entity_id: String,
     name: String,
     serial: String,
@@ -92,21 +89,10 @@ impl Device {
     }
 }
 
-/// A device from configuration, before the engine has assigned it a node id.
-///
-/// Ids come from the engine's allocator, which only arrives at `setup`, so
-/// what configuration determines is kept apart from what the engine assigns.
-struct DeclaredDevice {
-    entity_id: String,
-    name: String,
-    serial: String,
-}
-
 #[derive(Default)]
 struct Inner {
-    devices: HashMap<NodeId, Device>,
-    /// Reverse index: device serial to node id.
-    serial_to_node: HashMap<String, NodeId>,
+    /// Declared devices, keyed by serial: the device's local key.
+    devices: HashMap<String, Device>,
 }
 
 type SharedInner = Arc<Mutex<Inner>>;
@@ -116,8 +102,6 @@ pub struct EcoFlowIntegration<A: EcoFlowApi, T: Transport> {
     transport: Arc<Mutex<T>>,
     config: Config,
     inner: SharedInner,
-    /// Configured devices awaiting a node id, drained at `setup`.
-    declared: Vec<DeclaredDevice>,
     /// Fixed for the process: a reconnect then replaces our own previous
     /// session rather than accumulating sessions.
     client_uuid: String,
@@ -133,20 +117,20 @@ pub struct EcoFlowIntegration<A: EcoFlowApi, T: Transport> {
 
 impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
     pub fn new(api: A, transport: T, config: &Config) -> Self {
-        // Sorted so that ids are drawn in a deterministic order and a restart
-        // does not reshuffle them.
-        let mut names: Vec<&String> = config.devices.keys().collect();
-        names.sort();
-
-        let declared: Vec<DeclaredDevice> = names
-            .into_iter()
-            .map(|name| {
-                let device_config = &config.devices[name];
-                DeclaredDevice {
+        let devices = config
+            .devices
+            .iter()
+            .map(|(name, device_config)| {
+                let state = DeviceState::default();
+                let device = Device {
                     entity_id: format!("climate.{name}"),
                     name: device_config.name.clone().unwrap_or_else(|| name.clone()),
                     serial: device_config.serial.clone(),
-                }
+                    published: wave3_matter::build_endpoints(&state),
+                    state,
+                    stale_reported: false,
+                };
+                (device.serial.clone(), device)
             })
             .collect();
 
@@ -154,8 +138,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
             api: Arc::new(api),
             transport: Arc::new(Mutex::new(transport)),
             config: config.clone(),
-            inner: Arc::new(Mutex::new(Inner::default())),
-            declared,
+            inner: Arc::new(Mutex::new(Inner { devices })),
             client_uuid: topics::random_uuid_hex(),
             user_id: Arc::new(Mutex::new(None)),
             to_engine: None,
@@ -287,7 +270,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         // Sessions are clean, so subscriptions never survive a reconnect.
         let serials: Vec<String> = {
             let guard = inner.lock().await;
-            guard.serial_to_node.keys().cloned().collect()
+            guard.devices.keys().cloned().collect()
         };
 
         {
@@ -349,24 +332,24 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         inner: &SharedInner,
         to_engine: &IntegrationSender,
     ) {
-        let node_id = {
+        let serial = {
             let guard = inner.lock().await;
             // A serial always occupies a whole path segment, in both
             // `/app/device/property/{sn}` and `/app/{user}/{sn}/thing/...`.
             // Matching segments rather than substrings keeps one serial from
             // capturing another's traffic when one is a prefix of the other.
             match guard
-                .serial_to_node
-                .iter()
-                .find(|(serial, _)| {
+                .devices
+                .keys()
+                .find(|serial| {
                     message
                         .topic
                         .split('/')
                         .any(|segment| segment == serial.as_str())
                 })
-                .map(|(_, node_id)| *node_id)
+                .cloned()
             {
-                Some(node_id) => node_id,
+                Some(serial) => serial,
                 None => {
                     debug!("ignoring message on unrecognised topic {}", message.topic);
                     return;
@@ -399,7 +382,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         let now = std::time::Instant::now();
         let changed = {
             let mut guard = inner.lock().await;
-            let device = match guard.devices.get_mut(&node_id) {
+            let device = match guard.devices.get_mut(&serial) {
                 Some(device) => device,
                 None => return,
             };
@@ -436,8 +419,9 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
             Self::take_changed_clusters(device)
         };
 
+        let key = LocalKey::from(serial);
         for (endpoint_id, cluster) in changed {
-            Self::send_report(node_id, endpoint_id, cluster, to_engine).await;
+            Self::send_report(&key, endpoint_id, cluster, to_engine).await;
         }
     }
 
@@ -468,19 +452,12 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
     }
 
     async fn send_report(
-        node_id: NodeId,
+        key: &LocalKey,
         endpoint_id: EndpointId,
         cluster: Cluster,
         to_engine: &IntegrationSender,
     ) {
-        if let Err(e) = to_engine
-            .send(Event::Report {
-                node_id,
-                endpoint_id,
-                cluster,
-            })
-            .await
-        {
+        if let Err(e) = to_engine.report(key, endpoint_id, cluster).await {
             warn!("failed to send Report: {e}");
         }
     }
@@ -488,69 +465,63 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
     /// Translate a cluster command and publish it.
     async fn invoke_command(
         &self,
-        node_id: NodeId,
+        key: &LocalKey,
         endpoint_id: EndpointId,
         command: ClusterCommand,
     ) -> Result<(), Box<dyn Error + Send>> {
-        let (serial, write) = self
-            .translate_for(node_id, |state| {
+        let write = self
+            .translate_for(key, |state| {
                 wave3_matter::command_to_config_write(state, endpoint_id, &command)
             })
             .await?;
-        self.send_config_write(node_id, endpoint_id, &serial, write)
-            .await
+        self.send_config_write(key, endpoint_id, write).await
     }
 
     /// Translate an attribute write and publish it.
     async fn write_attribute(
         &self,
-        node_id: NodeId,
+        key: &LocalKey,
         endpoint_id: EndpointId,
         write: AttributeWrite,
     ) -> Result<(), Box<dyn Error + Send>> {
-        let (serial, write) = self
-            .translate_for(node_id, |state| {
+        let write = self
+            .translate_for(key, |state| {
                 wave3_matter::write_to_config_write(state, endpoint_id, &write)
             })
             .await?;
-        self.send_config_write(node_id, endpoint_id, &serial, write)
-            .await
+        self.send_config_write(key, endpoint_id, write).await
     }
 
-    /// Run a translation against the node's cached state, returning the
-    /// device serial to address alongside the write it produced.
+    /// Run a translation against the device's cached state.
     async fn translate_for(
         &self,
-        node_id: NodeId,
+        key: &LocalKey,
         translate: impl FnOnce(&DeviceState) -> Result<ConfigWrite, wave3_matter::CommandError>,
-    ) -> Result<(String, ConfigWrite), Box<dyn Error + Send>> {
+    ) -> Result<ConfigWrite, Box<dyn Error + Send>> {
         let guard = self.inner.lock().await;
         let device = guard
             .devices
-            .get(&node_id)
+            .get(key.as_str())
             .ok_or_else(|| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("unknown node: {node_id}"),
+                    format!("unknown device: {key}"),
                 ))
             })?;
 
-        let write = translate(&device.state).map_err(|e| -> Box<dyn Error + Send> {
+        translate(&device.state).map_err(|e| -> Box<dyn Error + Send> {
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 e.to_string(),
             ))
-        })?;
-
-        Ok((device.serial.clone(), write))
+        })
     }
 
     /// Publish a config write to the device and apply it to the cached state.
     async fn send_config_write(
         &self,
-        node_id: NodeId,
+        key: &LocalKey,
         endpoint_id: EndpointId,
-        serial: &str,
         write: ConfigWrite,
     ) -> Result<(), Box<dyn Error + Send>> {
         if write.is_empty() {
@@ -569,20 +540,20 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
             }
         };
 
-        Self::publish_config_write(&self.transport, &user_id, serial, &write)
+        Self::publish_config_write(&self.transport, &user_id, key.as_str(), &write)
             .await
             .map_err(|e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        info!("sent EcoFlow config write to node {node_id} endpoint {endpoint_id}: {write:?}");
+        info!("sent EcoFlow config write to {key} endpoint {endpoint_id}: {write:?}");
 
         // Apply the commanded values immediately so readers do not lag a full
         // upload period. The next report overwrites them; if none ever
         // confirms or contradicts them, the command was probably lost.
         let changed = {
             let mut guard = self.inner.lock().await;
-            match guard.devices.get_mut(&node_id) {
+            match guard.devices.get_mut(key.as_str()) {
                 Some(device) => {
                     device.state.apply_optimistic(&write);
                     Self::take_changed_clusters(device)
@@ -593,7 +564,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
 
         if let Some(to_engine) = &self.to_engine {
             for (endpoint_id, cluster) in changed {
-                Self::send_report(node_id, endpoint_id, cluster, to_engine).await;
+                Self::send_report(key, endpoint_id, cluster, to_engine).await;
             }
         }
 
@@ -612,49 +583,19 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
     }
 
     async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
-        let node_ids = tx.allocator();
         self.to_engine = Some(tx.clone());
 
         // Devices are declared, not discovered, so every node is known now.
         // Announcing them before any telemetry means the engine sees a stable
         // shape whose attributes fill in later.
-        let nodes: Vec<(NodeId, Node)> = {
-            let mut guard = self.inner.lock().await;
-
-            for declared in self.declared.drain(..) {
-                let node_id = node_ids.allocate();
-                let state = DeviceState::default();
-
-                guard
-                    .serial_to_node
-                    .insert(declared.serial.clone(), node_id);
-                guard.devices.insert(
-                    node_id,
-                    Device {
-                        node_id,
-                        entity_id: declared.entity_id,
-                        name: declared.name,
-                        serial: declared.serial,
-                        published: wave3_matter::build_endpoints(&state),
-                        state,
-                        stale_reported: false,
-                    },
-                );
-            }
-
-            guard
-                .devices
-                .values()
-                .map(|device| (device.node_id, device.node()))
-                .collect()
+        let nodes: Vec<Node> = {
+            let guard = self.inner.lock().await;
+            guard.devices.values().map(Device::node).collect()
         };
 
-        for (node_id, node) in nodes {
-            info!(
-                "declared EcoFlow device: {} (node {node_id})",
-                node.entity_id
-            );
-            if let Err(e) = tx.send(Event::NodeAdded { node_id, node }).await {
+        for node in nodes {
+            info!("declared EcoFlow device: {} ({})", node.entity_id, node.key);
+            if let Err(e) = tx.node_added(node).await {
                 warn!("failed to send NodeAdded: {e}");
             }
         }
@@ -684,17 +625,17 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
     ) -> Result<(), Box<dyn Error + Send>> {
         match msg {
             ToIntegrationMessage::InvokeCommand {
-                node_id,
+                key,
                 endpoint_id,
                 command,
                 ..
-            } => self.invoke_command(node_id, endpoint_id, command).await,
+            } => self.invoke_command(&key, endpoint_id, command).await,
             ToIntegrationMessage::WriteAttribute {
-                node_id,
+                key,
                 endpoint_id,
                 write,
                 ..
-            } => self.write_attribute(node_id, endpoint_id, write).await,
+            } => self.write_attribute(&key, endpoint_id, write).await,
         }
     }
 
@@ -717,6 +658,8 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::engine::Event;
+    use crate::engine::NodeId;
     use crate::engine::NodeIdAllocator;
     use crate::engine::Stamped;
     use crate::integrations::ecoflow::cloud::auth::AuthError;
@@ -871,7 +814,10 @@ mod tests {
 
         match next_engine_message(&mut rx).await {
             Event::NodeAdded { node_id, node } => {
-                assert_eq!(node_id, NodeId::from_raw(1));
+                assert_eq!(
+                    node_id,
+                    NodeId::derive(INTEGRATION_NAME, &LocalKey::from(SERIAL))
+                );
                 assert_eq!(node.entity_id, "climate.bedroom");
                 assert_eq!(node.name.as_deref(), Some("Bedroom AC"));
                 assert_eq!(node.key, LocalKey::from(SERIAL));
@@ -1130,7 +1076,7 @@ mod tests {
         let result = integration
             .handle_message(ToIntegrationMessage::InvokeCommand {
                 node_id: NodeId::from_raw(99),
-                key: LocalKey::from(SERIAL),
+                key: LocalKey::from("SOMEONE-ELSE"),
                 endpoint_id: wave3_matter::EP_AIR_CONDITIONER,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
             })
