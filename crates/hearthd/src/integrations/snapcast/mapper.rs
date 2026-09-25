@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 
-use crate::engine::NodeId;
 use crate::integrations::snapcast::models::Client;
 use crate::integrations::snapcast::models::Group;
 use crate::integrations::snapcast::models::Stream;
@@ -39,6 +38,22 @@ pub fn client_key(client: &Client) -> LocalKey {
     LocalKey::from(format!("client/{}", client.id))
 }
 
+/// Which of a group or a client a local key denotes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target<'a> {
+    Group(&'a str),
+    Client(&'a str),
+}
+
+/// Parse a local key back into the group or client it names.
+pub fn target(key: &LocalKey) -> Option<Target<'_>> {
+    if let Some(id) = key.as_str().strip_prefix("group/") {
+        Some(Target::Group(id))
+    } else {
+        key.as_str().strip_prefix("client/").map(Target::Client)
+    }
+}
+
 /// Matter's `CurrentLevel` maximum, as used by the other integrations.
 const MATTER_LEVEL_MAX: u32 = 254;
 
@@ -59,8 +74,6 @@ pub fn level_to_percent(level: u8) -> u8 {
 /// the mute flag and the percent, so muting without knowing the current
 /// percent would silently reset it.
 pub struct CommandContext<'a> {
-    pub node_to_group: &'a HashMap<NodeId, String>,
-    pub node_to_client: &'a HashMap<NodeId, String>,
     pub groups: &'a HashMap<String, Group>,
     pub clients: &'a HashMap<String, Client>,
     pub stream_by_index: &'a HashMap<u8, String>,
@@ -170,19 +183,21 @@ pub fn client_node(client: &Client, entity_id: &str) -> Node {
 
 /// Translate a Matter cluster command into a Snapcast JSON-RPC call.
 pub fn command_to_rpc(
-    node_id: NodeId,
+    target: Target<'_>,
     command: &ClusterCommand,
     ctx: &CommandContext<'_>,
 ) -> Option<(&'static str, serde_json::Value)> {
     match command {
-        ClusterCommand::OnOff(OnOffCommand::On) => set_muted(node_id, ctx, false),
-        ClusterCommand::OnOff(OnOffCommand::Off) => set_muted(node_id, ctx, true),
+        ClusterCommand::OnOff(OnOffCommand::On) => set_muted(target, ctx, false),
+        ClusterCommand::OnOff(OnOffCommand::Off) => set_muted(target, ctx, true),
 
         ClusterCommand::LevelControl(crate::matter::LevelControlCommand::MoveToLevel {
             level,
             ..
         }) => {
-            let id = ctx.node_to_client.get(&node_id)?;
+            let Target::Client(id) = target else {
+                return None;
+            };
             // Volume and mute are separate axes in Matter, so a level change
             // leaves the mute flag as it found it.
             let muted = ctx
@@ -193,7 +208,7 @@ pub fn command_to_rpc(
             Some((
                 "Client.SetVolume",
                 serde_json::to_value(super::models::ClientSetVolumeParams {
-                    id: id.clone(),
+                    id: id.to_string(),
                     volume: Volume {
                         muted,
                         percent: level_to_percent(*level),
@@ -204,12 +219,14 @@ pub fn command_to_rpc(
         }
 
         ClusterCommand::MediaInput(crate::matter::MediaInputCommand::SelectInput { index }) => {
-            let group_id = ctx.node_to_group.get(&node_id)?;
+            let Target::Group(group_id) = target else {
+                return None;
+            };
             let stream_id = ctx.stream_by_index.get(index)?;
             Some((
                 "Group.SetStream",
                 serde_json::to_value(super::models::GroupSetStreamParams {
-                    id: group_id.clone(),
+                    id: group_id.to_string(),
                     stream_id: stream_id.clone(),
                 })
                 .ok()?,
@@ -217,7 +234,9 @@ pub fn command_to_rpc(
         }
 
         ClusterCommand::MediaPlayback(cmd) => {
-            let group_id = ctx.node_to_group.get(&node_id)?;
+            let Target::Group(group_id) = target else {
+                return None;
+            };
             // Control the stream this group is actually playing. Addressing a
             // fixed index would drive whichever stream happened to be first.
             let stream_id = ctx.groups.get(group_id).map(|g| g.stream_id.clone())?;
@@ -249,22 +268,23 @@ pub fn command_to_rpc(
 
 /// Mute or unmute whichever of a group or client the node denotes.
 fn set_muted(
-    node_id: NodeId,
+    target: Target<'_>,
     ctx: &CommandContext<'_>,
     muted: bool,
 ) -> Option<(&'static str, serde_json::Value)> {
-    if let Some(id) = ctx.node_to_group.get(&node_id) {
-        return Some((
-            "Group.SetMute",
-            serde_json::to_value(super::models::GroupSetMuteParams {
-                id: id.clone(),
-                mute: muted,
-            })
-            .ok()?,
-        ));
-    }
-
-    let id = ctx.node_to_client.get(&node_id)?;
+    let id = match target {
+        Target::Group(id) => {
+            return Some((
+                "Group.SetMute",
+                serde_json::to_value(super::models::GroupSetMuteParams {
+                    id: id.to_string(),
+                    mute: muted,
+                })
+                .ok()?,
+            ));
+        }
+        Target::Client(id) => id,
+    };
     // Carry the current percent through: Snapcast would otherwise take the
     // volume in this call literally and unmuting would come back at whatever
     // level we invented.
@@ -276,7 +296,7 @@ fn set_muted(
     Some((
         "Client.SetVolume",
         serde_json::to_value(super::models::ClientSetVolumeParams {
-            id: id.clone(),
+            id: id.to_string(),
             volume: Volume { muted, percent },
         })
         .ok()?,
