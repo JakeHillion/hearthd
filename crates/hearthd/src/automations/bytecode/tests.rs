@@ -97,7 +97,7 @@ fn test_lower_bytecode_list_comprehension() {
   state = { nodes, ... },
   ...
 } /true/ {
-  [ Event::OnOffChanged(l) for l in keys(nodes) ]
+  [ Event::Report(l) for l in keys(nodes) ]
 }"#;
     let result = lower_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -119,7 +119,7 @@ fn test_lower_bytecode_list_comprehension() {
         consts:
           #0 = ident nodes
           #1 = ident Event
-          #2 = ident OnOffChanged
+          #2 = ident Report
         code:
           field              r1, r0, #0 (nodes)
           empty_list         r2
@@ -129,7 +129,7 @@ fn test_lower_bytecode_list_comprehension() {
         l0:
           iter_next          r4, r5, l1, l2
         l1:
-          variant            r6, #1 (Event), #2 (OnOffChanged), [r5]
+          variant            r6, #1 (Event), #2 (Report), [r5]
           list_push          r2, r6
           jump               l0
         l2:

@@ -10,7 +10,8 @@ use crate::matter::Cluster;
 use crate::matter::EndpointId;
 use crate::matter::Node;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, facet::Facet)]
+#[repr(u8)]
 pub enum Event {
     /// A node was discovered and is now known to the integration.
     /// The full `Node` is included so the engine can populate its state

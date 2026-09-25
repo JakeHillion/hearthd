@@ -32,7 +32,7 @@ pub enum Value {
     /// An iterator over a list, with a cursor.
     Iter(IterState),
 
-    /// An enum variant (e.g. `Event::OccupancySensingChanged { … }`),
+    /// An enum variant (e.g. `Event::Report { … }`),
     /// carrying its constructor arguments.
     Variant {
         enum_name: String,

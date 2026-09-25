@@ -27,6 +27,7 @@ use self::typed::TypedStructField;
 use super::desugar::lowered;
 use super::lexer::UnitType;
 use super::parser::ast;
+use crate::engine::Event;
 use crate::engine::state;
 
 pub mod function;
@@ -72,7 +73,7 @@ fn shape_to_ty(shape: &facet::Shape) -> Ty {
 
 /// Information about an enum type in the registry.
 struct EnumInfo {
-    /// Maps variant name -> variant fields (e.g. "LightStateChanged" -> { entity_id: String, ... })
+    /// Maps variant name -> variant fields (e.g. "Report" -> { node_id: NodeId, ... })
     variants: HashMap<String, HashMap<String, Ty>>,
 }
 
@@ -94,34 +95,32 @@ impl TypeRegistry {
         reg
     }
 
-    /// Register enum types that can't be derived from facet reflection.
+    /// Register enum types from their facet shapes.
     fn register_enums(&mut self) {
-        let mut variants = HashMap::new();
-        variants.insert("OnOffChanged".into(), {
-            let mut fields = HashMap::new();
-            fields.insert("node_id".into(), Ty::Int);
-            fields.insert("endpoint_id".into(), Ty::Int);
-            fields.insert("attributes".into(), Ty::Named("OnOffCluster".into()));
-            fields
-        });
-        variants.insert("LevelControlChanged".into(), {
-            let mut fields = HashMap::new();
-            fields.insert("node_id".into(), Ty::Int);
-            fields.insert("endpoint_id".into(), Ty::Int);
-            fields.insert("attributes".into(), Ty::Named("LevelControlCluster".into()));
-            fields
-        });
-        variants.insert("OccupancySensingChanged".into(), {
-            let mut fields = HashMap::new();
-            fields.insert("node_id".into(), Ty::Int);
-            fields.insert("endpoint_id".into(), Ty::Int);
-            fields.insert(
-                "attributes".into(),
-                Ty::Named("OccupancySensingCluster".into()),
-            );
-            fields
-        });
-        self.enums.insert("Event".into(), EnumInfo { variants });
+        self.register_enum(Event::SHAPE);
+    }
+
+    /// Register an enum from its facet shape, one entry per variant carrying
+    /// that variant's fields.
+    fn register_enum(&mut self, shape: &'static facet::Shape) {
+        let facet::Type::User(facet::UserType::Enum(enum_type)) = &shape.ty else {
+            panic!("{} is not an enum", shape.type_identifier);
+        };
+        let variants = enum_type
+            .variants
+            .iter()
+            .map(|variant| {
+                let fields = variant
+                    .data
+                    .fields
+                    .iter()
+                    .map(|f| (f.name.to_string(), shape_to_ty(f.shape.get())))
+                    .collect();
+                (variant.name.to_string(), fields)
+            })
+            .collect();
+        self.enums
+            .insert(shape.type_identifier.to_string(), EnumInfo { variants });
     }
 
     /// Map a DSL type name to its facet shape. Returns `None` for unknown types.

@@ -62,16 +62,16 @@ fn sample_event() -> Value {
     event_with_node_id(7)
 }
 
-/// An `Event::OnOffChanged` carrying the given `node_id`.
+/// An `Event::Report` carrying the given `node_id`.
 fn event_with_node_id(node_id: i64) -> Value {
     Value::Variant {
         enum_name: "Event".to_string(),
-        variant: "OnOffChanged".to_string(),
+        variant: "Report".to_string(),
         args: vec![Value::Struct(BTreeMap::from([
             ("node_id".to_string(), Value::Int(node_id)),
             ("endpoint_id".to_string(), Value::Int(1)),
             (
-                "attributes".to_string(),
+                "cluster".to_string(),
                 Value::Struct(BTreeMap::from([("on_off".to_string(), Value::Bool(true))])),
             ),
         ]))],
@@ -655,7 +655,7 @@ fn test_vm_field_on_event_mismatch() {
 
 #[test]
 fn test_vm_field_nested() {
-    insta::assert_snapshot!(run_filter("event.attributes.on_off"), @"true");
+    insta::assert_snapshot!(run_filter("event.cluster.on_off"), @"true");
 }
 
 /// `OptionalField` decodes identically to `Field` and behaves the same;
@@ -669,7 +669,7 @@ fn test_vm_optional_field_behaves_like_field() {
 fn test_vm_field_missing_is_an_error() {
     let event = Value::Variant {
         enum_name: "Event".to_string(),
-        variant: "OnOffChanged".to_string(),
+        variant: "Report".to_string(),
         args: vec![Value::Struct(BTreeMap::new())],
     };
     insta::assert_snapshot!(run_filter_with("event.node_id == 7", event), @"error: VM invariant violated: unknown field `node_id`");
@@ -686,22 +686,22 @@ fn test_vm_field_on_non_struct_is_an_error() {
 
 #[test]
 fn test_vm_if_else_takes_then_branch() {
-    insta::assert_snapshot!(run_body("if true { [event] } else { [] }"), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+    insta::assert_snapshot!(run_body("if true { [event] } else { [] }"), @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]");
 }
 
 #[test]
 fn test_vm_if_else_takes_else_branch() {
-    insta::assert_snapshot!(run_body("if false { [] } else { [event] }"), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+    insta::assert_snapshot!(run_body("if false { [] } else { [event] }"), @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]");
 }
 
 #[test]
 fn test_vm_if_without_else_falls_through() {
-    insta::assert_snapshot!(run_body("if false { 1 }; [event]"), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+    insta::assert_snapshot!(run_body("if false { 1 }; [event]"), @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]");
 }
 
 #[test]
 fn test_vm_let_bindings_in_body() {
-    insta::assert_snapshot!(run_body("let x = 1; let y = x + 1; [event]"), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+    insta::assert_snapshot!(run_body("let x = 1; let y = x + 1; [event]"), @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]");
 }
 
 // ============================================================================
@@ -757,22 +757,22 @@ fn test_vm_nested_comprehension() {
 
 #[test]
 fn test_vm_struct_literal() {
-    insta::assert_snapshot!(run_body("OnOffCluster { on_off: true }; [event]"), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+    insta::assert_snapshot!(run_body("OnOffCluster { on_off: true }; [event]"), @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]");
 }
 
 #[test]
 fn test_vm_struct_spread() {
-    insta::assert_snapshot!(run_body("let a = event.attributes; OnOffCluster { ...a }; [event]"), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+    insta::assert_snapshot!(run_body("let a = event.cluster; OnOffCluster { ...a }; [event]"), @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]");
 }
 
 #[test]
 fn test_vm_variant_construction() {
-    insta::assert_snapshot!(run_body("[Event::OnOffChanged(1, 2, event.attributes)]"), @"[Event::OnOffChanged(1, 2, {on_off: true})]");
+    insta::assert_snapshot!(run_body("[Event::Report(1, 2, event.cluster)]"), @"[Event::Report(1, 2, {on_off: true})]");
 }
 
 #[test]
 fn test_vm_variant_construction_from_event_fields() {
-    insta::assert_snapshot!(run_body("[Event::OnOffChanged(event.node_id, event.endpoint_id, event.attributes)]"), @"[Event::OnOffChanged(7, 1, {on_off: true})]");
+    insta::assert_snapshot!(run_body("[Event::Report(event.node_id, event.endpoint_id, event.cluster)]"), @"[Event::Report(7, 1, {on_off: true})]");
 }
 
 // ============================================================================
@@ -841,7 +841,7 @@ fn test_vm_filter_params_grow_with_the_pattern() {
 fn test_vm_param_value_reaches_the_filter() {
     let event = Value::Variant {
         enum_name: "Event".to_string(),
-        variant: "OnOffChanged".to_string(),
+        variant: "Report".to_string(),
         args: vec![Value::Struct(BTreeMap::from([(
             "node_id".to_string(),
             Value::Int(99),
@@ -1044,7 +1044,7 @@ fn test_vm_equality_on_a_struct_is_refused() {
 fn test_vm_equality_on_a_variant_is_refused() {
     insta::assert_snapshot!(
         render(super::ops::values_equal(&sample_event(), &sample_event()).map(Value::Bool)),
-        @"error: VM invariant violated: equality on a value carrying no identity: Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7}) and Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})"
+        @"error: VM invariant violated: equality on a value carrying no identity: Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7}) and Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})"
     );
     insta::assert_snapshot!(
         render(
@@ -1054,7 +1054,7 @@ fn test_vm_equality_on_a_variant_is_refused() {
             )
             .map(Value::Bool)
         ),
-        @"error: VM invariant violated: equality on a value carrying no identity: Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7}) and Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})"
+        @"error: VM invariant violated: equality on a value carrying no identity: Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7}) and Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})"
     );
 }
 
@@ -1216,7 +1216,7 @@ fn test_vm_future_renders_its_wait() {
 async fn test_vm_async_await_resumes_the_body() {
     insta::assert_snapshot!(
         run_body_async("await sleep(5min); [event]").await,
-        @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]"
+        @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]"
     );
 }
 
@@ -1250,7 +1250,7 @@ async fn test_vm_async_await_waits_out_its_duration() {
 async fn test_vm_async_successive_awaits_each_resume() {
     let start = tokio::time::Instant::now();
     let rendered = run_body_async("await sleep(1min); await sleep(2min); [event]").await;
-    insta::assert_snapshot!(rendered, @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+    insta::assert_snapshot!(rendered, @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]");
     insta::assert_snapshot!(start.elapsed().as_secs(), @"180");
 }
 
@@ -1258,7 +1258,7 @@ async fn test_vm_async_successive_awaits_each_resume() {
 /// drivers share the dispatch loop and differ only at the suspension.
 #[tokio::test(start_paused = true)]
 async fn test_vm_async_body_without_await() {
-    insta::assert_snapshot!(run_body_async("[event]").await, @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]");
+    insta::assert_snapshot!(run_body_async("[event]").await, @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]");
 }
 
 /// A body whose `sleep_unique` is superseded takes its `else` branch and
@@ -1269,7 +1269,7 @@ async fn test_vm_async_body_without_await() {
 async fn test_vm_async_a_superseded_sleep_unique_resolves_false() {
     insta::assert_snapshot!(
         run_body_with("if await sleep_unique(5min) { [] } else { [event] }", &Superseded).await,
-        @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]"
+        @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]"
     );
 }
 
@@ -1280,7 +1280,7 @@ async fn test_vm_async_a_superseded_sleep_unique_resolves_false() {
 async fn test_vm_async_sleep_has_no_superseded_form() {
     insta::assert_snapshot!(
         run_body_with("await sleep(5min); [event]", &Superseded).await,
-        @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 7})]"
+        @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 7})]"
     );
 }
 
@@ -1300,8 +1300,8 @@ async fn test_vm_async_instances_do_not_share_registers() {
         .run_async(vec![event_with_node_id(2)], &Timer);
     let (first, second) = tokio::join!(first, second);
 
-    insta::assert_snapshot!(render(first), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 1})]");
-    insta::assert_snapshot!(render(second), @"[Event::OnOffChanged({attributes: {on_off: true}, endpoint_id: 1, node_id: 2})]");
+    insta::assert_snapshot!(render(first), @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 1})]");
+    insta::assert_snapshot!(render(second), @"[Event::Report({cluster: {on_off: true}, endpoint_id: 1, node_id: 2})]");
 }
 
 /// Awaiting a register that holds something other than a future is
@@ -1386,9 +1386,9 @@ fn test_vm_rerun_does_not_observe_previous_registers() {
 #[test]
 fn test_vm_body_reruns_independently() {
     let auto = compile(
-        "observer { event, ... } /true/ { [Event::OnOffChanged(event.node_id, 1, event.attributes)] }",
+        "observer { event, ... } /true/ { [Event::Report(event.node_id, 1, event.cluster)] }",
     );
     let mut vm = Arc::new(Program::new(auto.body).expect("builds")).instance();
-    insta::assert_snapshot!(render(vm.run_sync(vec![event_with_node_id(1)])), @"[Event::OnOffChanged(1, 1, {on_off: true})]");
-    insta::assert_snapshot!(render(vm.run_sync(vec![event_with_node_id(2)])), @"[Event::OnOffChanged(2, 1, {on_off: true})]");
+    insta::assert_snapshot!(render(vm.run_sync(vec![event_with_node_id(1)])), @"[Event::Report(1, 1, {on_off: true})]");
+    insta::assert_snapshot!(render(vm.run_sync(vec![event_with_node_id(2)])), @"[Event::Report(2, 1, {on_off: true})]");
 }

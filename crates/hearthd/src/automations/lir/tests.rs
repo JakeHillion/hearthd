@@ -93,7 +93,7 @@ fn test_lower_lir_list_comprehension() {
   state = { nodes, ... },
   ...
 } /true/ {
-  [ Event::OnOffChanged(l) for l in keys(nodes) ]
+  [ Event::Report(l) for l in keys(nodes) ]
 }"#;
     let result = lower_and_pretty(src);
     insta::assert_snapshot!(result, @"
@@ -119,7 +119,7 @@ fn test_lower_lir_list_comprehension() {
       L1:
         iter_next r4 -> r5, L2, L3
       L2:
-        r6 = variant Event::OnOffChanged(r5)
+        r6 = variant Event::Report(r5)
         list_push r2, r6
         jump L1
       L3:
