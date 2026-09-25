@@ -10,7 +10,6 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-use super::event::Event;
 use super::integration::FromIntegrationReceiver;
 use super::integration::FromIntegrationSender;
 use super::integration::Integration;
@@ -21,7 +20,6 @@ use super::state::State;
 use crate::engine::IntegrationContext;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
-use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
 
@@ -286,139 +284,10 @@ impl Engine {
                         let endpoint = node.endpoints.entry(endpoint_id).or_default();
                         endpoint
                             .clusters
-                            .insert(cluster.name().to_string(), cluster.clone());
+                            .insert(cluster.name().to_string(), cluster);
                     }
                     self.state.store(Arc::new(state));
                 }
-
-                let _event = match cluster {
-                    Cluster::OnOff(attributes) => Event::OnOffChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::LevelControl(attributes) => Event::LevelControlChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::ColorControl(attributes) => Event::ColorControlChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::TemperatureMeasurement(attributes) => {
-                        Event::TemperatureMeasurementChanged {
-                            node_id,
-                            endpoint_id,
-                            attributes,
-                        }
-                    }
-                    Cluster::PressureMeasurement(attributes) => Event::PressureMeasurementChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::RelativeHumidityMeasurement(attributes) => {
-                        Event::RelativeHumidityMeasurementChanged {
-                            node_id,
-                            endpoint_id,
-                            attributes,
-                        }
-                    }
-                    Cluster::OccupancySensing(attributes) => Event::OccupancySensingChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::BooleanState(attributes) => Event::BooleanStateChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::Thermostat(attributes) => Event::ThermostatChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::FanControl(attributes) => Event::FanControlChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::DehumidificationControl(attributes) => {
-                        Event::DehumidificationControlChanged {
-                            node_id,
-                            endpoint_id,
-                            attributes,
-                        }
-                    }
-                    Cluster::ThermostatUserInterfaceConfiguration(attributes) => {
-                        Event::ThermostatUserInterfaceConfigurationChanged {
-                            node_id,
-                            endpoint_id,
-                            attributes,
-                        }
-                    }
-                    Cluster::PowerSource(attributes) => Event::PowerSourceChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::ElectricalPowerMeasurement(attributes) => {
-                        Event::ElectricalPowerMeasurementChanged {
-                            node_id,
-                            endpoint_id,
-                            attributes,
-                        }
-                    }
-                    Cluster::ModeSelect(attributes) => Event::ModeSelectChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::MediaPlayback(attributes) => Event::MediaPlaybackChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::MediaInput(attributes) => Event::MediaInputChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::WindMeasurement(attributes) => Event::WindMeasurementChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::CloudCover(attributes) => Event::CloudCoverChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::DewPoint(attributes) => Event::DewPointChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::UvIndex(attributes) => Event::UvIndexChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::Precipitation(attributes) => Event::PrecipitationChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                    Cluster::WeatherCondition(attributes) => Event::WeatherConditionChanged {
-                        node_id,
-                        endpoint_id,
-                        attributes,
-                    },
-                };
-                // TODO: Trigger automations based on attribute-changed event
             }
         }
         Ok(())
