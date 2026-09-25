@@ -52,7 +52,9 @@ use super::semantics::OperatingMode;
 use super::semantics::Preset;
 use super::semantics::UserTempUnit;
 use super::state::DeviceState;
+use crate::matter::AttributeWrite;
 use crate::matter::BooleanStateCluster;
+use crate::matter::CLUSTER_NAME_THERMOSTAT;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::ControlSequenceOfOperation;
@@ -529,7 +531,8 @@ pub fn build_endpoints(state: &DeviceState) -> HashMap<EndpointId, Endpoint> {
     endpoints
 }
 
-/// Why a cluster command could not be turned into a device command.
+/// Why a cluster command or attribute write could not be turned into a
+/// device command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     /// The endpoint does not carry the cluster the command targets.
@@ -537,6 +540,15 @@ pub enum CommandError {
         endpoint: EndpointId,
         cluster_id: u32,
     },
+    /// The endpoint does not carry the attribute the write targets, or the
+    /// device gives no way to set it.
+    UnsupportedWrite {
+        endpoint: EndpointId,
+        cluster: String,
+        attribute: String,
+    },
+    /// The written value is not of the attribute's type.
+    InvalidValue(String),
     /// The cluster is modelled but this particular value has no device
     /// equivalent.
     Unsupported(&'static str),
@@ -554,6 +566,15 @@ impl std::fmt::Display for CommandError {
                 f,
                 "endpoint {endpoint} does not support cluster 0x{cluster_id:04X}"
             ),
+            CommandError::UnsupportedWrite {
+                endpoint,
+                cluster,
+                attribute,
+            } => write!(
+                f,
+                "endpoint {endpoint} does not support writing {cluster}.{attribute}"
+            ),
+            CommandError::InvalidValue(why) => write!(f, "invalid value: {why}"),
             CommandError::Unsupported(what) => write!(f, "{what}"),
             CommandError::NotYetKnown(what) => {
                 write!(f, "{what} is not known yet; wait for the device to report")
@@ -568,6 +589,38 @@ fn unsupported(endpoint: EndpointId, command: &ClusterCommand) -> CommandError {
     CommandError::UnsupportedOnEndpoint {
         endpoint,
         cluster_id: command.cluster_id(),
+    }
+}
+
+/// Decode a write's value as the attribute's type.
+fn value_as<T: serde::de::DeserializeOwned>(write: &AttributeWrite) -> Result<T, CommandError> {
+    serde_json::from_value(write.value.clone())
+        .map_err(|e| CommandError::InvalidValue(e.to_string()))
+}
+
+/// Translate a Matter attribute write into the config write that performs
+/// it, keyed by endpoint, cluster and attribute.
+pub fn write_to_config_write(
+    state: &DeviceState,
+    endpoint: EndpointId,
+    write: &AttributeWrite,
+) -> Result<ConfigWrite, CommandError> {
+    match (endpoint, write.cluster.as_str(), write.attribute.as_str()) {
+        (EP_AIR_CONDITIONER, CLUSTER_NAME_THERMOSTAT, "system_mode") => {
+            set_system_mode(value_as(write)?)
+        }
+        (EP_AIR_CONDITIONER, CLUSTER_NAME_THERMOSTAT, "occupied_cooling_setpoint") => Ok(
+            setpoint_write(state, centi_to_celsius(value_as(write)?), true),
+        ),
+        (EP_AIR_CONDITIONER, CLUSTER_NAME_THERMOSTAT, "occupied_heating_setpoint") => Ok(
+            setpoint_write(state, centi_to_celsius(value_as(write)?), false),
+        ),
+
+        _ => Err(CommandError::UnsupportedWrite {
+            endpoint,
+            cluster: write.cluster.clone(),
+            attribute: write.attribute.clone(),
+        }),
     }
 }
 
@@ -686,46 +739,31 @@ fn thermostat_command(
     state: &DeviceState,
     command: &ThermostatCommand,
 ) -> Result<ConfigWrite, CommandError> {
-    match command {
-        ThermostatCommand::SetSystemMode { mode } => set_system_mode(*mode),
+    let ThermostatCommand::SetpointRaiseLower { mode, amount } = command;
 
-        ThermostatCommand::SetOccupiedCoolingSetpoint { centi_celsius } => Ok(setpoint_write(
-            state,
-            centi_to_celsius(*centi_celsius),
+    // `amount` is a relative adjustment in tenths of a degree, so it needs a
+    // setpoint to adjust.
+    let delta = f32::from(*amount) / 10.0;
+    let params = state.active_params();
+
+    let (base, cooling) = match mode {
+        SetpointMode::Cool => (
+            params.temp_set.or(params.temp_thermostatic_upper_limit),
             true,
-        )),
-        ThermostatCommand::SetOccupiedHeatingSetpoint { centi_celsius } => Ok(setpoint_write(
-            state,
-            centi_to_celsius(*centi_celsius),
+        ),
+        SetpointMode::Heat => (
+            params.temp_set.or(params.temp_thermostatic_lower_limit),
             false,
-        )),
-
-        ThermostatCommand::SetpointRaiseLower { mode, amount } => {
-            // `amount` is a relative adjustment in tenths of a degree, so it
-            // needs a setpoint to adjust.
-            let delta = f32::from(*amount) / 10.0;
-            let params = state.active_params();
-
-            let (base, cooling) = match mode {
-                SetpointMode::Cool => (
-                    params.temp_set.or(params.temp_thermostatic_upper_limit),
-                    true,
-                ),
-                SetpointMode::Heat => (
-                    params.temp_set.or(params.temp_thermostatic_lower_limit),
-                    false,
-                ),
-                SetpointMode::Both => {
-                    return Err(CommandError::Unsupported(
-                        "the Wave 3 stores one setpoint per mode, so Both is ambiguous",
-                    ));
-                }
-            };
-
-            let base = base.ok_or(CommandError::NotYetKnown("the current setpoint"))?;
-            Ok(setpoint_write(state, base + delta, cooling))
+        ),
+        SetpointMode::Both => {
+            return Err(CommandError::Unsupported(
+                "the Wave 3 stores one setpoint per mode, so Both is ambiguous",
+            ));
         }
-    }
+    };
+
+    let base = base.ok_or(CommandError::NotYetKnown("the current setpoint"))?;
+    Ok(setpoint_write(state, base + delta, cooling))
 }
 
 /// Build the write for a new absolute setpoint.
@@ -1335,6 +1373,22 @@ mod tests {
         command_to_config_write(state, endpoint, &command).expect("command should translate")
     }
 
+    fn attribute(cluster: &str, attribute: &str, value: serde_json::Value) -> AttributeWrite {
+        AttributeWrite {
+            cluster: cluster.into(),
+            attribute: attribute.into(),
+            value,
+        }
+    }
+
+    fn write_for_attribute(
+        state: &DeviceState,
+        endpoint: EndpointId,
+        write: AttributeWrite,
+    ) -> ConfigWrite {
+        write_to_config_write(state, endpoint, &write).expect("write should translate")
+    }
+
     #[test]
     fn turning_off_pauses_rather_than_powering_off() {
         // cfg_sys_pause is the tested path; cfgPowerOff exists but the app
@@ -1388,12 +1442,10 @@ mod tests {
     #[test]
     fn selecting_a_mode_powers_up_in_one_write() {
         // Both fields must ride together, or the unit stays in standby.
-        let write = write_for(
+        let write = write_for_attribute(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetSystemMode {
-                mode: SystemMode::Heat,
-            }),
+            attribute("Thermostat", "system_mode", serde_json::json!("Heat")),
         );
         assert_eq!(write.cfg_main_power, Some(true));
         assert_eq!(write.cfg_wave_operating_mode, Some(2));
@@ -1401,12 +1453,10 @@ mod tests {
 
     #[test]
     fn selecting_off_pauses_the_unit() {
-        let write = write_for(
+        let write = write_for_attribute(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetSystemMode {
-                mode: SystemMode::Off,
-            }),
+            attribute("Thermostat", "system_mode", serde_json::json!("Off")),
         );
         assert_eq!(write.cfg_sys_pause, Some(true));
         assert_eq!(write.cfg_main_power, None);
@@ -1414,28 +1464,36 @@ mod tests {
 
     #[test]
     fn matter_modes_the_wave_3_lacks_are_refused() {
-        for mode in [
-            SystemMode::EmergencyHeat,
-            SystemMode::Precooling,
-            SystemMode::Sleep,
-        ] {
-            let result = command_to_config_write(
+        for mode in ["EmergencyHeat", "Precooling", "Sleep"] {
+            let result = write_to_config_write(
                 &state_in_mode(1),
                 EP_AIR_CONDITIONER,
-                &ClusterCommand::Thermostat(ThermostatCommand::SetSystemMode { mode }),
+                &attribute("Thermostat", "system_mode", serde_json::json!(mode)),
             );
             assert!(matches!(result, Err(CommandError::Unsupported(_))));
         }
     }
 
     #[test]
-    fn a_setpoint_targets_the_single_value_outside_auto_mode() {
-        let write = write_for(
+    fn a_value_of_the_wrong_type_is_refused() {
+        let result = write_to_config_write(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetOccupiedCoolingSetpoint {
-                centi_celsius: 2350,
-            }),
+            &attribute("Thermostat", "system_mode", serde_json::json!(4)),
+        );
+        assert!(matches!(result, Err(CommandError::InvalidValue(_))));
+    }
+
+    #[test]
+    fn a_setpoint_targets_the_single_value_outside_auto_mode() {
+        let write = write_for_attribute(
+            &state_in_mode(1),
+            EP_AIR_CONDITIONER,
+            attribute(
+                "Thermostat",
+                "occupied_cooling_setpoint",
+                serde_json::json!(2350),
+            ),
         );
         assert_eq!(write.cfg_temp_set, Some(23.5));
         assert_eq!(write.cfg_temp_thermostatic_upper_limit, None);
@@ -1445,34 +1503,40 @@ mod tests {
     fn setpoints_target_the_limit_pair_in_auto_mode() {
         let state = state_in_mode(5);
 
-        let write = write_for(
+        let write = write_for_attribute(
             &state,
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetOccupiedCoolingSetpoint {
-                centi_celsius: 2500,
-            }),
+            attribute(
+                "Thermostat",
+                "occupied_cooling_setpoint",
+                serde_json::json!(2500),
+            ),
         );
         assert_eq!(write.cfg_temp_thermostatic_upper_limit, Some(25.0));
         assert_eq!(write.cfg_temp_set, None);
 
-        let write = write_for(
+        let write = write_for_attribute(
             &state,
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetOccupiedHeatingSetpoint {
-                centi_celsius: 1900,
-            }),
+            attribute(
+                "Thermostat",
+                "occupied_heating_setpoint",
+                serde_json::json!(1900),
+            ),
         );
         assert_eq!(write.cfg_temp_thermostatic_lower_limit, Some(19.0));
     }
 
     #[test]
     fn setpoints_outside_the_devices_range_are_clamped() {
-        let write = write_for(
+        let write = write_for_attribute(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::Thermostat(ThermostatCommand::SetOccupiedCoolingSetpoint {
-                centi_celsius: 500,
-            }),
+            attribute(
+                "Thermostat",
+                "occupied_cooling_setpoint",
+                serde_json::json!(500),
+            ),
         );
         assert_eq!(write.cfg_temp_set, Some(16.0));
     }
@@ -1657,14 +1721,35 @@ mod tests {
         let result = command_to_config_write(
             &state_in_mode(1),
             EP_PANEL,
-            &ClusterCommand::Thermostat(ThermostatCommand::SetSystemMode {
-                mode: SystemMode::Cool,
+            &ClusterCommand::Thermostat(ThermostatCommand::SetpointRaiseLower {
+                mode: SetpointMode::Cool,
+                amount: 10,
             }),
         );
         assert!(matches!(
             result,
             Err(CommandError::UnsupportedOnEndpoint { .. })
         ));
+    }
+
+    #[test]
+    fn a_write_on_the_wrong_endpoint_is_refused() {
+        let result = write_to_config_write(
+            &state_in_mode(1),
+            EP_PANEL,
+            &attribute("Thermostat", "system_mode", serde_json::json!("Cool")),
+        );
+        assert!(matches!(result, Err(CommandError::UnsupportedWrite { .. })));
+    }
+
+    #[test]
+    fn a_write_to_a_read_only_attribute_is_refused() {
+        let result = write_to_config_write(
+            &state_in_mode(1),
+            EP_AIR_CONDITIONER,
+            &attribute("Thermostat", "local_temperature", serde_json::json!(2100)),
+        );
+        assert!(matches!(result, Err(CommandError::UnsupportedWrite { .. })));
     }
 
     #[test]
