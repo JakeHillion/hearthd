@@ -84,7 +84,6 @@ pub fn group_node(
     group: &Group,
     streams: &HashMap<String, Stream>,
     stream_indices: &HashMap<String, u8>,
-    entity_id: &str,
 ) -> Node {
     let mut endpoint = Endpoint::default();
     endpoint.clusters.insert(
@@ -142,14 +141,13 @@ pub fn group_node(
 
     Node {
         key: group_key(group),
-        entity_id: entity_id.to_string(),
         name: Some(group_display_name(group)),
         endpoints,
     }
 }
 
 /// Build a Matter node for a Snapcast client.
-pub fn client_node(client: &Client, entity_id: &str) -> Node {
+pub fn client_node(client: &Client) -> Node {
     let mut endpoint = Endpoint::default().with_device_types([DeviceType::Speaker]);
     endpoint.clusters.insert(
         crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
@@ -175,7 +173,6 @@ pub fn client_node(client: &Client, entity_id: &str) -> Node {
 
     Node {
         key: client_key(client),
-        entity_id: entity_id.to_string(),
         name: Some(client_display_name(client)),
         endpoints,
     }
@@ -377,58 +374,7 @@ fn client_display_name(client: &Client) -> String {
     }
 }
 
-/// Entity id for a group.
-///
-/// Derived from the name configured in Snapcast where there is one and from
-/// the group id otherwise — never from the stream, which changes as the group
-/// is retargeted and would take the entity id with it.
-pub fn group_entity_id(group: &Group) -> String {
-    format!("media_player.{}", slug_or_id(&group.name, &group.id))
-}
-
-/// Entity id for a client.
-///
-/// Only the name set in Snapcast is used, never the host name: entity ids have
-/// to be unique, and a host name is neither chosen for that purpose nor
-/// distinct — two machines both reporting `localhost` is ordinary, and the
-/// engine resolves one name to one node, so the second would take the first's
-/// place and removing either would strand the survivor.
-pub fn client_entity_id(client: &Client) -> String {
-    format!("speaker.{}", slug_or_id(&client.config.name, &client.id))
-}
-
-/// Slug of `name`, falling back to the full id.
-///
-/// The whole id is used rather than the short form the display names take,
-/// because Snapcast only guarantees the whole of it to be distinct: one device
-/// running two instances yields ids that differ solely in a trailing `#1`.
-///
-/// The fallback also catches a name that slugs to nothing, such as one made
-/// entirely of punctuation, which would otherwise leave a bare domain prefix
-/// that every such device would share.
-fn slug_or_id(name: &str, id: &str) -> String {
-    let slugged = slug(name);
-    if slugged.is_empty() {
-        slug(&format!("snapcast {id}"))
-    } else {
-        slugged
-    }
-}
-
 /// First id segment, enough to tell devices apart without the full UUID.
 fn short_id(id: &str) -> &str {
     id.split('-').next().unwrap_or(id)
-}
-
-/// Lowercase, underscore-separated form suitable for an entity id.
-fn slug(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('_') {
-            out.push('_');
-        }
-    }
-    out.trim_matches('_').to_string()
 }

@@ -381,7 +381,7 @@ mod tests {
         indices.insert("spotify".to_string(), 0);
 
         let g = group("spotify");
-        let node = mapper::group_node(&g, &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(&g, &streams, &indices);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let on_off = match endpoint.clusters.get("OnOff") {
             Some(Cluster::OnOff(c)) => c,
@@ -399,7 +399,7 @@ mod tests {
 
         let mut g = group("spotify");
         g.muted = true;
-        let node = mapper::group_node(&g, &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(&g, &streams, &indices);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let on_off = match endpoint.clusters.get("OnOff") {
             Some(Cluster::OnOff(c)) => c,
@@ -418,7 +418,7 @@ mod tests {
         indices.insert("airplay".to_string(), 1);
 
         let g = group("airplay");
-        let node = mapper::group_node(&g, &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(&g, &streams, &indices);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let media_input = match endpoint.clusters.get("MediaInput") {
             Some(Cluster::MediaInput(c)) => c,
@@ -442,7 +442,7 @@ mod tests {
         let mut indices = HashMap::new();
         indices.insert("spotify".to_string(), 0);
 
-        let node = mapper::group_node(&group("gone"), &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(&group("gone"), &streams, &indices);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let media_input = match endpoint.clusters.get("MediaInput") {
             Some(Cluster::MediaInput(c)) => c,
@@ -462,12 +462,7 @@ mod tests {
         let mut indices = HashMap::new();
         indices.insert("spotify".to_string(), 0);
 
-        let node = mapper::group_node(
-            &group("spotify"),
-            &streams,
-            &indices,
-            "media_player.kitchen",
-        );
+        let node = mapper::group_node(&group("spotify"), &streams, &indices);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let media_input = match endpoint.clusters.get("MediaInput") {
             Some(Cluster::MediaInput(c)) => c,
@@ -487,7 +482,7 @@ mod tests {
         indices.insert("spotify".to_string(), 0);
 
         let g = group("spotify");
-        let node = mapper::group_node(&g, &streams, &indices, "media_player.kitchen");
+        let node = mapper::group_node(&g, &streams, &indices);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let media_playback = match endpoint.clusters.get("MediaPlayback") {
             Some(Cluster::MediaPlayback(c)) => c,
@@ -506,12 +501,7 @@ mod tests {
         let mut indices = HashMap::new();
         indices.insert("spotify".to_string(), 0);
 
-        let node = mapper::group_node(
-            &group("spotify"),
-            &streams,
-            &indices,
-            "media_player.kitchen",
-        );
+        let node = mapper::group_node(&group("spotify"), &streams, &indices);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let media_playback = match endpoint.clusters.get("MediaPlayback") {
             Some(Cluster::MediaPlayback(c)) => c,
@@ -524,12 +514,7 @@ mod tests {
     fn group_with_unknown_stream_still_exposes_playback() {
         // The cluster set a node exposes must not depend on whether the
         // server happened to describe the stream it points at.
-        let node = mapper::group_node(
-            &group("gone"),
-            &HashMap::new(),
-            &HashMap::new(),
-            "media_player.kitchen",
-        );
+        let node = mapper::group_node(&group("gone"), &HashMap::new(), &HashMap::new());
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         assert!(endpoint.clusters.contains_key("MediaPlayback"));
     }
@@ -537,7 +522,7 @@ mod tests {
     #[test]
     fn client_node_exposes_volume_and_connection() {
         let c = client(false, 74, true);
-        let node = mapper::client_node(&c, "speaker.kitchen_speaker");
+        let node = mapper::client_node(&c);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
 
         let on_off = match endpoint.clusters.get("OnOff") {
@@ -563,7 +548,7 @@ mod tests {
     #[test]
     fn a_client_is_a_speaker_and_a_group_declares_no_type() {
         let c = client(false, 74, true);
-        let node = mapper::client_node(&c, "speaker.kitchen_speaker");
+        let node = mapper::client_node(&c);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         assert_eq!(endpoint.device_types, [DeviceType::Speaker]);
         assert_eq!(endpoint.missing_mandatory_clusters(), []);
@@ -572,7 +557,7 @@ mod tests {
         // Device Library has no player type that does not also mandate
         // Keypad Input.
         let g = group("pipe");
-        let node = mapper::group_node(&g, &HashMap::new(), &HashMap::new(), "media_player.kitchen");
+        let node = mapper::group_node(&g, &HashMap::new(), &HashMap::new());
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         assert_eq!(endpoint.device_types, []);
     }
@@ -705,50 +690,6 @@ mod tests {
     }
 
     #[test]
-    fn clients_sharing_a_host_name_get_distinct_entity_ids() {
-        // Host names are not chosen to be unique and "localhost" is ordinary.
-        // Two such clients resolving to one entity id would leave the engine
-        // with a single addressable speaker.
-        let mut first = client(false, 50, true);
-        first.config.name = String::new();
-        first.host.name = "localhost".to_string();
-        first.id = "aaaaaaaa-1111".to_string();
-
-        let mut second = first.clone();
-        second.id = "bbbbbbbb-2222".to_string();
-
-        assert_ne!(
-            mapper::client_entity_id(&first),
-            mapper::client_entity_id(&second)
-        );
-    }
-
-    #[test]
-    fn instances_of_one_device_get_distinct_entity_ids() {
-        // Snapcast appends #N per instance, so only the whole id is distinct.
-        let mut first = client(false, 50, true);
-        first.config.name = String::new();
-        first.host.name = String::new();
-        first.id = "B1659FDD-E1E7-4377-AED8-DA19C4601B81#0".to_string();
-
-        let mut second = first.clone();
-        second.id = "B1659FDD-E1E7-4377-AED8-DA19C4601B81#1".to_string();
-
-        assert_ne!(
-            mapper::client_entity_id(&first),
-            mapper::client_entity_id(&second)
-        );
-    }
-
-    #[test]
-    fn a_name_of_only_punctuation_does_not_yield_a_bare_domain() {
-        let mut c = client(false, 50, true);
-        c.config.name = "!!".to_string();
-        c.id = "abc-123".to_string();
-        assert_eq!(mapper::client_entity_id(&c), "speaker.snapcast_abc_123");
-    }
-
-    #[test]
     fn track_duration_is_reported_in_milliseconds() {
         let mut streams = HashMap::new();
         let mut s = stream("spotify", "librespot");
@@ -760,38 +701,12 @@ mod tests {
         let mut indices = HashMap::new();
         indices.insert("spotify".to_string(), 0);
 
-        let node = mapper::group_node(&group("spotify"), &streams, &indices, "media_player.k");
+        let node = mapper::group_node(&group("spotify"), &streams, &indices);
         let endpoint = node.endpoints.get(&mapper::SNAPCAST_ENDPOINT).unwrap();
         let playback = match endpoint.clusters.get("MediaPlayback") {
             Some(Cluster::MediaPlayback(c)) => c,
             _ => panic!("missing MediaPlayback cluster"),
         };
         assert_eq!(playback.duration, Some(212_500));
-    }
-
-    #[test]
-    fn entity_ids_follow_the_domain_convention() {
-        let mut g = group("spotify");
-        g.name = "Kitchen Speakers".to_string();
-        assert_eq!(mapper::group_entity_id(&g), "media_player.kitchen_speakers");
-
-        let c = client(false, 50, true);
-        assert_eq!(mapper::client_entity_id(&c), "speaker.kitchen_speaker");
-    }
-
-    #[test]
-    fn unnamed_devices_fall_back_to_a_stable_id() {
-        // Never derived from the stream: a group's entity id must not change
-        // when it is retargeted at a different source.
-        let mut g = group("spotify");
-        g.name = String::new();
-        g.id = "c29b1bd6-edff-8e0c-4d4b-dea5cd72a6aa".to_string();
-        let first = mapper::group_entity_id(&g);
-        g.stream_id = "airplay".to_string();
-        assert_eq!(mapper::group_entity_id(&g), first);
-        assert_eq!(
-            first,
-            "media_player.snapcast_c29b1bd6_edff_8e0c_4d4b_dea5cd72a6aa"
-        );
     }
 }

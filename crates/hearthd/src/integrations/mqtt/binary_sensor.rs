@@ -146,7 +146,6 @@ impl BinarySensorKind {
 pub struct BinarySensor {
     /// `binary_sensor/<zigbee2mqtt node id>`.
     pub key: LocalKey,
-    pub entity_id: String,
     pub name: String,
     #[allow(dead_code)]
     pub unique_id: String,
@@ -171,7 +170,6 @@ impl BinarySensor {
     pub fn from_discovery(
         discovery: DiscoveryMessage,
         kind: BinarySensorKind,
-        entity_id: String,
         node_id: String,
     ) -> Result<Self, Box<dyn Error>> {
         let unique_id = discovery
@@ -190,7 +188,6 @@ impl BinarySensor {
 
         Ok(Self {
             key: Self::key_for(&node_id),
-            entity_id,
             name,
             unique_id,
             device_class,
@@ -224,7 +221,6 @@ impl BinarySensor {
 
         Node {
             key: self.key.clone(),
-            entity_id: self.entity_id.clone(),
             name: Some(self.name.clone()),
             endpoints,
         }
@@ -289,7 +285,6 @@ mod tests {
         let sensor = BinarySensor::from_discovery(
             motion_discovery(),
             BinarySensorKind::Occupancy,
-            "binary_sensor.living_room".to_string(),
             "living_room".to_string(),
         )
         .unwrap();
@@ -307,7 +302,6 @@ mod tests {
         let result = BinarySensor::from_discovery(
             discovery,
             BinarySensorKind::Occupancy,
-            "binary_sensor.test".to_string(),
             "test".to_string(),
         );
         assert!(result.is_err());
@@ -318,7 +312,6 @@ mod tests {
         let mut sensor = BinarySensor::from_discovery(
             motion_discovery(),
             BinarySensorKind::Occupancy,
-            "binary_sensor.test".to_string(),
             "test".to_string(),
         )
         .unwrap();
@@ -343,7 +336,6 @@ mod tests {
         let mut sensor = BinarySensor::from_discovery(
             discovery,
             BinarySensorKind::Occupancy,
-            "binary_sensor.test".to_string(),
             "test".to_string(),
         )
         .unwrap();
@@ -376,7 +368,6 @@ mod tests {
         let sensor = BinarySensor::from_discovery(
             motion_discovery(),
             BinarySensorKind::Occupancy,
-            "binary_sensor.test".to_string(),
             "test".to_string(),
         )
         .unwrap();
@@ -390,13 +381,9 @@ mod tests {
         let mut discovery = motion_discovery();
         discovery.device_class = Some("door".to_string());
         discovery.value_template = Some("{{ value_json.contact }}".to_string());
-        let mut sensor = BinarySensor::from_discovery(
-            discovery,
-            BinarySensorKind::Contact,
-            "binary_sensor.test".to_string(),
-            "test".to_string(),
-        )
-        .unwrap();
+        let mut sensor =
+            BinarySensor::from_discovery(discovery, BinarySensorKind::Contact, "test".to_string())
+                .unwrap();
 
         let endpoint = sensor.to_node().endpoints[&Z2M_ENDPOINT].clone();
         assert_eq!(endpoint.device_types, [DeviceType::ContactSensor]);
