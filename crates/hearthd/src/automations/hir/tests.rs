@@ -778,13 +778,13 @@ fn test_lower_nested_pattern() {
   event,
   state = {
     nodes,
-    by_entity_id,
+    aliases,
     ...
   },
   ...
 } /true/ {
   nodes;
-  by_entity_id;
+  aliases;
   []
 }"#;
     let result = lower_and_pretty(src);
@@ -796,7 +796,7 @@ fn test_lower_nested_pattern() {
           %1: state [State]
         bb0:
           %2 = field %1.nodes [Map<NodeId, Node>]
-          %3 = field %1.by_entity_id [Map<String, NodeId>]
+          %3 = field %1.aliases [Map<String, NodeId>]
           %4 = const_bool true [Bool]
           return %4
       body:
@@ -805,7 +805,7 @@ fn test_lower_nested_pattern() {
           %1: state [State]
         bb0:
           %2 = field %1.nodes [Map<NodeId, Node>]
-          %3 = field %1.by_entity_id [Map<String, NodeId>]
+          %3 = field %1.aliases [Map<String, NodeId>]
           %4 = empty_list [[<error>]]
           return %4
     ");

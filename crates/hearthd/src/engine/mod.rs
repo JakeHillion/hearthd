@@ -2,6 +2,7 @@ mod engine;
 mod event;
 mod integration;
 mod message;
+mod names;
 mod node_id;
 pub mod state;
 
@@ -15,5 +16,6 @@ pub use integration::REGISTRY as INTEGRATION_REGISTRY;
 #[cfg(test)]
 pub use integration::Stamped;
 pub use message::ToIntegrationMessage;
+pub use names::ResolveError;
 pub use node_id::NodeId;
 pub use state::State;

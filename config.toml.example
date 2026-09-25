@@ -92,3 +92,19 @@ longitude = 10.7579
 # broadcast = "192.168.1.255"      # optional; defaults to the subnet-directed
 #                                  # broadcast derived from `host` + `netmask`
 # netmask = "255.255.255.0"        # only used when `broadcast` is unset
+
+# Aliases: extra names for nodes. Every node is already addressable by the
+# slugged name its integration gave it (a Zigbee2MQTT friendly name, a
+# Snapcast client name, a config key) and by its id, both shown in
+# /v1/state. An alias adds a name of your own on top, wins over a
+# discovered name that happens to match, resolves before the device has
+# registered, and survives the device being renamed upstream.
+#
+# Each entry names the integration and the integration's own key for the
+# node, as /v1/state shows under "key". Alias names are identifiers:
+# lowercase letters, digits and underscores, not starting with a digit.
+#
+# [aliases]
+# living_room_lamp = { integration = "mqtt", key = "light/0x00158d0001abcd12" }
+# bedroom_ac = { integration = "ecoflow", key = "HW52ZEH4XXXXXXXX" }
+# desktop = { integration = "wake_on_lan", key = "desktop" }
