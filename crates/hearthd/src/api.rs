@@ -15,6 +15,7 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use crate::Engine;
+use crate::engine::Event;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
 
@@ -98,6 +99,11 @@ async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 /// Handler for POST /v1/entities/{id}/command
+///
+/// Resolves the entity and puts an `Event::Invoke` on the engine's stream,
+/// so the command is ordered with every report and command before it.
+/// Answers once the event is queued; what the device did about it shows
+/// up as a later report in `/v1/state`.
 #[tracing::instrument(skip(state))]
 async fn send_entity_command(
     State(state): State<Arc<AppState>>,
@@ -125,23 +131,25 @@ async fn send_entity_command(
         }
     };
 
-    match state
-        .engine
-        .invoke_command(node_id, request.endpoint, request.command)
-    {
+    let event = Event::Invoke {
+        node_id,
+        endpoint_id: request.endpoint,
+        command: request.command,
+    };
+    match state.engine.submit(event).await {
         Ok(()) => (
-            StatusCode::OK,
+            StatusCode::ACCEPTED,
             Json(EntityCommandResponse {
                 success: true,
-                message: format!("Command sent to entity {}", entity_id),
+                message: format!("Command queued for entity {}", entity_id),
             }),
         )
             .into_response(),
         Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::SERVICE_UNAVAILABLE,
             Json(EntityCommandResponse {
                 success: false,
-                message: format!("Failed to send command: {}", e),
+                message: format!("Engine is not accepting events: {}", e),
             }),
         )
             .into_response(),

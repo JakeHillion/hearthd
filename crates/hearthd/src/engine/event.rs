@@ -1,12 +1,14 @@
 //! The one message type on the engine's stream.
 //!
 //! Every producer feeds the same bounded queue and the engine loop consumes
-//! it in arrival order. Reports carry the Matter data model defined in
-//! `crate::matter`; integrations translate their native representation at
-//! their boundary.
+//! it in arrival order: reports and node lifecycle are applied to the
+//! snapshot, and invokes are routed to the integration that owns the node.
+//! Both speak the Matter data model defined in `crate::matter`; integrations
+//! translate their native representation at their boundary.
 
 use crate::engine::NodeId;
 use crate::matter::Cluster;
+use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
 use crate::matter::Node;
 
@@ -29,5 +31,18 @@ pub enum Event {
         node_id: NodeId,
         endpoint_id: EndpointId,
         cluster: Cluster,
+    },
+
+    /// A cluster command addressed to the integration that owns the node. A
+    /// request, never a state change: only a later `Report` says what the
+    /// device did about it.
+    ///
+    /// The command is opaque to Facet because the command enums do not
+    /// derive it, and nothing reads their shape yet.
+    Invoke {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        #[facet(opaque)]
+        command: ClusterCommand,
     },
 }

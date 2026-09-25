@@ -20,8 +20,6 @@ use super::state::State;
 use crate::engine::IntegrationContext;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
-use crate::matter::ClusterCommand;
-use crate::matter::EndpointId;
 
 /// hearthd engine
 ///
@@ -130,10 +128,8 @@ impl Engine {
         self.integration_handles.push(handle);
     }
 
-    /// Send a command to an integration.
-    ///
-    /// Routes the command to the integration that owns the target node.
-    pub fn send_command(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
+    /// Route a command to the integration that owns the target node.
+    fn send_command(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
         let node_id = match &msg {
             ToIntegrationMessage::InvokeCommand { node_id, .. } => *node_id,
         };
@@ -194,18 +190,16 @@ impl Engine {
         self.state.load().by_entity_id.get(entity_id).copied()
     }
 
-    /// Invoke a Matter cluster command on a node's endpoint.
-    pub fn invoke_command(
-        &self,
-        node_id: NodeId,
-        endpoint_id: EndpointId,
-        command: ClusterCommand,
-    ) -> Result<(), Box<dyn Error + Send>> {
-        self.send_command(ToIntegrationMessage::InvokeCommand {
-            node_id,
-            endpoint_id,
-            command,
-        })
+    /// Put an event on the stream.
+    ///
+    /// The one way anything other than an integration produces onto the
+    /// stream. Waits while the queue is full, and fails only once the engine
+    /// has stopped consuming.
+    pub async fn submit(&self, event: Event) -> Result<(), Box<dyn Error + Send>> {
+        self.event_tx
+            .send(event)
+            .await
+            .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })
     }
 
     /// Handle one event off the stream.
@@ -288,6 +282,21 @@ impl Engine {
                     self.state.store(Arc::new(state));
                 }
             }
+            Event::Invoke {
+                node_id,
+                endpoint_id,
+                command,
+            } => {
+                info!(
+                    "Invoke: node={} endpoint={} command={:?}",
+                    node_id, endpoint_id, command
+                );
+                self.send_command(ToIntegrationMessage::InvokeCommand {
+                    node_id,
+                    endpoint_id,
+                    command,
+                })?;
+            }
         }
         Ok(())
     }
@@ -296,5 +305,96 @@ impl Engine {
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::matter::ClusterCommand;
+    use crate::matter::Node;
+    use crate::matter::OnOffCommand;
+
+    /// Forwards every message the engine sends it to a channel the test reads.
+    struct Recorder {
+        tx: mpsc::UnboundedSender<ToIntegrationMessage>,
+    }
+
+    #[async_trait]
+    impl Integration for Recorder {
+        fn name(&self) -> &str {
+            "recorder"
+        }
+
+        async fn setup(
+            &mut self,
+            _tx: EventSender,
+            _node_ids: NodeIdAllocator,
+        ) -> Result<(), Box<dyn Error + Send>> {
+            Ok(())
+        }
+
+        async fn handle_message(
+            &mut self,
+            msg: ToIntegrationMessage,
+        ) -> Result<(), Box<dyn Error + Send>> {
+            self.tx
+                .send(msg)
+                .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })
+        }
+
+        async fn shutdown(&mut self) -> Result<(), Box<dyn Error + Send>> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn an_invoke_on_the_stream_reaches_the_owning_integration() {
+        let mut engine = Engine::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        engine.register_integration("recorder".into(), Box::new(Recorder { tx }));
+        let engine = Arc::new(engine);
+        let running = tokio::spawn({
+            let engine = engine.clone();
+            async move { engine.run().await }
+        });
+
+        let node_id = engine.node_ids.allocate();
+        engine
+            .submit(Event::NodeAdded {
+                node_id,
+                node: Node {
+                    entity_id: "light.lamp".into(),
+                    integration: "recorder".into(),
+                    name: None,
+                    endpoints: HashMap::new(),
+                },
+            })
+            .await
+            .expect("engine is running");
+        engine
+            .submit(Event::Invoke {
+                node_id,
+                endpoint_id: 1,
+                command: ClusterCommand::OnOff(OnOffCommand::On),
+            })
+            .await
+            .expect("engine is running");
+
+        let msg = rx
+            .recv()
+            .await
+            .expect("the integration receives the command");
+        assert!(matches!(
+            msg,
+            ToIntegrationMessage::InvokeCommand {
+                node_id: n,
+                endpoint_id: 1,
+                command: ClusterCommand::OnOff(OnOffCommand::On),
+            } if n == node_id
+        ));
+        running.abort();
     }
 }
