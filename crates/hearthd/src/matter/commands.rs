@@ -31,7 +31,6 @@ use super::clusters::CLUSTER_ID_ON_OFF;
 use super::clusters::CLUSTER_ID_THERMOSTAT;
 use super::clusters::CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
 use super::clusters::FanMode;
-use super::clusters::SystemMode;
 use super::clusters::TemperatureDisplayMode;
 
 /// OnOff cluster (0x0006) commands.
@@ -102,20 +101,9 @@ pub enum SetpointMode {
 /// Thermostat cluster (0x0201) commands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ThermostatCommand {
-    /// Write to attribute 0x001C `SystemMode`.
-    SetSystemMode { mode: SystemMode },
-
-    /// Write to attribute 0x0011 `OccupiedCoolingSetpoint`, in hundredths of a
-    /// degree Celsius. In `SystemMode::Auto` this is the range's upper bound.
-    SetOccupiedCoolingSetpoint { centi_celsius: i16 },
-
-    /// Write to attribute 0x0012 `OccupiedHeatingSetpoint`, in hundredths of a
-    /// degree Celsius. In `SystemMode::Auto` this is the range's lower bound.
-    SetOccupiedHeatingSetpoint { centi_celsius: i16 },
-
-    /// Command 0x00 `SetpointRaiseLower` — a real Matter command. `amount` is
-    /// a relative adjustment in tenths of a degree Celsius, so it requires a
-    /// known current setpoint to apply against.
+    /// Command 0x00 `SetpointRaiseLower`. `amount` is a relative adjustment
+    /// in tenths of a degree Celsius, so it requires a known current setpoint
+    /// to apply against.
     SetpointRaiseLower { mode: SetpointMode, amount: i8 },
 }
 

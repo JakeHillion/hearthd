@@ -48,6 +48,7 @@ use crate::engine::Integration;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
+use crate::matter::AttributeWrite;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::Endpoint;
@@ -487,29 +488,67 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         endpoint_id: EndpointId,
         command: ClusterCommand,
     ) -> Result<(), Box<dyn Error + Send>> {
-        let (serial, write) = {
-            let guard = self.inner.lock().await;
-            let device = guard
-                .devices
-                .get(&node_id)
-                .ok_or_else(|| -> Box<dyn Error + Send> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("unknown node: {node_id}"),
-                    ))
-                })?;
+        let (serial, write) = self
+            .translate_for(node_id, |state| {
+                wave3_matter::command_to_config_write(state, endpoint_id, &command)
+            })
+            .await?;
+        self.send_config_write(node_id, endpoint_id, &serial, write)
+            .await
+    }
 
-            let write = wave3_matter::command_to_config_write(&device.state, endpoint_id, &command)
-                .map_err(|e| -> Box<dyn Error + Send> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        e.to_string(),
-                    ))
-                })?;
+    /// Translate an attribute write and publish it.
+    async fn write_attribute(
+        &self,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        write: AttributeWrite,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        let (serial, write) = self
+            .translate_for(node_id, |state| {
+                wave3_matter::write_to_config_write(state, endpoint_id, &write)
+            })
+            .await?;
+        self.send_config_write(node_id, endpoint_id, &serial, write)
+            .await
+    }
 
-            (device.serial.clone(), write)
-        };
+    /// Run a translation against the node's cached state, returning the
+    /// device serial to address alongside the write it produced.
+    async fn translate_for(
+        &self,
+        node_id: NodeId,
+        translate: impl FnOnce(&DeviceState) -> Result<ConfigWrite, wave3_matter::CommandError>,
+    ) -> Result<(String, ConfigWrite), Box<dyn Error + Send>> {
+        let guard = self.inner.lock().await;
+        let device = guard
+            .devices
+            .get(&node_id)
+            .ok_or_else(|| -> Box<dyn Error + Send> {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("unknown node: {node_id}"),
+                ))
+            })?;
 
+        let write = translate(&device.state).map_err(|e| -> Box<dyn Error + Send> {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                e.to_string(),
+            ))
+        })?;
+
+        Ok((device.serial.clone(), write))
+    }
+
+    /// Publish a config write to the device and apply it to the cached state.
+    async fn send_config_write(
+        &self,
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        serial: &str,
+        write: ConfigWrite,
+    ) -> Result<(), Box<dyn Error + Send>> {
         if write.is_empty() {
             return Ok(());
         }
@@ -526,13 +565,13 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
             }
         };
 
-        Self::publish_config_write(&self.transport, &user_id, &serial, &write)
+        Self::publish_config_write(&self.transport, &user_id, serial, &write)
             .await
             .map_err(|e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        info!("sent EcoFlow command to node {node_id} endpoint {endpoint_id}: {command:?}");
+        info!("sent EcoFlow config write to node {node_id} endpoint {endpoint_id}: {write:?}");
 
         // Apply the commanded values immediately so readers do not lag a full
         // upload period. The next report overwrites them; if none ever
@@ -652,12 +691,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
                 node_id,
                 endpoint_id,
                 write,
-            } => Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "EcoFlow does not accept attribute writes: node {node_id} endpoint {endpoint_id} {write:?}"
-                ),
-            ))),
+            } => self.write_attribute(node_id, endpoint_id, write).await,
         }
     }
 
@@ -1011,6 +1045,48 @@ mod tests {
         assert!(
             payload.windows(expected.len()).any(|w| w == expected),
             "published frame does not carry cfg_sys_pause"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_attribute_write_is_published_as_a_config_write() {
+        let (mut integration, _inbound, state) = harness();
+        let (tx, mut rx) = mpsc::channel(64);
+
+        integration
+            .setup(tx, NodeIdAllocator::for_test())
+            .await
+            .unwrap();
+        next_engine_message(&mut rx).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let before = state.lock().await.published.len();
+
+        integration
+            .handle_message(ToIntegrationMessage::WriteAttribute {
+                node_id: NodeId::from_raw(1),
+                endpoint_id: wave3_matter::EP_AIR_CONDITIONER,
+                write: AttributeWrite {
+                    cluster: "Thermostat".into(),
+                    attribute: "occupied_cooling_setpoint".into(),
+                    value: serde_json::json!(2250),
+                },
+            })
+            .await
+            .expect("write should be accepted");
+
+        let state = state.lock().await;
+        assert_eq!(state.published.len(), before + 1);
+
+        let (_, payload) = state.published.last().unwrap();
+        let expected = ConfigWrite {
+            cfg_temp_set: Some(22.5),
+            ..Default::default()
+        }
+        .encode();
+        assert!(
+            payload.windows(expected.len()).any(|w| w == expected),
+            "published frame does not carry cfg_temp_set"
         );
     }
 
