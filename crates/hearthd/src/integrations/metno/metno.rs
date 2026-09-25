@@ -12,10 +12,8 @@ use tracing::warn;
 use super::Site;
 use super::forecast;
 use super::forecast::ForecastResponse;
-use crate::engine::Event;
 use crate::engine::Integration;
 use crate::engine::IntegrationSender;
-use crate::engine::NodeId;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::DeviceType;
@@ -51,7 +49,7 @@ fn user_agent() -> String {
 
 /// Live per-site state owned by the polling task.
 struct SiteState {
-    node_id: NodeId,
+    key: LocalKey,
     site: Site,
     /// Last cluster snapshot published to the engine, keyed by cluster name.
     last: HashMap<String, Cluster>,
@@ -154,7 +152,7 @@ impl MetnoIntegration {
                                 continue;
                             }
                             state.last.insert(name.to_string(), cluster.clone());
-                            Self::send_report(state.node_id, cluster, &to_engine).await;
+                            Self::send_report(&state.key, cluster, &to_engine).await;
                         }
                     }
                     Err(e) => {
@@ -165,21 +163,14 @@ impl MetnoIntegration {
         }
     }
 
-    async fn send_node_added(node_id: NodeId, node: Node, to_engine: &IntegrationSender) {
-        if let Err(e) = to_engine.send(Event::NodeAdded { node_id, node }).await {
+    async fn send_node_added(node: Node, to_engine: &IntegrationSender) {
+        if let Err(e) = to_engine.node_added(node).await {
             warn!("metno: failed to send NodeAdded: {}", e);
         }
     }
 
-    async fn send_report(node_id: NodeId, cluster: Cluster, to_engine: &IntegrationSender) {
-        if let Err(e) = to_engine
-            .send(Event::Report {
-                node_id,
-                endpoint_id: METNO_ENDPOINT,
-                cluster,
-            })
-            .await
-        {
+    async fn send_report(key: &LocalKey, cluster: Cluster, to_engine: &IntegrationSender) {
+        if let Err(e) = to_engine.report(key, METNO_ENDPOINT, cluster).await {
             warn!("metno: failed to send Report: {}", e);
         }
     }
@@ -192,8 +183,6 @@ impl Integration for MetnoIntegration {
     }
 
     async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
-        let node_ids = tx.allocator();
-
         // Left to itself reqwest has no crypto provider at all under
         // `rustls-no-provider`, and builds its roots from the host's trust
         // store, which is absent in a build sandbox or a minimal container.
@@ -213,16 +202,16 @@ impl Integration for MetnoIntegration {
         let mut sites = Vec::with_capacity(self.sites.len());
         for site in self.sites.drain(..) {
             let entity_id = format!("weather.{}", site.name);
-            let node_id = node_ids.allocate();
             let node = Self::build_node(&site.name, &entity_id);
+            let key = node.key.clone();
             // Seed the diff baseline with the same clusters we announce.
             let last = node.endpoints[&METNO_ENDPOINT].clusters.clone();
 
-            info!("metno: discovered weather node {} ({})", entity_id, node_id);
-            Self::send_node_added(node_id, node, &tx).await;
+            info!("metno: discovered weather node {} ({})", entity_id, key);
+            Self::send_node_added(node, &tx).await;
 
             sites.push(SiteState {
-                node_id,
+                key,
                 site,
                 last,
                 last_modified: None,
@@ -243,11 +232,11 @@ impl Integration for MetnoIntegration {
         msg: ToIntegrationMessage,
     ) -> Result<(), Box<dyn Error + Send>> {
         match msg {
-            ToIntegrationMessage::InvokeCommand { node_id, .. }
-            | ToIntegrationMessage::WriteAttribute { node_id, .. } => {
+            ToIntegrationMessage::InvokeCommand { key, .. }
+            | ToIntegrationMessage::WriteAttribute { key, .. } => {
                 Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("metno node {node_id} is read-only"),
+                    format!("metno site {key} is read-only"),
                 )))
             }
         }
@@ -262,6 +251,7 @@ impl Integration for MetnoIntegration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::NodeId;
 
     #[test]
     fn build_node_advertises_all_weather_clusters() {
