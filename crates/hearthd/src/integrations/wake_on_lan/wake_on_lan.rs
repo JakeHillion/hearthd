@@ -146,7 +146,6 @@ impl WolIntegration {
                 key,
                 endpoint_id,
                 command,
-                ..
             } => {
                 if endpoint_id != WOL_ENDPOINT {
                     anyhow::bail!("unknown endpoint {endpoint_id} on host {key}");
@@ -178,7 +177,6 @@ impl WolIntegration {
                 key,
                 endpoint_id,
                 write,
-                ..
             } => anyhow::bail!(
                 "wake_on_lan does not accept attribute writes: host {key} endpoint {endpoint_id} {write:?}"
             ),
