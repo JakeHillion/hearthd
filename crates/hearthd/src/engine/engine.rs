@@ -19,10 +19,15 @@ use super::integration::StreamReceiver;
 use super::integration::StreamSender;
 use super::integration::ToIntegrationSender;
 use super::message::ToIntegrationMessage;
+use super::names::ResolveError;
+use super::names::slug;
 use super::node_id::NodeKey;
 use super::state::State;
+use crate::config::AliasesConfig;
 use crate::engine::IntegrationContext;
 use crate::engine::NodeId;
+use crate::matter::LocalKey;
+use crate::matter::Node;
 
 /// hearthd engine
 ///
@@ -36,6 +41,10 @@ pub struct Engine {
     /// its local key. Routes invokes and writes, and is what makes a node id
     /// mean one thing for as long as it is bound.
     bindings: std::sync::Mutex<HashMap<NodeId, NodeKey>>,
+
+    /// What each configured alias names. The ids they resolve to live in the
+    /// state snapshot; this keeps the target for diagnostics.
+    aliases: HashMap<String, NodeKey>,
 
     /// Communication channels to integrations (for commands)
     integration_channels: HashMap<String, ToIntegrationSender>,
@@ -58,6 +67,24 @@ fn engine_error(message: String) -> Box<dyn Error + Send> {
     Box::new(std::io::Error::other(message))
 }
 
+/// The slugged name `node` is addressed by, if it has one.
+fn discovered_name(node: &Node) -> Option<String> {
+    node.name
+        .as_deref()
+        .map(slug)
+        .filter(|name| !name.is_empty())
+}
+
+/// Take `node_id` out from under `name`, dropping the entry once empty.
+fn forget_name(state: &mut State, name: &str, node_id: NodeId) {
+    if let Some(ids) = state.names.get_mut(name) {
+        ids.retain(|id| *id != node_id);
+        if ids.is_empty() {
+            state.names.remove(name);
+        }
+    }
+}
+
 impl Engine {
     /// Create a new Engine instance
     pub fn new() -> Self {
@@ -65,11 +92,31 @@ impl Engine {
         Self {
             state: ArcSwap::new(Arc::default()),
             bindings: std::sync::Mutex::new(HashMap::new()),
+            aliases: HashMap::new(),
             integration_channels: HashMap::new(),
             event_rx: Mutex::new(event_rx),
             event_tx,
             integration_handles: Vec::new(),
         }
+    }
+
+    /// Install the configured aliases.
+    ///
+    /// Each alias names an integration and that integration's key for a
+    /// node, which is exactly what the node's id is derived from, so every
+    /// alias resolves from here on whether or not the node ever appears.
+    pub fn load_aliases(&mut self, aliases: &AliasesConfig) {
+        let mut state = State::clone(&self.state.load());
+        for (name, target) in &aliases.aliases {
+            let key = NodeKey {
+                integration: target.integration.as_str().into(),
+                local: LocalKey::from(target.key.as_str()),
+            };
+            let node_id = NodeId::derive(&key.integration, &key.local);
+            state.aliases.insert(name.clone(), node_id);
+            self.aliases.insert(name.clone(), key);
+        }
+        self.state.store(Arc::new(state));
     }
 
     /// Register integrations from configuration
@@ -92,6 +139,18 @@ impl Engine {
             };
             let name = integration.name().to_string();
             self.register_integration(name, integration);
+        }
+
+        for (alias, key) in &self.aliases {
+            if !self
+                .integration_channels
+                .contains_key(key.integration.as_ref())
+            {
+                warn!(
+                    "alias {alias} names {key}, but no integration called {} is running",
+                    key.integration
+                );
+            }
         }
 
         Ok(())
@@ -211,9 +270,33 @@ impl Engine {
         self.state.load_full()
     }
 
-    /// Resolve an entity_id alias to a NodeId via the state's reverse index.
-    pub fn resolve_entity_id(&self, entity_id: &str) -> Option<NodeId> {
-        self.state.load().by_entity_id.get(entity_id).copied()
+    /// Resolve a name to a node id.
+    ///
+    /// An alias wins. Otherwise a name exactly one node was discovered
+    /// under, otherwise the id itself in hex. Whether the node is currently
+    /// announced is a separate question, answered by the state snapshot.
+    pub fn resolve(&self, name: &str) -> Result<NodeId, ResolveError> {
+        let state = self.state.load();
+        if let Some(id) = state.aliases.get(name) {
+            return Ok(*id);
+        }
+        match state.names.get(name).map(Vec::as_slice) {
+            Some([id]) => return Ok(*id),
+            Some(ids) => {
+                return Err(ResolveError::Ambiguous {
+                    name: name.to_string(),
+                    ids: ids.to_vec(),
+                });
+            }
+            None => {}
+        }
+        name.parse()
+            .map_err(|_| ResolveError::Unknown(name.to_string()))
+    }
+
+    /// What a configured alias names, if `name` is one.
+    pub fn alias_target(&self, name: &str) -> Option<&NodeKey> {
+        self.aliases.get(name)
     }
 
     /// Put an event on the stream on behalf of the API.
@@ -239,7 +322,7 @@ impl Engine {
                 let Source::Integration(integration) = &source else {
                     return Err(engine_error(format!(
                         "node {node_id} ({}) announced by {source}, which owns no nodes",
-                        node.entity_id
+                        node.key
                     )));
                 };
                 let key = NodeKey {
@@ -262,7 +345,7 @@ impl Engine {
                     bindings.insert(node_id, key.clone());
                 }
 
-                info!("Node added: {} ({}) from {}", node_id, node.entity_id, key);
+                info!("Node added: {} ({})", node_id, key);
 
                 for (endpoint_id, endpoint) in &node.endpoints {
                     for (device_type, cluster_id) in endpoint.missing_mandatory_clusters() {
@@ -278,17 +361,40 @@ impl Engine {
 
                 {
                     let mut state = State::clone(&self.state.load());
-                    // Re-announcing an existing node is how an integration
-                    // reports a rename, so drop the name it used to answer to
-                    // rather than leaving a second alias that outlives the
-                    // node and survives its removal.
+                    let name = discovered_name(&node);
+
+                    // A re-announcement under a new name is how an
+                    // integration reports an upstream rename: the old name
+                    // stops resolving rather than lingering as a second one.
                     if let Some(previous) = state.nodes.get(&node_id) {
-                        if previous.entity_id != node.entity_id {
-                            let previous_entity_id = previous.entity_id.clone();
-                            state.by_entity_id.remove(&previous_entity_id);
+                        let old =
+                            discovered_name(previous).filter(|old| Some(old) != name.as_ref());
+                        if let Some(old) = old {
+                            forget_name(&mut state, &old, node_id);
                         }
                     }
-                    state.by_entity_id.insert(node.entity_id.clone(), node_id);
+
+                    if let Some(name) = name {
+                        let ids = state.names.entry(name.clone()).or_default();
+                        if !ids.contains(&node_id) {
+                            ids.push(node_id);
+                            ids.sort_unstable();
+                        }
+                        if ids.len() > 1 {
+                            warn!(
+                                "{name} now names {} nodes and resolves to none of them; an alias picks one",
+                                ids.len()
+                            );
+                        }
+                        if let Some(alias_id) = state.aliases.get(&name) {
+                            if *alias_id != node_id {
+                                warn!(
+                                    "node {node_id} is named {name}, which the alias {name} already gives to node {alias_id}"
+                                );
+                            }
+                        }
+                    }
+
                     state.nodes.insert(node_id, node);
                     self.state.store(Arc::new(state));
                 }
@@ -300,7 +406,9 @@ impl Engine {
                 {
                     let mut state = State::clone(&self.state.load());
                     if let Some(node) = state.nodes.remove(&node_id) {
-                        state.by_entity_id.remove(&node.entity_id);
+                        if let Some(name) = discovered_name(&node) {
+                            forget_name(&mut state, &name, node_id);
+                        }
                     }
                     self.state.store(Arc::new(state));
                 }
@@ -379,11 +487,10 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
+    use crate::config::AliasTarget;
     use crate::matter::AttributeWrite;
     use crate::matter::Cluster;
     use crate::matter::ClusterCommand;
-    use crate::matter::LocalKey;
-    use crate::matter::Node;
     use crate::matter::OnOffCluster;
     use crate::matter::OnOffCommand;
 
@@ -425,16 +532,43 @@ mod tests {
         }
     }
 
+    fn named(key: &str, name: &str) -> Node {
+        Node {
+            name: Some(name.to_string()),
+            ..lamp(key)
+        }
+    }
+
+    fn recorder_id(key: &str) -> NodeId {
+        NodeId::derive("recorder", &LocalKey::from(key))
+    }
+
+    /// An engine with one alias installed, before anything is registered.
+    fn engine_with_alias(alias: &str, integration: &str, key: &str) -> Engine {
+        let mut engine = Engine::new();
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            alias.to_string(),
+            AliasTarget {
+                integration: integration.to_string(),
+                key: key.to_string(),
+            },
+        );
+        engine.load_aliases(&AliasesConfig { aliases });
+        engine
+    }
+
     type Running = JoinHandle<Result<(), Box<dyn Error + Send>>>;
 
-    /// A running engine with the recorder registered, and the channel the
-    /// recorder forwards to.
-    fn running_engine() -> (
+    /// Register the recorder on `engine` and start it, returning the channel
+    /// the recorder forwards to.
+    fn start(
+        mut engine: Engine,
+    ) -> (
         Arc<Engine>,
         mpsc::UnboundedReceiver<ToIntegrationMessage>,
         Running,
     ) {
-        let mut engine = Engine::new();
         let (tx, rx) = mpsc::unbounded_channel();
         engine.register_integration("recorder".into(), Box::new(Recorder { tx }));
         let engine = Arc::new(engine);
@@ -443,6 +577,16 @@ mod tests {
             async move { engine.run().await }
         });
         (engine, rx, running)
+    }
+
+    /// A running engine with the recorder registered, and the channel the
+    /// recorder forwards to.
+    fn running_engine() -> (
+        Arc<Engine>,
+        mpsc::UnboundedReceiver<ToIntegrationMessage>,
+        Running,
+    ) {
+        start(Engine::new())
     }
 
     /// A running engine with one node announced by the recorder.
@@ -463,6 +607,16 @@ mod tests {
         (engine, node_id, rx, running)
     }
 
+    /// Announce `node` as the recorder and wait for the engine to apply it.
+    async fn announce(engine: &Engine, node: Node) {
+        engine
+            .sender_for("recorder")
+            .node_added(node)
+            .await
+            .expect("engine is running");
+        settled(engine).await;
+    }
+
     /// Put `event` on the stream as if `integration` had sent it, without
     /// the sender deriving the node id: how a test forges an announcement or
     /// report for an id the sender would never produce.
@@ -479,8 +633,6 @@ mod tests {
 
     /// Wait for the engine to have drained everything queued so far.
     async fn settled(engine: &Engine) {
-        // The API path goes through the same queue, so once a probe report
-        // for an unbound node has been dequeued everything before it has too.
         for _ in 0..50 {
             if engine.event_tx.capacity() == EVENT_CHANNEL_SIZE {
                 return;
@@ -549,7 +701,7 @@ mod tests {
     #[tokio::test]
     async fn a_node_announced_by_the_api_is_refused() {
         let (engine, _rx, running) = running_engine();
-        let node_id = NodeId::derive("recorder", &LocalKey::from("lamp-1"));
+        let node_id = recorder_id("lamp-1");
         engine
             .submit(Event::NodeAdded {
                 node_id,
@@ -632,5 +784,113 @@ mod tests {
         assert!(engine.state_snapshot().nodes.is_empty());
         assert_eq!(engine.binding(node_id).unwrap(), None);
         running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_alias_resolves_before_its_node_is_announced() {
+        let engine = engine_with_alias("lamp", "recorder", "lamp-1");
+
+        assert_eq!(engine.resolve("lamp"), Ok(recorder_id("lamp-1")));
+        assert!(engine.state_snapshot().nodes.is_empty());
+        assert_eq!(
+            engine.alias_target("lamp"),
+            Some(&NodeKey {
+                integration: "recorder".into(),
+                local: LocalKey::from("lamp-1"),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_discovered_name_resolves_once_announced() {
+        let (engine, _rx, running) = running_engine();
+        assert_eq!(
+            engine.resolve("living_room_lamp"),
+            Err(ResolveError::Unknown("living_room_lamp".into()))
+        );
+
+        announce(&engine, named("lamp-1", "Living Room Lamp")).await;
+
+        assert_eq!(
+            engine.resolve("living_room_lamp"),
+            Ok(recorder_id("lamp-1"))
+        );
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_alias_shadows_a_discovered_name() {
+        let (engine, _rx, running) = start(engine_with_alias("lamp", "recorder", "lamp-1"));
+
+        announce(&engine, named("lamp-2", "Lamp")).await;
+
+        assert_eq!(engine.resolve("lamp"), Ok(recorder_id("lamp-1")));
+        assert_eq!(
+            engine.state_snapshot().names["lamp"],
+            vec![recorder_id("lamp-2")]
+        );
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_rename_moves_the_discovered_name() {
+        let (engine, _rx, running) = running_engine();
+        announce(&engine, named("lamp-1", "Old")).await;
+        announce(&engine, named("lamp-1", "New")).await;
+
+        assert_eq!(
+            engine.resolve("old"),
+            Err(ResolveError::Unknown("old".into()))
+        );
+        assert_eq!(engine.resolve("new"), Ok(recorder_id("lamp-1")));
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn removal_keeps_the_alias_and_frees_the_discovered_name() {
+        let (engine, _rx, running) = start(engine_with_alias("lamp", "recorder", "lamp-1"));
+        announce(&engine, named("lamp-1", "Lamp")).await;
+
+        engine
+            .sender_for("recorder")
+            .node_removed(&LocalKey::from("lamp-1"))
+            .await
+            .expect("engine is running");
+        settled(&engine).await;
+
+        assert_eq!(engine.resolve("lamp"), Ok(recorder_id("lamp-1")));
+        let state = engine.state_snapshot();
+        assert!(state.nodes.is_empty());
+        assert!(state.names.is_empty());
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn two_nodes_discovered_under_one_name_are_ambiguous() {
+        let (engine, _rx, running) = running_engine();
+        announce(&engine, named("a", "Kitchen")).await;
+        announce(&engine, named("b", "Kitchen")).await;
+
+        let mut ids = vec![recorder_id("a"), recorder_id("b")];
+        ids.sort_unstable();
+        assert_eq!(
+            engine.resolve("kitchen"),
+            Err(ResolveError::Ambiguous {
+                name: "kitchen".into(),
+                ids,
+            })
+        );
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn an_id_in_hex_resolves_to_itself() {
+        let engine = Engine::new();
+        let id = recorder_id("lamp-1");
+        assert_eq!(engine.resolve(&id.to_string()), Ok(id));
+        assert_eq!(
+            engine.resolve("nonsense"),
+            Err(ResolveError::Unknown("nonsense".into()))
+        );
     }
 }

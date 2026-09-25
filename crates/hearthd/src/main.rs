@@ -74,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("hearthd starting");
     let mut engine = hearthd::Engine::new();
+    engine.load_aliases(&cfg.aliases);
 
     // Register integrations from config
     engine.register_integrations_from_config(&cfg)?;

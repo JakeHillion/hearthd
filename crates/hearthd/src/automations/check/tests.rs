@@ -338,7 +338,7 @@ fn test_check_pattern_nested() {
 #[test]
 fn test_check_pattern_with_two_fields() {
     let result =
-        check_and_pretty("observer { state = { nodes, by_entity_id, ... }, ... } /true/ { nodes }");
+        check_and_pretty("observer { state = { nodes, aliases, ... }, ... } /true/ { nodes }");
     insta::assert_snapshot!(result, @"
     Automation: observer
       Pattern:
@@ -346,7 +346,7 @@ fn test_check_pattern_with_two_fields() {
           FieldPattern: state
             PatternStruct:
               FieldPattern: nodes
-              FieldPattern: by_entity_id
+              FieldPattern: aliases
               Rest: ...
           Rest: ...
       Filter:
@@ -355,7 +355,7 @@ fn test_check_pattern_with_two_fields() {
         ExprStmt:
           Ident: nodes [type: Map<NodeId, Node>]
     Errors:
-      type error at 64..69: observer body must return [Event], found Map<NodeId, Node>
+      type error at 59..64: observer body must return [Event], found Map<NodeId, Node>
     ");
 }
 
