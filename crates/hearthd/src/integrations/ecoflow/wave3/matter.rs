@@ -54,6 +54,7 @@ use super::semantics::UserTempUnit;
 use super::state::DeviceState;
 use crate::matter::AttributeWrite;
 use crate::matter::BooleanStateCluster;
+use crate::matter::CLUSTER_NAME_DEHUMIDIFICATION_CONTROL;
 use crate::matter::CLUSTER_NAME_FAN_CONTROL;
 use crate::matter::CLUSTER_NAME_THERMOSTAT;
 use crate::matter::CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
@@ -61,7 +62,6 @@ use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::ControlSequenceOfOperation;
 use crate::matter::DehumidificationControlCluster;
-use crate::matter::DehumidificationControlCommand;
 use crate::matter::DeviceType;
 use crate::matter::ElectricalPowerMeasurementCluster;
 use crate::matter::Endpoint;
@@ -650,6 +650,15 @@ pub fn write_to_config_write(
             })
         }
 
+        (
+            EP_AIR_CONDITIONER,
+            CLUSTER_NAME_DEHUMIDIFICATION_CONTROL,
+            "rh_dehumidification_setpoint",
+        ) => Ok(ConfigWrite {
+            cfg_humi_set: Some(semantics::clamp_humi_set(value_as(write)?) as f32),
+            ..Default::default()
+        }),
+
         _ => Err(CommandError::UnsupportedWrite {
             endpoint,
             cluster: write.cluster.clone(),
@@ -670,13 +679,6 @@ pub fn command_to_config_write(
     match (endpoint, command) {
         (EP_AIR_CONDITIONER, ClusterCommand::OnOff(cmd)) => air_conditioner_power(state, cmd),
         (EP_AIR_CONDITIONER, ClusterCommand::Thermostat(cmd)) => thermostat_command(state, cmd),
-        (EP_AIR_CONDITIONER, ClusterCommand::DehumidificationControl(cmd)) => {
-            let DehumidificationControlCommand::SetRhDehumidificationSetpoint { percent } = cmd;
-            Ok(ConfigWrite {
-                cfg_humi_set: Some(semantics::clamp_humi_set(u32::from(*percent)) as f32),
-                ..Default::default()
-            })
-        }
         (EP_AIR_CONDITIONER, ClusterCommand::ModeSelect(cmd)) => {
             let ModeSelectCommand::ChangeToMode { new_mode } = cmd;
             let preset = Preset::from_wire(u32::from(*new_mode))
@@ -1656,11 +1658,13 @@ mod tests {
 
     #[test]
     fn a_humidity_setpoint_is_clamped_to_the_dry_mode_range() {
-        let write = write_for(
+        let write = write_for_attribute(
             &state_in_mode(4),
             EP_AIR_CONDITIONER,
-            ClusterCommand::DehumidificationControl(
-                DehumidificationControlCommand::SetRhDehumidificationSetpoint { percent: 95 },
+            attribute(
+                "DehumidificationControl",
+                "rh_dehumidification_setpoint",
+                serde_json::json!(95),
             ),
         );
         assert_eq!(write.cfg_humi_set, Some(80.0));
