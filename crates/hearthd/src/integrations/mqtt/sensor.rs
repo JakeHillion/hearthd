@@ -8,6 +8,7 @@ use crate::integrations::mqtt::light::Z2M_ENDPOINT;
 use crate::matter::Cluster;
 use crate::matter::DeviceType;
 use crate::matter::Endpoint;
+use crate::matter::LocalKey;
 use crate::matter::Node;
 use crate::matter::RelativeHumidityMeasurementCluster;
 use crate::matter::TemperatureMeasurementCluster;
@@ -61,6 +62,8 @@ struct Channel<T> {
 /// measurement clusters are populated from that shared payload.
 #[derive(Debug, Clone)]
 pub struct Sensor {
+    /// `sensor/<zigbee2mqtt node id>`.
+    pub key: LocalKey,
     pub entity_id: String,
     pub name: String,
     #[allow(dead_code)]
@@ -96,6 +99,7 @@ impl Sensor {
             .ok_or("Missing state_topic in discovery message")?;
 
         let mut sensor = Self {
+            key: LocalKey::from(format!("sensor/{node_id}")),
             entity_id,
             name,
             unique_id,
@@ -153,7 +157,7 @@ impl Sensor {
     }
 
     /// Build the Matter `Node` snapshot for this sensor.
-    pub fn to_node(&self, integration: &str) -> Node {
+    pub fn to_node(&self) -> Node {
         let mut endpoint = Endpoint::default();
         if let Some(temp) = &self.temperature {
             endpoint.clusters.insert(
@@ -174,8 +178,8 @@ impl Sensor {
         endpoints.insert(Z2M_ENDPOINT, endpoint);
 
         Node {
+            key: self.key.clone(),
             entity_id: self.entity_id.clone(),
-            integration: integration.to_string(),
             name: Some(self.name.clone()),
             endpoints,
         }
@@ -286,12 +290,12 @@ mod tests {
             "climate".to_string(),
         )
         .unwrap();
-        let endpoint = sensor.to_node("mqtt").endpoints[&Z2M_ENDPOINT].clone();
+        let endpoint = sensor.to_node().endpoints[&Z2M_ENDPOINT].clone();
         assert_eq!(endpoint.device_types, [DeviceType::TemperatureSensor]);
         assert_eq!(endpoint.missing_mandatory_clusters(), []);
 
         assert!(sensor.add_channel(Measurement::Humidity, &humidity_discovery()));
-        let endpoint = sensor.to_node("mqtt").endpoints[&Z2M_ENDPOINT].clone();
+        let endpoint = sensor.to_node().endpoints[&Z2M_ENDPOINT].clone();
         assert_eq!(
             endpoint.device_types,
             [DeviceType::TemperatureSensor, DeviceType::HumiditySensor]
@@ -311,7 +315,7 @@ mod tests {
 
         assert_eq!(sensor.name, "Living Room temperature");
         assert_eq!(sensor.state_topic, "zigbee2mqtt/climate_sensor");
-        let node = sensor.to_node("mqtt");
+        let node = sensor.to_node();
         let endpoint = node.endpoints.get(&Z2M_ENDPOINT).unwrap();
         assert!(
             endpoint
@@ -352,7 +356,7 @@ mod tests {
         // A repeat discovery for the same measurement is a no-op.
         assert!(!sensor.add_channel(Measurement::Humidity, &humidity_discovery()));
 
-        let node = sensor.to_node("mqtt");
+        let node = sensor.to_node();
         let endpoint = node.endpoints.get(&Z2M_ENDPOINT).unwrap();
         assert!(
             endpoint

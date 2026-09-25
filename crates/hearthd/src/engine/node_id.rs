@@ -20,6 +20,22 @@ use std::sync::atomic::Ordering;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::matter::LocalKey;
+
+/// What a node id is bound to: the integration that announced it and that
+/// integration's own name for the node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeKey {
+    pub integration: Arc<str>,
+    pub local: LocalKey,
+}
+
+impl std::fmt::Display for NodeKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.integration, self.local)
+    }
+}
+
 /// Locally assigned Matter node identifier.
 ///
 /// Obtainable only from [`NodeIdAllocator::allocate`]. `Deserialize` is the

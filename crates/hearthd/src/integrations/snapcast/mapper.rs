@@ -16,6 +16,7 @@ use crate::matter::EndpointId;
 use crate::matter::InputInfo;
 use crate::matter::InputType;
 use crate::matter::LevelControlCluster;
+use crate::matter::LocalKey;
 use crate::matter::MediaInputCluster;
 use crate::matter::MediaPlaybackCluster;
 use crate::matter::MediaPlaybackCommand;
@@ -27,8 +28,16 @@ use crate::matter::PlaybackState;
 /// Endpoint used for all Snapcast-derived nodes.
 pub const SNAPCAST_ENDPOINT: EndpointId = 1;
 
-/// Integration name reported to the engine.
-const INTEGRATION_NAME: &str = "snapcast";
+/// The local key for a group. Prefixed so that a group and a client can
+/// never share a key however Snapserver assigns their ids.
+pub fn group_key(group: &Group) -> LocalKey {
+    LocalKey::from(format!("group/{}", group.id))
+}
+
+/// The local key for a client.
+pub fn client_key(client: &Client) -> LocalKey {
+    LocalKey::from(format!("client/{}", client.id))
+}
 
 /// Matter's `CurrentLevel` maximum, as used by the other integrations.
 const MATTER_LEVEL_MAX: u32 = 254;
@@ -119,8 +128,8 @@ pub fn group_node(
     endpoints.insert(SNAPCAST_ENDPOINT, endpoint);
 
     Node {
+        key: group_key(group),
         entity_id: entity_id.to_string(),
-        integration: INTEGRATION_NAME.to_string(),
         name: Some(group_display_name(group)),
         endpoints,
     }
@@ -152,8 +161,8 @@ pub fn client_node(client: &Client, entity_id: &str) -> Node {
     endpoints.insert(SNAPCAST_ENDPOINT, endpoint);
 
     Node {
+        key: client_key(client),
         entity_id: entity_id.to_string(),
-        integration: INTEGRATION_NAME.to_string(),
         name: Some(client_display_name(client)),
         endpoints,
     }

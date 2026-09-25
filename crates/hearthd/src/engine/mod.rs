@@ -7,11 +7,13 @@ pub mod state;
 
 pub use engine::Engine;
 pub use event::Event;
-pub use integration::EventSender;
 pub use integration::Integration;
 pub use integration::IntegrationContext;
 pub use integration::IntegrationFactoryResult;
+pub use integration::IntegrationSender;
 pub use integration::REGISTRY as INTEGRATION_REGISTRY;
+#[cfg(test)]
+pub use integration::Stamped;
 pub use message::ToIntegrationMessage;
 pub use node_id::NodeId;
 pub use node_id::NodeIdAllocator;

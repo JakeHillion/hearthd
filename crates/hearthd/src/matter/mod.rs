@@ -308,14 +308,47 @@ impl Endpoint {
     }
 }
 
+/// The owning integration's own stable name for a node: a Zigbee address, a
+/// serial number, a config key. Paired with the integration's name it is what
+/// identifies the node; the integration is never told anything else.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, facet::Facet,
+)]
+#[serde(transparent)]
+pub struct LocalKey(String);
+
+impl LocalKey {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for LocalKey {
+    fn from(key: String) -> Self {
+        Self(key)
+    }
+}
+
+impl From<&str> for LocalKey {
+    fn from(key: &str) -> Self {
+        Self(key.to_string())
+    }
+}
+
+impl std::fmt::Display for LocalKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// A Matter node: a physical device addressable on the fabric.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, facet::Facet)]
 pub struct Node {
+    /// The owning integration's name for this node.
+    pub key: LocalKey,
+
     /// External alias used by API clients (e.g. "light.living_room").
     pub entity_id: String,
-
-    /// Name of the integration that owns this node (for command routing).
-    pub integration: String,
 
     /// Human-readable name from discovery, if any.
     pub name: Option<String>,
