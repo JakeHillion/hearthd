@@ -7,6 +7,7 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
 use serde::Deserialize;
@@ -16,6 +17,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::Engine;
 use crate::engine::Event;
+use crate::engine::NodeId;
+use crate::matter::AttributeWrite;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
 
@@ -43,9 +46,20 @@ struct EntityCommandRequest {
     command: ClusterCommand,
 }
 
-/// Response for POST /v1/entities/:id/command
+/// Request body for POST /v1/entities/:id/write
+///
+/// The body addresses a Matter endpoint within the resolved node and carries
+/// the attribute write to perform. Example:
+///   { "endpoint": 1, "write": { "cluster": "Thermostat", "attribute": "system_mode", "value": "Cool" } }
+#[derive(Debug, Deserialize)]
+struct EntityWriteRequest {
+    endpoint: EndpointId,
+    write: AttributeWrite,
+}
+
+/// Response for the POST /v1/entities/:id/{command,write} endpoints
 #[derive(Serialize)]
-struct EntityCommandResponse {
+struct SubmitResponse {
     success: bool,
     message: String,
 }
@@ -98,12 +112,51 @@ async fn get_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     (StatusCode::OK, Json(snapshot))
 }
 
-/// Handler for POST /v1/entities/{id}/command
-///
-/// Resolves the entity and puts an `Event::Invoke` on the engine's stream,
-/// so the command is ordered with every report and command before it.
-/// Answers once the event is queued; what the device did about it shows
+/// Resolve an entity and put the event `build` makes for its node on the
+/// engine's stream, so it is ordered with every report and request before
+/// it. Answers once the event is queued; what the device did about it shows
 /// up as a later report in `/v1/state`.
+async fn submit_for_entity(
+    state: &AppState,
+    entity_id: &str,
+    what: &str,
+    build: impl FnOnce(NodeId) -> Event,
+) -> Response {
+    let node_id = match state.engine.resolve_entity_id(entity_id) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(SubmitResponse {
+                    success: false,
+                    message: format!("Unknown entity: {}", entity_id),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match state.engine.submit(build(node_id)).await {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(SubmitResponse {
+                success: true,
+                message: format!("{} queued for entity {}", what, entity_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(SubmitResponse {
+                success: false,
+                message: format!("Engine is not accepting events: {}", e),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Handler for POST /v1/entities/{id}/command
 #[tracing::instrument(skip(state))]
 async fn send_entity_command(
     State(state): State<Arc<AppState>>,
@@ -117,43 +170,34 @@ async fn send_entity_command(
         request.command
     );
 
-    let node_id = match state.engine.resolve_entity_id(&entity_id) {
-        Some(id) => id,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(EntityCommandResponse {
-                    success: false,
-                    message: format!("Unknown entity: {}", entity_id),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    let event = Event::Invoke {
+    submit_for_entity(&state, &entity_id, "Command", |node_id| Event::Invoke {
         node_id,
         endpoint_id: request.endpoint,
         command: request.command,
-    };
-    match state.engine.submit(event).await {
-        Ok(()) => (
-            StatusCode::ACCEPTED,
-            Json(EntityCommandResponse {
-                success: true,
-                message: format!("Command queued for entity {}", entity_id),
-            }),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(EntityCommandResponse {
-                success: false,
-                message: format!("Engine is not accepting events: {}", e),
-            }),
-        )
-            .into_response(),
-    }
+    })
+    .await
+}
+
+/// Handler for POST /v1/entities/{id}/write
+#[tracing::instrument(skip(state))]
+async fn write_entity_attribute(
+    State(state): State<Arc<AppState>>,
+    Path(entity_id): Path<String>,
+    Json(request): Json<EntityWriteRequest>,
+) -> impl IntoResponse {
+    tracing::debug!(
+        "Handling POST /v1/entities/{}/write: endpoint={} write={:?}",
+        entity_id,
+        request.endpoint,
+        request.write
+    );
+
+    submit_for_entity(&state, &entity_id, "Write", |node_id| Event::Write {
+        node_id,
+        endpoint_id: request.endpoint,
+        write: request.write,
+    })
+    .await
 }
 
 /// Create the API router with all endpoints
@@ -163,6 +207,7 @@ fn create_router(state: Arc<AppState>) -> Router {
         .route("/v1/info", get(info))
         .route("/v1/state", get(get_state))
         .route("/v1/entities/{id}/command", post(send_entity_command))
+        .route("/v1/entities/{id}/write", post(write_entity_attribute))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

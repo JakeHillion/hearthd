@@ -5,6 +5,7 @@
 //! own. Both speak the Matter data model defined in `crate::matter`.
 
 use crate::engine::NodeId;
+use crate::matter::AttributeWrite;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
 
@@ -16,5 +17,12 @@ pub enum ToIntegrationMessage {
         node_id: NodeId,
         endpoint_id: EndpointId,
         command: ClusterCommand,
+    },
+
+    /// Write a Matter cluster attribute on the given endpoint.
+    WriteAttribute {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        write: AttributeWrite,
     },
 }

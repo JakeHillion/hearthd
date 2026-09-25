@@ -2,11 +2,12 @@
 //!
 //! Every producer feeds the same bounded queue and the engine loop consumes
 //! it in arrival order: reports and node lifecycle are applied to the
-//! snapshot, and invokes are routed to the integration that owns the node.
-//! Both speak the Matter data model defined in `crate::matter`; integrations
-//! translate their native representation at their boundary.
+//! snapshot, and invokes and writes are routed to the integration that owns
+//! the node. All speak the Matter data model defined in `crate::matter`;
+//! integrations translate their native representation at their boundary.
 
 use crate::engine::NodeId;
+use crate::matter::AttributeWrite;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
@@ -44,5 +45,18 @@ pub enum Event {
         endpoint_id: EndpointId,
         #[facet(opaque)]
         command: ClusterCommand,
+    },
+
+    /// An attribute write addressed to the integration that owns the node.
+    /// Like `Invoke`, a request: only a later `Report` says what the device
+    /// did about it.
+    ///
+    /// Opaque to Facet for the same reason as the command: the value is
+    /// JSON, and nothing reads the write's shape yet.
+    Write {
+        node_id: NodeId,
+        endpoint_id: EndpointId,
+        #[facet(opaque)]
+        write: AttributeWrite,
     },
 }

@@ -245,7 +245,8 @@ impl Integration for MetnoIntegration {
         msg: ToIntegrationMessage,
     ) -> Result<(), Box<dyn Error + Send>> {
         match msg {
-            ToIntegrationMessage::InvokeCommand { node_id, .. } => {
+            ToIntegrationMessage::InvokeCommand { node_id, .. }
+            | ToIntegrationMessage::WriteAttribute { node_id, .. } => {
                 Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!("metno node {node_id} is read-only"),
@@ -311,6 +312,25 @@ mod tests {
                 node_id: NodeId::from_raw(1),
                 endpoint_id: METNO_ENDPOINT,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
+            })
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn rejects_attribute_writes_as_read_only() {
+        use crate::matter::AttributeWrite;
+
+        let mut integration = MetnoIntegration::new(Vec::new());
+        let result = integration
+            .handle_message(ToIntegrationMessage::WriteAttribute {
+                node_id: NodeId::from_raw(1),
+                endpoint_id: METNO_ENDPOINT,
+                write: AttributeWrite {
+                    cluster: "TemperatureMeasurement".into(),
+                    attribute: "measured_value".into(),
+                    value: serde_json::json!(2100),
+                },
             })
             .await;
         assert!(result.is_err());

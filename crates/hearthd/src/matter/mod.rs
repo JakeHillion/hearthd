@@ -30,6 +30,7 @@ use serde::Serialize;
 mod clusters;
 mod commands;
 mod device_types;
+mod write;
 
 pub use clusters::BatChargeLevel;
 pub use clusters::BatChargeState;
@@ -129,6 +130,7 @@ pub use commands::SetpointMode;
 pub use commands::ThermostatCommand;
 pub use commands::ThermostatUserInterfaceConfigurationCommand;
 pub use device_types::DeviceType;
+pub use write::AttributeWrite;
 
 /// Endpoint identifier within a node (Matter endpoints are u16).
 pub type EndpointId = u16;
