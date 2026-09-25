@@ -64,7 +64,6 @@ struct Channel<T> {
 pub struct Sensor {
     /// `sensor/<zigbee2mqtt node id>`.
     pub key: LocalKey,
-    pub entity_id: String,
     pub name: String,
     #[allow(dead_code)]
     pub unique_id: String,
@@ -88,7 +87,6 @@ impl Sensor {
     pub fn from_discovery(
         discovery: DiscoveryMessage,
         measurement: Measurement,
-        entity_id: String,
         node_id: String,
     ) -> Result<Self, Box<dyn Error>> {
         let unique_id = discovery
@@ -105,7 +103,6 @@ impl Sensor {
 
         let mut sensor = Self {
             key: Self::key_for(&node_id),
-            entity_id,
             name,
             unique_id,
             device_info: discovery.device.clone(),
@@ -184,7 +181,6 @@ impl Sensor {
 
         Node {
             key: self.key.clone(),
-            entity_id: self.entity_id.clone(),
             name: Some(self.name.clone()),
             endpoints,
         }
@@ -291,7 +287,6 @@ mod tests {
         let mut sensor = Sensor::from_discovery(
             temperature_discovery(),
             Measurement::Temperature,
-            "sensor.climate".to_string(),
             "climate".to_string(),
         )
         .unwrap();
@@ -313,7 +308,6 @@ mod tests {
         let sensor = Sensor::from_discovery(
             temperature_discovery(),
             Measurement::Temperature,
-            "sensor.climate".to_string(),
             "climate".to_string(),
         )
         .unwrap();
@@ -338,12 +332,8 @@ mod tests {
     fn from_discovery_rejects_missing_state_topic() {
         let mut discovery = temperature_discovery();
         discovery.state_topic = None;
-        let result = Sensor::from_discovery(
-            discovery,
-            Measurement::Temperature,
-            "sensor.test".to_string(),
-            "test".to_string(),
-        );
+        let result =
+            Sensor::from_discovery(discovery, Measurement::Temperature, "test".to_string());
         assert!(result.is_err());
     }
 
@@ -352,7 +342,6 @@ mod tests {
         let mut sensor = Sensor::from_discovery(
             temperature_discovery(),
             Measurement::Temperature,
-            "sensor.climate".to_string(),
             "climate".to_string(),
         )
         .unwrap();
@@ -380,7 +369,6 @@ mod tests {
         let mut sensor = Sensor::from_discovery(
             temperature_discovery(),
             Measurement::Temperature,
-            "sensor.test".to_string(),
             "test".to_string(),
         )
         .unwrap();
@@ -405,7 +393,6 @@ mod tests {
         let mut sensor = Sensor::from_discovery(
             temperature_discovery(),
             Measurement::Temperature,
-            "sensor.test".to_string(),
             "test".to_string(),
         )
         .unwrap();

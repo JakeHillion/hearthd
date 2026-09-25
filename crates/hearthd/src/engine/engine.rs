@@ -526,7 +526,6 @@ mod tests {
     fn lamp(key: &str) -> Node {
         Node {
             key: LocalKey::from(key),
-            entity_id: "light.lamp".into(),
             name: None,
             endpoints: HashMap::new(),
         }

@@ -1,7 +1,6 @@
 //! Wake-on-LAN integration for hearthd.
 //!
-//! Each configured host is exposed as a `switch.<name>` entity whose `OnOff`
-//! attribute mirrors whether the host answers an ICMP ping. A background task
+//! Each configured host is exposed as a node whose `OnOff` attribute mirrors whether the host answers an ICMP ping. A background task
 //! pings each host on the configured interval and republishes the cluster only
 //! when reachability flips, so the switch state is a live "is it up" sensor.
 //!
@@ -62,8 +61,7 @@ const WOL_ENDPOINT: EndpointId = 1;
 /// Mutable runtime view of one configured host.
 #[derive(Debug, Clone)]
 struct Host {
-    /// Configuration key: the node's local key, also used for the entity id
-    /// (`switch.<key>`).
+    /// Configuration key: the node's local key.
     key: LocalKey,
     config: HostConfig,
     /// Display name.
@@ -328,7 +326,6 @@ fn node_for(host: &Host) -> Node {
 
     Node {
         key: host.key.clone(),
-        entity_id: format!("switch.{}", host.key),
         name: Some(host.name.clone()),
         endpoints,
     }

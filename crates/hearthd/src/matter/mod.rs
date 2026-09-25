@@ -347,9 +347,6 @@ pub struct Node {
     /// The owning integration's name for this node.
     pub key: LocalKey,
 
-    /// External alias used by API clients (e.g. "light.living_room").
-    pub entity_id: String,
-
     /// Human-readable name from discovery, if any.
     pub name: Option<String>,
 

@@ -66,7 +66,6 @@ const STALENESS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_
 
 /// One declared device and everything known about it.
 struct Device {
-    entity_id: String,
     name: String,
     serial: String,
     state: DeviceState,
@@ -82,7 +81,6 @@ impl Device {
     fn node(&self) -> Node {
         Node {
             key: LocalKey::from(self.serial.as_str()),
-            entity_id: self.entity_id.clone(),
             name: Some(self.name.clone()),
             endpoints: self.published.clone(),
         }
@@ -123,7 +121,6 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
             .map(|(name, device_config)| {
                 let state = DeviceState::default();
                 let device = Device {
-                    entity_id: format!("climate.{name}"),
                     name: device_config.name.clone().unwrap_or_else(|| name.clone()),
                     serial: device_config.serial.clone(),
                     published: wave3_matter::build_endpoints(&state),
@@ -594,7 +591,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
         };
 
         for node in nodes {
-            info!("declared EcoFlow device: {} ({})", node.entity_id, node.key);
+            info!("declared EcoFlow device: {}", node.key);
             if let Err(e) = tx.node_added(node).await {
                 warn!("failed to send NodeAdded: {e}");
             }
@@ -812,7 +809,6 @@ mod tests {
                     node_id,
                     NodeId::derive(INTEGRATION_NAME, &LocalKey::from(SERIAL))
                 );
-                assert_eq!(node.entity_id, "climate.bedroom");
                 assert_eq!(node.name.as_deref(), Some("Bedroom AC"));
                 assert_eq!(node.key, LocalKey::from(SERIAL));
                 // The full shape exists immediately; attributes are null.
