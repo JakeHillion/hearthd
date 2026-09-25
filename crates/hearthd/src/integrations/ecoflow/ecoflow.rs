@@ -44,11 +44,10 @@ use super::wave3::state::DeviceState;
 use super::wave3::wire;
 use crate::engine::Integration;
 use crate::engine::IntegrationSender;
+use crate::engine::Publisher;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::AttributeWrite;
-use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
-use crate::matter::Endpoint;
 use crate::matter::EndpointId;
 use crate::matter::LocalKey;
 use crate::matter::Node;
@@ -69,9 +68,6 @@ struct Device {
     name: String,
     serial: String,
     state: DeviceState,
-    /// Last endpoint map handed to the engine, so only genuine changes are
-    /// reported.
-    published: HashMap<EndpointId, Endpoint>,
     /// Whether this device's silence has already been reported, so the
     /// watchdog logs the transition rather than every check.
     stale_reported: bool,
@@ -82,7 +78,7 @@ impl Device {
         Node {
             key: LocalKey::from(self.serial.as_str()),
             name: Some(self.name.clone()),
-            endpoints: self.published.clone(),
+            endpoints: wave3_matter::build_endpoints(&self.state),
         }
     }
 }
@@ -108,7 +104,7 @@ pub struct EcoFlowIntegration<A: EcoFlowApi, T: Transport> {
     /// Command topics are user-scoped, so this is what makes a command
     /// sendable; its absence is how the integration knows it cannot send one.
     user_id: Arc<Mutex<Option<String>>>,
-    to_engine: Option<IntegrationSender>,
+    publisher: Option<Arc<Publisher>>,
     session_task: Option<JoinHandle<()>>,
     watchdog_task: Option<JoinHandle<()>>,
 }
@@ -123,7 +119,6 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
                 let device = Device {
                     name: device_config.name.clone().unwrap_or_else(|| name.clone()),
                     serial: device_config.serial.clone(),
-                    published: wave3_matter::build_endpoints(&state),
                     state,
                     stale_reported: false,
                 };
@@ -138,7 +133,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
             inner: Arc::new(Mutex::new(Inner { devices })),
             client_uuid: topics::random_uuid_hex(),
             user_id: Arc::new(Mutex::new(None)),
-            to_engine: None,
+            publisher: None,
             session_task: None,
             watchdog_task: None,
         }
@@ -194,7 +189,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         inner: SharedInner,
         client_uuid: String,
         user_id: Arc<Mutex<Option<String>>>,
-        to_engine: IntegrationSender,
+        publisher: Arc<Publisher>,
     ) {
         let mut backoff = Backoff::default();
 
@@ -206,7 +201,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
                 &inner,
                 &client_uuid,
                 &user_id,
-                &to_engine,
+                &publisher,
             )
             .await
             {
@@ -241,7 +236,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         inner: &SharedInner,
         client_uuid: &str,
         user_id: &Arc<Mutex<Option<String>>>,
-        to_engine: &IntegrationSender,
+        publisher: &Publisher,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Both calls run on every attempt: neither credential advertises its
         // expiry, so refreshing is cheaper than detecting staleness.
@@ -295,7 +290,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         }
 
         while let Some(message) = stream.next().await {
-            Self::handle_incoming(&message, inner, to_engine).await;
+            Self::handle_incoming(&message, inner, publisher).await;
         }
 
         Ok(())
@@ -324,11 +319,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
     /// A failure here logs and drops the message. Firmware revisions add
     /// fields and occasionally new command ids, so a decoding failure is not a
     /// reason to tear down a working connection.
-    async fn handle_incoming(
-        message: &Message,
-        inner: &SharedInner,
-        to_engine: &IntegrationSender,
-    ) {
+    async fn handle_incoming(message: &Message, inner: &SharedInner, publisher: &Publisher) {
         let serial = {
             let guard = inner.lock().await;
             // A serial always occupies a whole path segment, in both
@@ -377,7 +368,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         }
 
         let now = std::time::Instant::now();
-        let changed = {
+        let node = {
             let mut guard = inner.lock().await;
             let device = match guard.devices.get_mut(&serial) {
                 Some(device) => device,
@@ -413,49 +404,19 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
                 }
             }
 
-            Self::take_changed_clusters(device)
+            device.node()
         };
 
-        let key = LocalKey::from(serial);
-        for (endpoint_id, cluster) in changed {
-            Self::send_report(&key, endpoint_id, cluster, to_engine).await;
-        }
+        Self::publish(publisher, node).await;
     }
 
-    /// Rebuild the device's endpoints and return the clusters that differ from
-    /// what was last reported, updating the record of what has been published.
-    ///
-    /// Rebuilding wholesale and diffing keeps the merge logic free of
-    /// change-tracking bookkeeping. The endpoint map is small and the device
-    /// reports every few seconds, so the cost is irrelevant.
-    fn take_changed_clusters(device: &mut Device) -> Vec<(EndpointId, Cluster)> {
-        let rebuilt = wave3_matter::build_endpoints(&device.state);
-        let mut changed = Vec::new();
-
-        for (endpoint_id, endpoint) in &rebuilt {
-            for (name, cluster) in &endpoint.clusters {
-                let previous = device
-                    .published
-                    .get(endpoint_id)
-                    .and_then(|e| e.clusters.get(name));
-                if previous != Some(cluster) {
-                    changed.push((*endpoint_id, cluster.clone()));
-                }
-            }
-        }
-
-        device.published = rebuilt;
-        changed
-    }
-
-    async fn send_report(
-        key: &LocalKey,
-        endpoint_id: EndpointId,
-        cluster: Cluster,
-        to_engine: &IntegrationSender,
-    ) {
-        if let Err(e) = to_engine.report(key, endpoint_id, cluster).await {
-            warn!("failed to send Report: {e}");
+    /// Hand the device's whole node to the engine; the publisher works out
+    /// whether anything changed. The endpoint map is small and the device
+    /// reports every few seconds, so rebuilding it each time costs nothing
+    /// worth tracking.
+    async fn publish(publisher: &Publisher, node: Node) {
+        if let Err(e) = publisher.publish(node).await {
+            warn!("failed to publish {}: {e}", INTEGRATION_NAME);
         }
     }
 
@@ -548,21 +509,16 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         // Apply the commanded values immediately so readers do not lag a full
         // upload period. The next report overwrites them; if none ever
         // confirms or contradicts them, the command was probably lost.
-        let changed = {
+        let node = {
             let mut guard = self.inner.lock().await;
-            match guard.devices.get_mut(key.as_str()) {
-                Some(device) => {
-                    device.state.apply_optimistic(&write);
-                    Self::take_changed_clusters(device)
-                }
-                None => Vec::new(),
-            }
+            guard.devices.get_mut(key.as_str()).map(|device| {
+                device.state.apply_optimistic(&write);
+                device.node()
+            })
         };
 
-        if let Some(to_engine) = &self.to_engine {
-            for (endpoint_id, cluster) in changed {
-                Self::send_report(key, endpoint_id, cluster, to_engine).await;
-            }
+        if let (Some(publisher), Some(node)) = (&self.publisher, node) {
+            Self::publish(publisher, node).await;
         }
 
         Ok(())
@@ -580,7 +536,8 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
     }
 
     async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
-        self.to_engine = Some(tx.clone());
+        let publisher = Arc::new(Publisher::new(tx));
+        self.publisher = Some(publisher.clone());
 
         // Devices are declared, not discovered, so every node is known now.
         // Announcing them before any telemetry means the engine sees a stable
@@ -592,9 +549,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
 
         for node in nodes {
             info!("declared EcoFlow device: {}", node.key);
-            if let Err(e) = tx.node_added(node).await {
-                warn!("failed to send NodeAdded: {e}");
-            }
+            Self::publish(&publisher, node).await;
         }
 
         let api = self.api.clone();
@@ -610,7 +565,16 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
         }));
 
         self.session_task = Some(tokio::spawn(async move {
-            Self::session_loop(api, transport, config, inner, client_uuid, user_id, tx).await;
+            Self::session_loop(
+                api,
+                transport,
+                config,
+                inner,
+                client_uuid,
+                user_id,
+                publisher,
+            )
+            .await;
         }));
 
         Ok(())
@@ -666,6 +630,7 @@ mod tests {
     use crate::integrations::ecoflow::wave3::fields::display;
     use crate::integrations::ecoflow::wave3::wire::CMD_ID_DISPLAY_FULL;
     use crate::integrations::ecoflow::wave3::wire::encode_inbound_for_test;
+    use crate::matter::Cluster;
     use crate::matter::OnOffCommand;
 
     const SERIAL: &str = "AB123";
