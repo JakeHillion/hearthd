@@ -145,6 +145,11 @@ impl FunctionLowerer {
                 value: value.clone(),
                 unit: *unit,
             },
+            Op::EntityRef { domain, slug } => LirInstr::EntityRef {
+                dst,
+                domain: *domain,
+                slug: slug.clone(),
+            },
             Op::Unit => LirInstr::Unit { dst },
             Op::TypedBinOp {
                 op,
@@ -283,6 +288,7 @@ fn op_input_tmps(op: &Op) -> Vec<usize> {
         | Op::ConstString(_)
         | Op::ConstBool(_)
         | Op::ConstUnit { .. }
+        | Op::EntityRef { .. }
         | Op::Unit
         | Op::EmptyList => Vec::new(),
         Op::BinOp { left, right, .. } | Op::TypedBinOp { left, right, .. } => vec![left.0, right.0],

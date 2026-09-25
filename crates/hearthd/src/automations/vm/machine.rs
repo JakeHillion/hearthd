@@ -17,8 +17,11 @@ use super::suspension::Suspension;
 use super::value::IterState;
 use super::value::Pending;
 use super::value::Value;
-use crate::automations::bytecode::*;
+use crate::automations::bytecode::FunctionTag;
+use crate::automations::bytecode::Opcode;
+use crate::automations::bytecode::StructFieldTag;
 use crate::automations::check::function::FunctionIdentity;
+use crate::automations::relocate::Bytecode;
 
 /// Where [`Vm::poll`] stopped.
 ///
@@ -313,6 +316,14 @@ impl Vm {
                     self.regs[dst] = match &self.program.consts[idx] {
                         VmConst::Int(n) => Value::Int(*n),
                         _ => return Err(VmError::InvariantViolation("const idx not Int".into())),
+                    };
+                }
+                Opcode::LoadConstNode => {
+                    let dst = self.read_index();
+                    let idx = self.read_index();
+                    self.regs[dst] = match &self.program.consts[idx] {
+                        VmConst::Node(id) => Value::Node(*id),
+                        _ => return Err(VmError::InvariantViolation("const idx not Node".into())),
                     };
                 }
                 Opcode::LoadConstFloat => {

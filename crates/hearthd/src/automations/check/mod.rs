@@ -2,7 +2,6 @@
 //!
 //! Consumes `LoweredProgram` and produces a `CheckResult` containing:
 //! - A typed AST with resolved types on every expression
-//! - Entity constraints for runtime validation
 //! - Type errors (if any)
 
 use std::collections::HashMap;
@@ -11,10 +10,10 @@ use std::str::FromStr;
 use chumsky::span::SimpleSpan;
 use chumsky::span::Span;
 use facet::Facet;
+use strum::IntoEnumIterator;
 
 use self::function::FunctionIdentity;
 use self::typed::CheckResult;
-use self::typed::EntityConstraint;
 use self::typed::Ty;
 use self::typed::TypeError;
 use self::typed::TypedArg;
@@ -25,6 +24,7 @@ use self::typed::TypedProgram;
 use self::typed::TypedStmt;
 use self::typed::TypedStructField;
 use super::desugar::lowered;
+use super::domain::Domain;
 use super::lexer::UnitType;
 use super::parser::ast;
 use crate::engine::state;
@@ -264,6 +264,23 @@ impl TypeEnv {
 }
 
 // =============================================================================
+// Pattern scope
+// =============================================================================
+
+/// What one level of a destructuring pattern is taking fields from.
+///
+/// Most types have a closed set of fields known from their facet shape. A
+/// domain group does not: its fields are entity slugs, which is deployment
+/// knowledge the checker deliberately does not carry. Naming one is a
+/// symbol rather than a lookup, so it needs its own case.
+enum PatternScope {
+    /// A type with a known, closed set of fields.
+    Fields(HashMap<String, Ty>),
+    /// A domain group, where any slug names a `Node`.
+    Domain,
+}
+
+// =============================================================================
 // TypeChecker
 // =============================================================================
 
@@ -272,7 +289,6 @@ struct TypeChecker {
     registry: TypeRegistry,
     env: TypeEnv,
     errors: Vec<TypeError>,
-    constraints: Vec<EntityConstraint>,
 }
 
 impl Default for TypeChecker {
@@ -287,7 +303,6 @@ impl TypeChecker {
             registry: TypeRegistry::new(),
             env: TypeEnv::new(),
             errors: Vec::new(),
-            constraints: Vec::new(),
         }
     }
 
@@ -328,7 +343,6 @@ impl TypeChecker {
 
         CheckResult {
             program: typed,
-            constraints: self.constraints,
             errors: self.errors,
         }
     }
@@ -343,7 +357,7 @@ impl TypeChecker {
             ("state".into(), Ty::Named("State".into())),
         ]
         .into();
-        self.check_pattern(&auto.pattern, &input_fields);
+        self.check_pattern(&auto.pattern, &PatternScope::Fields(input_fields));
 
         let filter = auto.filter.as_ref().map(|f| {
             let typed = self.check_expr(f);
@@ -427,11 +441,7 @@ impl TypeChecker {
     // Pattern checking
     // =========================================================================
 
-    fn check_pattern(
-        &mut self,
-        pattern: &ast::Spanned<ast::Pattern>,
-        available_fields: &HashMap<String, Ty>,
-    ) {
+    fn check_pattern(&mut self, pattern: &ast::Spanned<ast::Pattern>, scope: &PatternScope) {
         match &pattern.node {
             ast::Pattern::Ident(name) => {
                 // Bind the whole struct as a single variable -- use a generic named type
@@ -440,21 +450,28 @@ impl TypeChecker {
             ast::Pattern::Struct { fields, .. } => {
                 for field in fields {
                     let field_name = &field.node.name;
-                    let field_ty = available_fields
-                        .get(field_name.as_str())
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            self.error(
-                                field.span,
-                                format!("unknown field '{}' in pattern", field_name),
-                            );
-                            Ty::Error
-                        });
+                    let field_ty = match scope {
+                        // Destructuring a domain group names an entity, which
+                        // is the same act as writing the path out. Any slug
+                        // type checks; the symbol records which one, and the
+                        // relocator decides whether this deployment has it.
+                        PatternScope::Domain => Ty::Named("Node".into()),
+                        PatternScope::Fields(available) => available
+                            .get(field_name.as_str())
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                self.error(
+                                    field.span,
+                                    format!("unknown field '{}' in pattern", field_name),
+                                );
+                                Ty::Error
+                            }),
+                    };
 
                     if let Some(sub_pattern) = &field.node.pattern {
                         // Nested destructuring: look up fields of the field's type
-                        let sub_fields = self.type_fields(&field_ty);
-                        self.check_pattern(sub_pattern, &sub_fields);
+                        let sub_scope = self.pattern_scope(&field_ty);
+                        self.check_pattern(sub_pattern, &sub_scope);
                     } else {
                         // Simple binding: bind field name to its type
                         self.env.bind(field_name.clone(), field_ty);
@@ -464,9 +481,33 @@ impl TypeChecker {
         }
     }
 
+    /// What a nested pattern on a value of `ty` is destructuring.
+    fn pattern_scope(&self, ty: &Ty) -> PatternScope {
+        match ty {
+            Ty::DomainGroup(_) => PatternScope::Domain,
+            _ => PatternScope::Fields(self.type_fields(ty)),
+        }
+    }
+
     /// Get the fields of a type for nested pattern matching.
+    ///
+    /// A domain group has no answer here — its slugs are deployment
+    /// knowledge the checker does not have — so it is handled by
+    /// [`PatternScope`] instead of by this map.
     fn type_fields(&self, ty: &Ty) -> HashMap<String, Ty> {
         match ty {
+            Ty::Named(name) if name == "State" => {
+                // Every domain is a field on `state`, whether or not the
+                // deployment has anything in it, laid over the facet shape
+                // so `nodes` and `by_entity_id` survive. This is the order
+                // `check_field_access` resolves a path in, so a pattern and
+                // a written-out path agree.
+                let mut fields = TypeRegistry::struct_fields(name).unwrap_or_default();
+                for domain in Domain::iter() {
+                    fields.insert(domain.to_string(), Ty::DomainGroup(domain));
+                }
+                fields
+            }
             Ty::Named(name) => TypeRegistry::struct_fields(name).unwrap_or_default(),
             _ => HashMap::new(),
         }
@@ -1017,6 +1058,23 @@ impl TypeChecker {
             return Ty::Error;
         }
 
+        // A field on `state` naming a domain is that domain's group. Every
+        // domain is a field, on every deployment: which devices a house has
+        // is not a question the checker asks, so `state.light` holds on a
+        // house with no lights and yields nothing at runtime.
+        if matches!(ty, Ty::Named(n) if n == "State") {
+            if let Some(domain) = Domain::parse(field) {
+                return Ty::DomainGroup(domain);
+            }
+        }
+
+        // A field on a domain group names one entity. That is the symbol the
+        // relocator resolves, and the only place an automation states which
+        // device it means.
+        if matches!(ty, Ty::DomainGroup(_)) {
+            return Ty::Named("Node".into());
+        }
+
         if let Some(field_ty) = self.registry.lookup_field(ty, field) {
             field_ty
         } else {
@@ -1398,6 +1456,13 @@ impl TypeChecker {
         // Int/Float coerce to Float
         if (*a == Ty::Int && *b == Ty::Float) || (*a == Ty::Float && *b == Ty::Int) {
             return Ty::Float;
+        }
+        // Two domain groups are the same type only if they are the same
+        // domain. There is no join: the language has no tagged unions, so a
+        // value that might be either has no type to give it, and a field on
+        // one would have no symbol to record.
+        if let (Ty::DomainGroup(_), Ty::DomainGroup(_)) = (a, b) {
+            return Ty::Error;
         }
         // Named types that are both Event variants unify to Event
         if self.is_event_type(a) && self.is_event_type(b) {
