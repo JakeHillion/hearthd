@@ -1,27 +1,13 @@
 //! Commands the engine can invoke on a cluster.
 //!
-//! # Attribute writes
-//!
-//! Matter drives a good deal of device behaviour by *writing attributes*
-//! rather than by invoking commands: a thermostat's setpoints and system mode,
-//! a fan's speed, and a panel's temperature-display unit are all attribute
-//! writes in the specification, and only a handful of genuine commands exist
-//! alongside them.
-//!
-//! hearthd's engine has no attribute-write path — `ToIntegrationMessage`
-//! carries `InvokeCommand` and nothing else. Rather than grow one in the same
-//! change that adds these clusters, the writes are modelled here as commands
-//! whose doc comment names the attribute they stand in for. Variants that
-//! correspond to a real Matter command say so explicitly.
-//!
-//! If an attribute-write path is added later, the `Set*` variants below are
-//! what should migrate onto it.
+//! Only genuine Matter commands live here: anything with a parameter beyond
+//! a value, anything relative, and anything the device sequences. Setting an
+//! attribute to a plain value is an [`AttributeWrite`](super::AttributeWrite).
 
 use serde::Deserialize;
 use serde::Serialize;
 
 use super::clusters::CLUSTER_ID_COLOR_CONTROL;
-use super::clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
 use super::clusters::CLUSTER_ID_LEVEL_CONTROL;
 use super::clusters::CLUSTER_ID_MEDIA_INPUT;
 use super::clusters::CLUSTER_ID_MEDIA_PLAYBACK;
@@ -103,13 +89,6 @@ pub enum ThermostatCommand {
     SetpointRaiseLower { mode: SetpointMode, amount: i8 },
 }
 
-/// DehumidificationControl cluster (0x0203) commands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum DehumidificationControlCommand {
-    /// Write to attribute 0x0002 `RHDehumidificationSetPoint` (whole percent).
-    SetRhDehumidificationSetpoint { percent: u8 },
-}
-
 /// ModeSelect cluster (0x0050) commands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ModeSelectCommand {
@@ -162,7 +141,6 @@ pub enum ClusterCommand {
     LevelControl(LevelControlCommand),
     ColorControl(ColorControlCommand),
     Thermostat(ThermostatCommand),
-    DehumidificationControl(DehumidificationControlCommand),
     ModeSelect(ModeSelectCommand),
     MediaPlayback(MediaPlaybackCommand),
     MediaInput(MediaInputCommand),
@@ -176,7 +154,6 @@ impl ClusterCommand {
             ClusterCommand::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
             ClusterCommand::ColorControl(_) => CLUSTER_ID_COLOR_CONTROL,
             ClusterCommand::Thermostat(_) => CLUSTER_ID_THERMOSTAT,
-            ClusterCommand::DehumidificationControl(_) => CLUSTER_ID_DEHUMIDIFICATION_CONTROL,
             ClusterCommand::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
             ClusterCommand::MediaPlayback(_) => CLUSTER_ID_MEDIA_PLAYBACK,
             ClusterCommand::MediaInput(_) => CLUSTER_ID_MEDIA_INPUT,

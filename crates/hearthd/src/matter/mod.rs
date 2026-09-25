@@ -119,7 +119,6 @@ pub use clusters::WeatherConditionCluster;
 pub use clusters::WindMeasurementCluster;
 pub use commands::ClusterCommand;
 pub use commands::ColorControlCommand;
-pub use commands::DehumidificationControlCommand;
 pub use commands::LevelControlCommand;
 pub use commands::MediaInputCommand;
 pub use commands::MediaPlaybackCommand;
