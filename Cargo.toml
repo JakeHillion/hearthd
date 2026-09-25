@@ -47,3 +47,4 @@ strum = { version = "0.28", features = ["derive"] }
 surge-ping = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+twox-hash = { version = "2", default-features = false, features = ["xxhash3_128"] }
