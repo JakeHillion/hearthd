@@ -127,7 +127,6 @@ pub use commands::ModeSelectCommand;
 pub use commands::OnOffCommand;
 pub use commands::SetpointMode;
 pub use commands::ThermostatCommand;
-pub use commands::ThermostatUserInterfaceConfigurationCommand;
 pub use device_types::DeviceType;
 pub use write::AttributeWrite;
 
