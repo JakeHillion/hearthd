@@ -12,6 +12,7 @@
 //! more than one refresh behind the last of them.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,15 +34,14 @@ use super::models::Client;
 use super::models::GetStatusResult;
 use super::models::Group;
 use super::models::Stream;
-use crate::engine::Event;
 use crate::engine::Integration;
 use crate::engine::IntegrationSender;
-use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::AttributeWrite;
+use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
+use crate::matter::LocalKey;
 use crate::matter::Node;
 
 /// Integration name reported to the engine.
@@ -64,21 +64,21 @@ enum CommandError {
     #[error("snapcast integration is not set up")]
     NotSetUp,
 
-    #[error("unknown endpoint {endpoint_id} on node {node_id}")]
+    #[error("unknown endpoint {endpoint_id} on {key}")]
     UnknownEndpoint {
-        node_id: NodeId,
+        key: LocalKey,
         endpoint_id: EndpointId,
     },
 
-    #[error("no snapcast command mapping for node {node_id} command {command:?}")]
+    #[error("no snapcast command mapping for {key} command {command:?}")]
     Unmapped {
-        node_id: NodeId,
+        key: LocalKey,
         command: ClusterCommand,
     },
 
-    #[error("snapcast does not accept attribute writes: node {node_id} {write:?}")]
+    #[error("snapcast does not accept attribute writes: {key} {write:?}")]
     UnsupportedWrite {
-        node_id: NodeId,
+        key: LocalKey,
         write: AttributeWrite,
     },
 
@@ -90,17 +90,9 @@ enum CommandError {
     },
 }
 
-/// Mutable view of the server, and the node identities derived from it.
+/// Mutable view of the server.
 #[derive(Default)]
 struct Inner {
-    /// Snapcast group id -> NodeId.
-    group_node_ids: HashMap<String, NodeId>,
-    /// Snapcast client id -> NodeId.
-    client_node_ids: HashMap<String, NodeId>,
-    /// NodeId -> Snapcast group id for command routing.
-    node_to_group: HashMap<NodeId, String>,
-    /// NodeId -> Snapcast client id for command routing.
-    node_to_client: HashMap<NodeId, String>,
     /// Current stream set.
     streams: HashMap<String, Stream>,
     /// Position of each stream id in the server's stream list, used as the
@@ -114,16 +106,28 @@ struct Inner {
     groups: HashMap<String, Group>,
     /// Current client state.
     clients: HashMap<String, Client>,
-    /// Last node published for each id, so a refresh can report what actually
+    /// Last node published for each key, so a refresh can report what actually
     /// changed instead of re-announcing everything.
-    published: HashMap<NodeId, Node>,
+    published: HashMap<LocalKey, Node>,
+}
+
+/// What a refresh found to tell the engine, collected under the lock and
+/// sent once it is released.
+#[derive(Debug)]
+enum Outgoing {
+    Added(Node),
+    Report {
+        key: LocalKey,
+        endpoint_id: EndpointId,
+        cluster: Cluster,
+    },
+    Removed(LocalKey),
 }
 
 /// Everything built during `setup` and shared with the background tasks.
 struct State {
     client: SnapcastRpcClient,
     to_engine: IntegrationSender,
-    node_ids: NodeIdAllocator,
     refresh_tx: mpsc::Sender<()>,
     inner: Mutex<Inner>,
 }
@@ -137,10 +141,6 @@ pub struct SnapcastIntegration {
 
 impl SnapcastIntegration {
     /// Create a new integration from configuration.
-    ///
-    /// Node ids are not allocated here: the engine hands the allocator to
-    /// `setup`, and that one is the only one whose ids are unique across
-    /// integrations.
     pub fn new(config: Config) -> Self {
         Self {
             config,
@@ -155,33 +155,29 @@ impl SnapcastIntegration {
 
         match msg {
             ToIntegrationMessage::InvokeCommand {
-                node_id,
+                key,
                 endpoint_id,
                 command,
                 ..
             } => {
                 if endpoint_id != mapper::SNAPCAST_ENDPOINT {
-                    return Err(CommandError::UnknownEndpoint {
-                        node_id,
-                        endpoint_id,
-                    });
+                    return Err(CommandError::UnknownEndpoint { key, endpoint_id });
                 }
+
+                let unmapped = || CommandError::Unmapped {
+                    key: key.clone(),
+                    command: command.clone(),
+                };
+                let target = mapper::target(&key).ok_or_else(unmapped)?;
 
                 let (method, params) = {
                     let inner = state.inner.lock().await;
                     let ctx = mapper::CommandContext {
-                        node_to_group: &inner.node_to_group,
-                        node_to_client: &inner.node_to_client,
                         groups: &inner.groups,
                         clients: &inner.clients,
                         stream_by_index: &inner.stream_by_index,
                     };
-                    mapper::command_to_rpc(node_id, &command, &ctx).ok_or_else(|| {
-                        CommandError::Unmapped {
-                            node_id,
-                            command: command.clone(),
-                        }
-                    })?
+                    mapper::command_to_rpc(target, &command, &ctx).ok_or_else(unmapped)?
                 };
 
                 debug!("Sending Snapcast RPC {method} {params}");
@@ -195,8 +191,8 @@ impl SnapcastIntegration {
                 // new state is published even if that notification is missed.
                 let _ = state.refresh_tx.try_send(());
             }
-            ToIntegrationMessage::WriteAttribute { node_id, write, .. } => {
-                return Err(CommandError::UnsupportedWrite { node_id, write });
+            ToIntegrationMessage::WriteAttribute { key, write, .. } => {
+                return Err(CommandError::UnsupportedWrite { key, write });
             }
         }
         Ok(())
@@ -228,17 +224,11 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
 
         let mut messages = Vec::new();
 
-        let mut live_groups: HashMap<String, NodeId> = HashMap::new();
-        let mut live_clients: HashMap<String, NodeId> = HashMap::new();
+        let mut live: HashSet<LocalKey> = HashSet::new();
         let mut groups = HashMap::new();
         let mut clients = HashMap::new();
 
         for group in &status.groups {
-            let node_id = match inner.group_node_ids.get(&group.id) {
-                Some(id) => *id,
-                None => state.node_ids.allocate(),
-            };
-            live_groups.insert(group.id.clone(), node_id);
             groups.insert(group.id.clone(), group.clone());
 
             let node = mapper::group_node(
@@ -247,42 +237,29 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
                 &inner.stream_indices,
                 &mapper::group_entity_id(group),
             );
-            publish(&mut inner, &mut messages, node_id, node);
+            live.insert(node.key.clone());
+            publish(&mut inner, &mut messages, node);
 
             for client in &group.clients {
-                let node_id = match inner.client_node_ids.get(&client.id) {
-                    Some(id) => *id,
-                    None => state.node_ids.allocate(),
-                };
-                live_clients.insert(client.id.clone(), node_id);
                 clients.insert(client.id.clone(), client.clone());
 
                 let node = mapper::client_node(client, &mapper::client_entity_id(client));
-                publish(&mut inner, &mut messages, node_id, node);
+                live.insert(node.key.clone());
+                publish(&mut inner, &mut messages, node);
             }
         }
 
-        let departed: Vec<NodeId> = inner
-            .group_node_ids
-            .iter()
-            .filter(|(id, _)| !live_groups.contains_key(*id))
-            .chain(
-                inner
-                    .client_node_ids
-                    .iter()
-                    .filter(|(id, _)| !live_clients.contains_key(*id)),
-            )
-            .map(|(_, node_id)| *node_id)
+        let departed: Vec<LocalKey> = inner
+            .published
+            .keys()
+            .filter(|key| !live.contains(*key))
+            .cloned()
             .collect();
-        for node_id in departed {
-            messages.push(Event::NodeRemoved { node_id });
-            inner.published.remove(&node_id);
+        for key in departed {
+            inner.published.remove(&key);
+            messages.push(Outgoing::Removed(key));
         }
 
-        inner.node_to_group = live_groups.iter().map(|(k, v)| (*v, k.clone())).collect();
-        inner.node_to_client = live_clients.iter().map(|(k, v)| (*v, k.clone())).collect();
-        inner.group_node_ids = live_groups;
-        inner.client_node_ids = live_clients;
         inner.groups = groups;
         inner.clients = clients;
 
@@ -300,7 +277,16 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
     // Sent with the lock released: the engine channel is bounded, so holding
     // it here would stall command handling behind a slow consumer.
     for message in messages {
-        if state.to_engine.send(message).await.is_err() {
+        let sent = match message {
+            Outgoing::Added(node) => state.to_engine.node_added(node).await,
+            Outgoing::Report {
+                key,
+                endpoint_id,
+                cluster,
+            } => state.to_engine.report(&key, endpoint_id, cluster).await,
+            Outgoing::Removed(key) => state.to_engine.node_removed(&key).await,
+        };
+        if sent.is_err() {
             return Err(RefreshError::EngineGone);
         }
     }
@@ -313,21 +299,15 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
 /// A node the engine has not seen is announced whole; one it already has
 /// reports only the clusters whose contents differ, which is what makes the
 /// engine emit attribute-change events rather than repeated discovery.
-fn publish(inner: &mut Inner, messages: &mut Vec<Event>, node_id: NodeId, node: Node) {
-    match inner.published.get(&node_id) {
+fn publish(inner: &mut Inner, messages: &mut Vec<Outgoing>, node: Node) {
+    match inner.published.get(&node.key) {
         // Identity is only carried by NodeAdded, so a device renamed in
         // Snapcast has to be re-announced rather than described by a cluster
         // diff that has no field for it.
         Some(previous) if previous.entity_id != node.entity_id || previous.name != node.name => {
-            messages.push(Event::NodeAdded {
-                node_id,
-                node: node.clone(),
-            });
+            messages.push(Outgoing::Added(node.clone()));
         }
-        None => messages.push(Event::NodeAdded {
-            node_id,
-            node: node.clone(),
-        }),
+        None => messages.push(Outgoing::Added(node.clone())),
         Some(previous) => {
             for (endpoint_id, endpoint) in &node.endpoints {
                 for (name, cluster) in &endpoint.clusters {
@@ -337,8 +317,8 @@ fn publish(inner: &mut Inner, messages: &mut Vec<Event>, node_id: NodeId, node: 
                         .and_then(|e| e.clusters.get(name))
                         .is_some_and(|p| p == cluster);
                     if !unchanged {
-                        messages.push(Event::Report {
-                            node_id,
+                        messages.push(Outgoing::Report {
+                            key: node.key.clone(),
                             endpoint_id: *endpoint_id,
                             cluster: cluster.clone(),
                         });
@@ -348,7 +328,7 @@ fn publish(inner: &mut Inner, messages: &mut Vec<Event>, node_id: NodeId, node: 
         }
     }
 
-    inner.published.insert(node_id, node);
+    inner.published.insert(node.key.clone(), node);
 }
 
 #[async_trait]
@@ -358,7 +338,6 @@ impl Integration for SnapcastIntegration {
     }
 
     async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
-        let node_ids = tx.allocator();
         let (client, mut events) = SnapcastRpcClient::new(
             self.config.host.clone(),
             self.config.port,
@@ -372,7 +351,6 @@ impl Integration for SnapcastIntegration {
         let state = Arc::new(State {
             client,
             to_engine: tx,
-            node_ids,
             refresh_tx: refresh_tx.clone(),
             inner: Mutex::new(Inner::default()),
         });
@@ -462,9 +440,7 @@ impl Integration for SnapcastIntegration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matter::Cluster;
     use crate::matter::Endpoint;
-    use crate::matter::LocalKey;
     use crate::matter::OnOffCluster;
 
     fn node(entity_id: &str, name: &str, on_off: bool) -> Node {
@@ -476,7 +452,7 @@ mod tests {
         let mut endpoints = HashMap::new();
         endpoints.insert(mapper::SNAPCAST_ENDPOINT, endpoint);
         Node {
-            key: LocalKey::from(entity_id),
+            key: LocalKey::from("client/a"),
             entity_id: entity_id.to_string(),
             name: Some(name.to_string()),
             endpoints,
@@ -487,13 +463,12 @@ mod tests {
     fn a_node_the_engine_has_not_seen_is_announced_whole() {
         let mut inner = Inner::default();
         let mut messages = Vec::new();
-        let id = NodeId::from_raw(1);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
 
         assert!(matches!(
             messages.as_slice(),
-            [Event::NodeAdded { node_id, .. }] if *node_id == id
+            [Outgoing::Added(node)] if node.key == LocalKey::from("client/a")
         ));
     }
 
@@ -505,11 +480,10 @@ mod tests {
         // node on the server.
         let mut inner = Inner::default();
         let mut messages = Vec::new();
-        let id = NodeId::from_raw(1);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
         messages.clear();
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
 
         assert!(messages.is_empty());
     }
@@ -518,21 +492,20 @@ mod tests {
     fn only_the_clusters_that_differ_are_reported() {
         let mut inner = Inner::default();
         let mut messages = Vec::new();
-        let id = NodeId::from_raw(1);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
         messages.clear();
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", false));
+        publish(&mut inner, &mut messages, node("speaker.a", "A", false));
 
         match messages.as_slice() {
             [
-                Event::Report {
-                    node_id,
+                Outgoing::Report {
+                    key,
                     endpoint_id,
                     cluster: Cluster::OnOff(c),
                 },
             ] => {
-                assert_eq!(*node_id, id);
+                assert_eq!(*key, LocalKey::from("client/a"));
                 assert_eq!(*endpoint_id, mapper::SNAPCAST_ENDPOINT);
                 assert!(!c.on_off);
             }
@@ -544,23 +517,21 @@ mod tests {
     fn a_renamed_node_is_reannounced() {
         // An attribute change has no field for the name or the entity id, so
         // a device renamed in Snapcast can only be reported by announcing it
-        // again under the same node id.
+        // again under the same key.
         let mut inner = Inner::default();
         let mut messages = Vec::new();
-        let id = NodeId::from_raw(1);
 
-        publish(&mut inner, &mut messages, id, node("speaker.a", "A", true));
+        publish(&mut inner, &mut messages, node("speaker.a", "A", true));
         messages.clear();
         publish(
             &mut inner,
             &mut messages,
-            id,
             node("speaker.kitchen", "Kitchen", true),
         );
 
         match messages.as_slice() {
-            [Event::NodeAdded { node_id, node }] => {
-                assert_eq!(*node_id, id);
+            [Outgoing::Added(node)] => {
+                assert_eq!(node.key, LocalKey::from("client/a"));
                 assert_eq!(node.entity_id, "speaker.kitchen");
                 assert_eq!(node.name.as_deref(), Some("Kitchen"));
             }

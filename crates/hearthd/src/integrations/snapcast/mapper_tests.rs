@@ -4,8 +4,8 @@
 mod tests {
     use std::collections::HashMap;
 
-    use crate::engine::NodeId;
     use crate::integrations::snapcast::mapper;
+    use crate::integrations::snapcast::mapper::Target;
     use crate::integrations::snapcast::models::Client;
     use crate::integrations::snapcast::models::ClientConfig;
     use crate::integrations::snapcast::models::GetStatusResult;
@@ -21,6 +21,7 @@ mod tests {
     use crate::matter::DeviceType;
     use crate::matter::InputType;
     use crate::matter::LevelControlCommand;
+    use crate::matter::LocalKey;
     use crate::matter::MediaInputCommand;
     use crate::matter::MediaPlaybackCommand;
     use crate::matter::OnOffCommand;
@@ -296,17 +297,13 @@ mod tests {
         }
     }
 
-    /// Command lookups over a single group and a single client.
+    /// Command lookups over the current groups, clients and streams.
     fn context<'a>(
         groups: &'a HashMap<String, Group>,
         clients: &'a HashMap<String, Client>,
-        node_to_group: &'a HashMap<NodeId, String>,
-        node_to_client: &'a HashMap<NodeId, String>,
         stream_by_index: &'a HashMap<u8, String>,
     ) -> mapper::CommandContext<'a> {
         mapper::CommandContext {
-            node_to_group,
-            node_to_client,
             groups,
             clients,
             stream_by_index,
@@ -592,19 +589,11 @@ mod tests {
 
     #[test]
     fn group_on_command_maps_to_set_mute_false() {
-        let mut node_to_group = HashMap::new();
-        node_to_group.insert(NodeId::from_raw(1), "g1".to_string());
         let command = ClusterCommand::OnOff(OnOffCommand::On);
-        let (groups, clients, node_to_client, by_index) = Default::default();
-        let ctx = context(
-            &groups,
-            &clients,
-            &node_to_group,
-            &node_to_client,
-            &by_index,
-        );
+        let (groups, clients, by_index) = Default::default();
+        let ctx = context(&groups, &clients, &by_index);
 
-        let (method, params) = mapper::command_to_rpc(NodeId::from_raw(1), &command, &ctx).unwrap();
+        let (method, params) = mapper::command_to_rpc(Target::Group("g1"), &command, &ctx).unwrap();
         assert_eq!(method, "Group.SetMute");
         assert_eq!(params["id"], "g1");
         assert_eq!(params["mute"], false);
@@ -615,21 +604,14 @@ mod tests {
         // Client.SetVolume carries both fields, so muting has to send the
         // percent the client already had. Inventing one resets the volume,
         // and unmuting then comes back at the invented level.
-        let mut node_to_client = HashMap::new();
-        node_to_client.insert(NodeId::from_raw(2), "c1".to_string());
         let mut clients = HashMap::new();
         clients.insert("c1".to_string(), client(false, 37, true));
-        let (groups, node_to_group, by_index) = Default::default();
-        let ctx = context(
-            &groups,
-            &clients,
-            &node_to_group,
-            &node_to_client,
-            &by_index,
-        );
+        let (groups, by_index) = Default::default();
+        let ctx = context(&groups, &clients, &by_index);
 
         let command = ClusterCommand::OnOff(OnOffCommand::Off);
-        let (method, params) = mapper::command_to_rpc(NodeId::from_raw(2), &command, &ctx).unwrap();
+        let (method, params) =
+            mapper::command_to_rpc(Target::Client("c1"), &command, &ctx).unwrap();
         assert_eq!(method, "Client.SetVolume");
         assert_eq!(params["volume"]["muted"], true);
         assert_eq!(params["volume"]["percent"], 37);
@@ -637,24 +619,17 @@ mod tests {
 
     #[test]
     fn client_volume_command_maps_to_set_volume() {
-        let mut node_to_client = HashMap::new();
-        node_to_client.insert(NodeId::from_raw(2), "c1".to_string());
         let mut clients = HashMap::new();
         clients.insert("c1".to_string(), client(true, 50, true));
-        let (groups, node_to_group, by_index) = Default::default();
-        let ctx = context(
-            &groups,
-            &clients,
-            &node_to_group,
-            &node_to_client,
-            &by_index,
-        );
+        let (groups, by_index) = Default::default();
+        let ctx = context(&groups, &clients, &by_index);
 
         let command = ClusterCommand::LevelControl(LevelControlCommand::MoveToLevel {
             level: mapper::percent_to_level(42),
             transition_time: None,
         });
-        let (method, params) = mapper::command_to_rpc(NodeId::from_raw(2), &command, &ctx).unwrap();
+        let (method, params) =
+            mapper::command_to_rpc(Target::Client("c1"), &command, &ctx).unwrap();
         assert_eq!(method, "Client.SetVolume");
         assert_eq!(params["id"], "c1");
         assert_eq!(params["volume"]["percent"], 42);
@@ -664,21 +639,13 @@ mod tests {
 
     #[test]
     fn media_input_select_maps_to_group_set_stream() {
-        let mut node_to_group = HashMap::new();
-        node_to_group.insert(NodeId::from_raw(1), "g1".to_string());
         let mut by_index = HashMap::new();
         by_index.insert(1u8, "airplay".to_string());
-        let (groups, clients, node_to_client) = Default::default();
-        let ctx = context(
-            &groups,
-            &clients,
-            &node_to_group,
-            &node_to_client,
-            &by_index,
-        );
+        let (groups, clients) = Default::default();
+        let ctx = context(&groups, &clients, &by_index);
 
         let command = ClusterCommand::MediaInput(MediaInputCommand::SelectInput { index: 1 });
-        let (method, params) = mapper::command_to_rpc(NodeId::from_raw(1), &command, &ctx).unwrap();
+        let (method, params) = mapper::command_to_rpc(Target::Group("g1"), &command, &ctx).unwrap();
         assert_eq!(method, "Group.SetStream");
         assert_eq!(params["id"], "g1");
         assert_eq!(params["stream_id"], "airplay");
@@ -688,41 +655,34 @@ mod tests {
     fn media_playback_controls_the_groups_current_stream() {
         // Not stream index 0: a group playing AirPlay must not have transport
         // commands land on whichever stream happens to be listed first.
-        let mut node_to_group = HashMap::new();
-        node_to_group.insert(NodeId::from_raw(1), "g1".to_string());
         let mut groups = HashMap::new();
         groups.insert("g1".to_string(), group("airplay"));
         let mut by_index = HashMap::new();
         by_index.insert(0u8, "spotify".to_string());
         by_index.insert(1u8, "airplay".to_string());
-        let (clients, node_to_client) = Default::default();
-        let ctx = context(
-            &groups,
-            &clients,
-            &node_to_group,
-            &node_to_client,
-            &by_index,
-        );
+        let clients = Default::default();
+        let ctx = context(&groups, &clients, &by_index);
 
         let command = ClusterCommand::MediaPlayback(MediaPlaybackCommand::Next);
-        let (method, params) = mapper::command_to_rpc(NodeId::from_raw(1), &command, &ctx).unwrap();
+        let (method, params) = mapper::command_to_rpc(Target::Group("g1"), &command, &ctx).unwrap();
         assert_eq!(method, "Stream.Control");
         assert_eq!(params["id"], "airplay");
         assert_eq!(params["command"], "next");
     }
 
     #[test]
-    fn commands_for_an_unknown_node_have_no_mapping() {
-        let (groups, clients, node_to_group, node_to_client, by_index) = Default::default();
-        let ctx = context(
-            &groups,
-            &clients,
-            &node_to_group,
-            &node_to_client,
-            &by_index,
+    fn local_keys_parse_back_to_their_target() {
+        let g = group("spotify");
+        assert_eq!(
+            mapper::target(&mapper::group_key(&g)),
+            Some(Target::Group(g.id.as_str()))
         );
-        let command = ClusterCommand::OnOff(OnOffCommand::On);
-        assert!(mapper::command_to_rpc(NodeId::from_raw(99), &command, &ctx).is_none());
+        let c = client(false, 50, true);
+        assert_eq!(
+            mapper::target(&mapper::client_key(&c)),
+            Some(Target::Client(c.id.as_str()))
+        );
+        assert_eq!(mapper::target(&LocalKey::from("nonsense")), None);
     }
 
     #[test]
@@ -730,25 +690,17 @@ mod tests {
         // Snapserver answers fastForward and rewind with "Command not
         // supported", so offering them would only produce a request that is
         // certain to fail.
-        let mut node_to_group = HashMap::new();
-        node_to_group.insert(NodeId::from_raw(1), "g1".to_string());
         let mut groups = HashMap::new();
         groups.insert("g1".to_string(), group("spotify"));
-        let (clients, node_to_client, by_index) = Default::default();
-        let ctx = context(
-            &groups,
-            &clients,
-            &node_to_group,
-            &node_to_client,
-            &by_index,
-        );
+        let (clients, by_index) = Default::default();
+        let ctx = context(&groups, &clients, &by_index);
 
         for cmd in [
             MediaPlaybackCommand::FastForward,
             MediaPlaybackCommand::Rewind,
         ] {
             let command = ClusterCommand::MediaPlayback(cmd);
-            assert!(mapper::command_to_rpc(NodeId::from_raw(1), &command, &ctx).is_none());
+            assert!(mapper::command_to_rpc(Target::Group("g1"), &command, &ctx).is_none());
         }
     }
 
