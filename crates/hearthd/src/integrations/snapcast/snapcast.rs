@@ -39,6 +39,7 @@ use crate::engine::Integration;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
+use crate::matter::AttributeWrite;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
 use crate::matter::Node;
@@ -73,6 +74,12 @@ enum CommandError {
     Unmapped {
         node_id: NodeId,
         command: ClusterCommand,
+    },
+
+    #[error("snapcast does not accept attribute writes: node {node_id} {write:?}")]
+    UnsupportedWrite {
+        node_id: NodeId,
+        write: AttributeWrite,
     },
 
     #[error("{method} failed")]
@@ -186,6 +193,9 @@ impl SnapcastIntegration {
                 // Snapserver notifies on change, but asking directly means the
                 // new state is published even if that notification is missed.
                 let _ = state.refresh_tx.try_send(());
+            }
+            ToIntegrationMessage::WriteAttribute { node_id, write, .. } => {
+                return Err(CommandError::UnsupportedWrite { node_id, write });
             }
         }
         Ok(())

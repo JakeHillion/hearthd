@@ -179,6 +179,13 @@ impl WolIntegration {
                     other => anyhow::bail!("no WoL mapping for node {node_id} command {other:?}"),
                 }
             }
+            ToIntegrationMessage::WriteAttribute {
+                node_id,
+                endpoint_id,
+                write,
+            } => anyhow::bail!(
+                "wake_on_lan does not accept attribute writes: node {node_id} endpoint {endpoint_id} {write:?}"
+            ),
         }
     }
 

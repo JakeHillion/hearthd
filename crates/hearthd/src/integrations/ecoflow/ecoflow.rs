@@ -648,6 +648,16 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
                 endpoint_id,
                 command,
             } => self.invoke_command(node_id, endpoint_id, command).await,
+            ToIntegrationMessage::WriteAttribute {
+                node_id,
+                endpoint_id,
+                write,
+            } => Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "EcoFlow does not accept attribute writes: node {node_id} endpoint {endpoint_id} {write:?}"
+                ),
+            ))),
         }
     }
 

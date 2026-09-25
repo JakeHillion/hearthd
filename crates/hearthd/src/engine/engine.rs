@@ -128,10 +128,11 @@ impl Engine {
         self.integration_handles.push(handle);
     }
 
-    /// Route a command to the integration that owns the target node.
-    fn send_command(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
+    /// Route a message to the integration that owns the target node.
+    fn send_to_owner(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
         let node_id = match &msg {
-            ToIntegrationMessage::InvokeCommand { node_id, .. } => *node_id,
+            ToIntegrationMessage::InvokeCommand { node_id, .. }
+            | ToIntegrationMessage::WriteAttribute { node_id, .. } => *node_id,
         };
 
         let map = self
@@ -291,10 +292,25 @@ impl Engine {
                     "Invoke: node={} endpoint={} command={:?}",
                     node_id, endpoint_id, command
                 );
-                self.send_command(ToIntegrationMessage::InvokeCommand {
+                self.send_to_owner(ToIntegrationMessage::InvokeCommand {
                     node_id,
                     endpoint_id,
                     command,
+                })?;
+            }
+            Event::Write {
+                node_id,
+                endpoint_id,
+                write,
+            } => {
+                info!(
+                    "Write: node={} endpoint={} write={:?}",
+                    node_id, endpoint_id, write
+                );
+                self.send_to_owner(ToIntegrationMessage::WriteAttribute {
+                    node_id,
+                    endpoint_id,
+                    write,
                 })?;
             }
         }
@@ -313,6 +329,7 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
+    use crate::matter::AttributeWrite;
     use crate::matter::ClusterCommand;
     use crate::matter::Node;
     use crate::matter::OnOffCommand;
@@ -350,10 +367,16 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn an_invoke_on_the_stream_reaches_the_owning_integration() {
+    /// A running engine with one recorded node owned by the recorder, and the
+    /// channel the recorder forwards to.
+    async fn engine_with_recorded_node() -> (
+        Arc<Engine>,
+        NodeId,
+        mpsc::UnboundedReceiver<ToIntegrationMessage>,
+        JoinHandle<Result<(), Box<dyn Error + Send>>>,
+    ) {
         let mut engine = Engine::new();
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
         engine.register_integration("recorder".into(), Box::new(Recorder { tx }));
         let engine = Arc::new(engine);
         let running = tokio::spawn({
@@ -374,6 +397,12 @@ mod tests {
             })
             .await
             .expect("engine is running");
+        (engine, node_id, rx, running)
+    }
+
+    #[tokio::test]
+    async fn an_invoke_on_the_stream_reaches_the_owning_integration() {
+        let (engine, node_id, mut rx, running) = engine_with_recorded_node().await;
         engine
             .submit(Event::Invoke {
                 node_id,
@@ -394,6 +423,35 @@ mod tests {
                 endpoint_id: 1,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
             } if n == node_id
+        ));
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_write_on_the_stream_reaches_the_owning_integration() {
+        let (engine, node_id, mut rx, running) = engine_with_recorded_node().await;
+        let write = AttributeWrite {
+            cluster: "Thermostat".into(),
+            attribute: "system_mode".into(),
+            value: serde_json::json!("Cool"),
+        };
+        engine
+            .submit(Event::Write {
+                node_id,
+                endpoint_id: 1,
+                write: write.clone(),
+            })
+            .await
+            .expect("engine is running");
+
+        let msg = rx.recv().await.expect("the integration receives the write");
+        assert!(matches!(
+            msg,
+            ToIntegrationMessage::WriteAttribute {
+                node_id: n,
+                endpoint_id: 1,
+                write: w,
+            } if n == node_id && w == write
         ));
         running.abort();
     }
