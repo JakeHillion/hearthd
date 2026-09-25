@@ -40,16 +40,16 @@ use tracing::warn;
 use super::config::Config;
 use super::config::HostConfig;
 use crate::engine::Event;
-use crate::engine::EventSender;
 use crate::engine::Integration;
+use crate::engine::IntegrationSender;
 use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::DeviceType;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
+use crate::matter::LocalKey;
 use crate::matter::Node;
 use crate::matter::OnOffCluster;
 use crate::matter::OnOffCommand;
@@ -81,7 +81,7 @@ struct State {
     /// Socket magic packets are sent through. Bound without a peer so each
     /// send targets its own computed broadcast address.
     socket: Arc<UdpSocket>,
-    to_engine: EventSender,
+    to_engine: IntegrationSender,
     hosts: Mutex<Vec<Host>>,
     ping_timeout: Duration,
 }
@@ -152,6 +152,7 @@ impl WolIntegration {
                 node_id,
                 endpoint_id,
                 command,
+                ..
             } => {
                 if endpoint_id != WOL_ENDPOINT {
                     anyhow::bail!("unknown endpoint {endpoint_id} on node {node_id}");
@@ -183,6 +184,7 @@ impl WolIntegration {
                 node_id,
                 endpoint_id,
                 write,
+                ..
             } => anyhow::bail!(
                 "wake_on_lan does not accept attribute writes: node {node_id} endpoint {endpoint_id} {write:?}"
             ),
@@ -190,7 +192,8 @@ impl WolIntegration {
     }
 
     /// Shared `setup` body, so the trait boundary can box the error once.
-    async fn setup_inner(&mut self, tx: EventSender, node_ids: NodeIdAllocator) -> Result<()> {
+    async fn setup_inner(&mut self, tx: IntegrationSender) -> Result<()> {
+        let node_ids = tx.allocator();
         let client =
             Client::new(&PingConfig::default()).context("failed to open the ICMP ping socket")?;
 
@@ -337,8 +340,8 @@ fn node_for(host: &Host) -> Node {
     endpoints.insert(WOL_ENDPOINT, endpoint);
 
     Node {
+        key: LocalKey::from(host.key.as_str()),
         entity_id: format!("switch.{}", host.key),
-        integration: INTEGRATION_NAME.to_string(),
         name: Some(host.name.clone()),
         endpoints,
     }
@@ -412,16 +415,12 @@ impl Integration for WolIntegration {
         INTEGRATION_NAME
     }
 
-    async fn setup(
-        &mut self,
-        tx: EventSender,
-        node_ids: NodeIdAllocator,
-    ) -> Result<(), Box<dyn Error + Send>> {
+    async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
         // Boxed once here rather than at every `?`: `Box<dyn Error + Send>`
         // has no blanket `From` impl, so a typed error inside keeps the body
         // free of per-site boxing. `anyhow::Error` converts through its own
         // `From<Error> for Box<dyn Error + Send>` impl.
-        self.setup_inner(tx, node_ids)
+        self.setup_inner(tx)
             .await
             .map_err(|e| -> Box<dyn Error + Send> { e.into() })
     }

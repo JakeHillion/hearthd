@@ -14,6 +14,7 @@ use crate::matter::Endpoint;
 use crate::matter::EndpointId;
 use crate::matter::LevelControlCluster;
 use crate::matter::LevelControlCommand;
+use crate::matter::LocalKey;
 use crate::matter::Node;
 use crate::matter::OnOffCluster;
 use crate::matter::OnOffCommand;
@@ -32,6 +33,9 @@ pub const Z2M_ENDPOINT: EndpointId = 1;
 /// Matter types.
 #[derive(Debug, Clone)]
 pub struct Light {
+    /// `light/<zigbee2mqtt node id>`: the component keeps a device that is
+    /// also, say, a sensor from claiming the same key twice.
+    pub key: LocalKey,
     pub entity_id: String,
     pub name: String,
     #[allow(dead_code)]
@@ -97,6 +101,7 @@ impl Light {
         };
 
         Ok(Self {
+            key: LocalKey::from(format!("light/{node_id}")),
             entity_id,
             name,
             unique_id,
@@ -139,7 +144,7 @@ impl Light {
     }
 
     /// Build the Matter `Node` snapshot for this entity.
-    pub fn to_node(&self, integration: &str) -> Node {
+    pub fn to_node(&self) -> Node {
         let mut endpoint = Endpoint::default().with_device_types([self.device_type()]);
         endpoint.clusters.insert(
             crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
@@ -162,8 +167,8 @@ impl Light {
         endpoints.insert(Z2M_ENDPOINT, endpoint);
 
         Node {
+            key: self.key.clone(),
             entity_id: self.entity_id.clone(),
-            integration: integration.to_string(),
             name: Some(self.name.clone()),
             endpoints,
         }
@@ -424,7 +429,7 @@ mod tests {
         let light =
             Light::from_discovery(discovery, "light.test".to_string(), "test_node".to_string())
                 .unwrap();
-        let node = light.to_node("mqtt");
+        let node = light.to_node();
         let endpoint = &node.endpoints[&Z2M_ENDPOINT];
         assert_eq!(endpoint.missing_mandatory_clusters(), []);
         assert_eq!(endpoint.device_types.len(), 1);

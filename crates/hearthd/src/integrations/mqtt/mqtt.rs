@@ -22,8 +22,8 @@ use super::light::Z2M_ENDPOINT;
 use super::sensor::Measurement;
 use super::sensor::Sensor;
 use crate::engine::Event;
-use crate::engine::EventSender;
 use crate::engine::Integration;
+use crate::engine::IntegrationSender;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
@@ -62,7 +62,7 @@ pub struct MqttIntegration<C: MqttClient> {
     client: Arc<Mutex<C>>,
     config: MqttConfig,
     inner: SharedInner,
-    to_engine: Option<EventSender>,
+    to_engine: Option<IntegrationSender>,
     /// Handle to the background message processing task
     _message_task: Option<JoinHandle<()>>,
 }
@@ -85,7 +85,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         config: MqttConfig,
         inner: SharedInner,
         node_ids: NodeIdAllocator,
-        to_engine: EventSender,
+        to_engine: IntegrationSender,
     ) {
         loop {
             let msg = {
@@ -128,7 +128,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
         node_ids: &NodeIdAllocator,
-        to_engine: &EventSender,
+        to_engine: &IntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
         let (component, node_id_str, object_id) =
             parse_discovery_topic(&msg.topic, &config.discovery_prefix).ok_or_else(
@@ -180,7 +180,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
         node_ids: &NodeIdAllocator,
-        to_engine: &EventSender,
+        to_engine: &IntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let entity_id = format!("light.{}", z2m_node_id);
@@ -212,7 +212,7 @@ impl<C: MqttClient> MqttIntegration<C> {
             })?;
 
         let state_topic = light.state_topic.clone();
-        let node = light.to_node(INTEGRATION_NAME);
+        let node = light.to_node();
         info!("Discovered light entity: {} ({})", light.name, entity_id);
 
         let node_id = node_ids.allocate();
@@ -241,7 +241,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
         node_ids: &NodeIdAllocator,
-        to_engine: &EventSender,
+        to_engine: &IntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let entity_id = format!("binary_sensor.{}", z2m_node_id);
@@ -291,7 +291,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         })?;
 
         let state_topic = sensor.state_topic.clone();
-        let node = sensor.to_node(INTEGRATION_NAME);
+        let node = sensor.to_node();
         info!(
             "Discovered binary sensor entity: {} ({})",
             sensor.name, entity_id
@@ -324,7 +324,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
         node_ids: &NodeIdAllocator,
-        to_engine: &EventSender,
+        to_engine: &IntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let entity_id = format!("sensor.{}", z2m_node_id);
@@ -376,7 +376,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     );
                     return Ok(());
                 }
-                sensor.to_node(INTEGRATION_NAME)
+                sensor.to_node()
             };
             info!("Added {:?} channel to sensor {}", measurement, entity_id);
             // Re-announce the node so the engine picks up the new cluster; the
@@ -399,7 +399,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         })?;
 
         let state_topic = sensor.state_topic.clone();
-        let node = sensor.to_node(INTEGRATION_NAME);
+        let node = sensor.to_node();
         info!("Discovered sensor entity: {} ({})", sensor.name, entity_id);
 
         let node_id = node_ids.allocate();
@@ -425,7 +425,11 @@ impl<C: MqttClient> MqttIntegration<C> {
     }
 
     /// Remove an entity given its entity_id alias and notify the engine.
-    async fn remove_entity_by_alias(entity_id: &str, inner: &SharedInner, to_engine: &EventSender) {
+    async fn remove_entity_by_alias(
+        entity_id: &str,
+        inner: &SharedInner,
+        to_engine: &IntegrationSender,
+    ) {
         let removed = {
             let mut guard = inner.lock().await;
             if let Some(&node_id) = guard.entity_to_node.get(entity_id) {
@@ -445,7 +449,11 @@ impl<C: MqttClient> MqttIntegration<C> {
         }
     }
 
-    async fn send_node_added(node_id: NodeId, node: crate::matter::Node, to_engine: &EventSender) {
+    async fn send_node_added(
+        node_id: NodeId,
+        node: crate::matter::Node,
+        to_engine: &IntegrationSender,
+    ) {
         if let Err(e) = to_engine.send(Event::NodeAdded { node_id, node }).await {
             warn!("Failed to send NodeAdded message: {}", e);
         }
@@ -455,7 +463,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         node_id: NodeId,
         endpoint_id: EndpointId,
         cluster: Cluster,
-        to_engine: &EventSender,
+        to_engine: &IntegrationSender,
     ) {
         if let Err(e) = to_engine
             .send(Event::Report {
@@ -472,7 +480,7 @@ impl<C: MqttClient> MqttIntegration<C> {
     async fn handle_state_update(
         msg: &MqttMessage,
         inner: &SharedInner,
-        to_engine: &EventSender,
+        to_engine: &IntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
         // Resolve topic → (NodeId, entity handle) and release the outer lock
         // before parsing the payload.
@@ -612,11 +620,8 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
         INTEGRATION_NAME
     }
 
-    async fn setup(
-        &mut self,
-        tx: EventSender,
-        node_ids: NodeIdAllocator,
-    ) -> Result<(), Box<dyn Error + Send>> {
+    async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
+        let node_ids = tx.allocator();
         self.to_engine = Some(tx.clone());
 
         info!(
@@ -668,6 +673,7 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
                 node_id,
                 endpoint_id,
                 command,
+                ..
             } => {
                 info!(
                     "Handling InvokeCommand for node {} endpoint {}: {:?}",
@@ -679,6 +685,7 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
                 node_id,
                 endpoint_id,
                 write,
+                ..
             } => {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,

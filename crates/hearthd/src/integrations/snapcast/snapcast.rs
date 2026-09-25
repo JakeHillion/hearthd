@@ -34,8 +34,8 @@ use super::models::GetStatusResult;
 use super::models::Group;
 use super::models::Stream;
 use crate::engine::Event;
-use crate::engine::EventSender;
 use crate::engine::Integration;
+use crate::engine::IntegrationSender;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
@@ -122,7 +122,7 @@ struct Inner {
 /// Everything built during `setup` and shared with the background tasks.
 struct State {
     client: SnapcastRpcClient,
-    to_engine: EventSender,
+    to_engine: IntegrationSender,
     node_ids: NodeIdAllocator,
     refresh_tx: mpsc::Sender<()>,
     inner: Mutex<Inner>,
@@ -158,6 +158,7 @@ impl SnapcastIntegration {
                 node_id,
                 endpoint_id,
                 command,
+                ..
             } => {
                 if endpoint_id != mapper::SNAPCAST_ENDPOINT {
                     return Err(CommandError::UnknownEndpoint {
@@ -356,11 +357,8 @@ impl Integration for SnapcastIntegration {
         INTEGRATION_NAME
     }
 
-    async fn setup(
-        &mut self,
-        tx: EventSender,
-        node_ids: NodeIdAllocator,
-    ) -> Result<(), Box<dyn Error + Send>> {
+    async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
+        let node_ids = tx.allocator();
         let (client, mut events) = SnapcastRpcClient::new(
             self.config.host.clone(),
             self.config.port,
@@ -466,6 +464,7 @@ mod tests {
     use super::*;
     use crate::matter::Cluster;
     use crate::matter::Endpoint;
+    use crate::matter::LocalKey;
     use crate::matter::OnOffCluster;
 
     fn node(entity_id: &str, name: &str, on_off: bool) -> Node {
@@ -477,8 +476,8 @@ mod tests {
         let mut endpoints = HashMap::new();
         endpoints.insert(mapper::SNAPCAST_ENDPOINT, endpoint);
         Node {
+            key: LocalKey::from(entity_id),
             entity_id: entity_id.to_string(),
-            integration: INTEGRATION_NAME.to_string(),
             name: Some(name.to_string()),
             endpoints,
         }

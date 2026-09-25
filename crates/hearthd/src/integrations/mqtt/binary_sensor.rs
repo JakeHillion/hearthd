@@ -13,6 +13,7 @@ use crate::matter::BooleanStateCluster;
 use crate::matter::Cluster;
 use crate::matter::DeviceType;
 use crate::matter::Endpoint;
+use crate::matter::LocalKey;
 use crate::matter::Node;
 use crate::matter::OccupancySensingCluster;
 
@@ -143,6 +144,8 @@ impl BinarySensorKind {
 /// kind calls for.
 #[derive(Debug, Clone)]
 pub struct BinarySensor {
+    /// `binary_sensor/<zigbee2mqtt node id>`.
+    pub key: LocalKey,
     pub entity_id: String,
     pub name: String,
     #[allow(dead_code)]
@@ -181,6 +184,7 @@ impl BinarySensor {
         let device_class = discovery.device_class.map(BinarySensorDeviceClass::from);
 
         Ok(Self {
+            key: LocalKey::from(format!("binary_sensor/{node_id}")),
             entity_id,
             name,
             unique_id,
@@ -206,7 +210,7 @@ impl BinarySensor {
     }
 
     /// Build the Matter `Node` snapshot for this sensor.
-    pub fn to_node(&self, integration: &str) -> Node {
+    pub fn to_node(&self) -> Node {
         let endpoint =
             Endpoint::from_clusters([self.cluster()]).with_device_types([self.kind.device_type()]);
 
@@ -214,8 +218,8 @@ impl BinarySensor {
         endpoints.insert(Z2M_ENDPOINT, endpoint);
 
         Node {
+            key: self.key.clone(),
             entity_id: self.entity_id.clone(),
-            integration: integration.to_string(),
             name: Some(self.name.clone()),
             endpoints,
         }
@@ -371,7 +375,7 @@ mod tests {
             "test".to_string(),
         )
         .unwrap();
-        let endpoint = sensor.to_node("mqtt").endpoints[&Z2M_ENDPOINT].clone();
+        let endpoint = sensor.to_node().endpoints[&Z2M_ENDPOINT].clone();
         assert_eq!(endpoint.device_types, [DeviceType::OccupancySensor]);
         assert_eq!(endpoint.missing_mandatory_clusters(), []);
     }
@@ -389,7 +393,7 @@ mod tests {
         )
         .unwrap();
 
-        let endpoint = sensor.to_node("mqtt").endpoints[&Z2M_ENDPOINT].clone();
+        let endpoint = sensor.to_node().endpoints[&Z2M_ENDPOINT].clone();
         assert_eq!(endpoint.device_types, [DeviceType::ContactSensor]);
         assert_eq!(endpoint.missing_mandatory_clusters(), []);
         assert!(!endpoint.clusters.contains_key("OccupancySensing"));

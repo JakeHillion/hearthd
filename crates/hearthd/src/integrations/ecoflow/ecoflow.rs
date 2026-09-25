@@ -43,16 +43,16 @@ use super::wave3::matter as wave3_matter;
 use super::wave3::state::DeviceState;
 use super::wave3::wire;
 use crate::engine::Event;
-use crate::engine::EventSender;
 use crate::engine::Integration;
+use crate::engine::IntegrationSender;
 use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::AttributeWrite;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
+use crate::matter::LocalKey;
 use crate::matter::Node;
 
 /// Integration name reported to the engine.
@@ -84,8 +84,8 @@ struct Device {
 impl Device {
     fn node(&self) -> Node {
         Node {
+            key: LocalKey::from(self.serial.as_str()),
             entity_id: self.entity_id.clone(),
-            integration: INTEGRATION_NAME.to_string(),
             name: Some(self.name.clone()),
             endpoints: self.published.clone(),
         }
@@ -126,7 +126,7 @@ pub struct EcoFlowIntegration<A: EcoFlowApi, T: Transport> {
     /// Command topics are user-scoped, so this is what makes a command
     /// sendable; its absence is how the integration knows it cannot send one.
     user_id: Arc<Mutex<Option<String>>>,
-    to_engine: Option<EventSender>,
+    to_engine: Option<IntegrationSender>,
     session_task: Option<JoinHandle<()>>,
     watchdog_task: Option<JoinHandle<()>>,
 }
@@ -214,7 +214,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         inner: SharedInner,
         client_uuid: String,
         user_id: Arc<Mutex<Option<String>>>,
-        to_engine: EventSender,
+        to_engine: IntegrationSender,
     ) {
         let mut backoff = Backoff::default();
 
@@ -261,7 +261,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         inner: &SharedInner,
         client_uuid: &str,
         user_id: &Arc<Mutex<Option<String>>>,
-        to_engine: &EventSender,
+        to_engine: &IntegrationSender,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Both calls run on every attempt: neither credential advertises its
         // expiry, so refreshing is cheaper than detecting staleness.
@@ -344,7 +344,11 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
     /// A failure here logs and drops the message. Firmware revisions add
     /// fields and occasionally new command ids, so a decoding failure is not a
     /// reason to tear down a working connection.
-    async fn handle_incoming(message: &Message, inner: &SharedInner, to_engine: &EventSender) {
+    async fn handle_incoming(
+        message: &Message,
+        inner: &SharedInner,
+        to_engine: &IntegrationSender,
+    ) {
         let node_id = {
             let guard = inner.lock().await;
             // A serial always occupies a whole path segment, in both
@@ -467,7 +471,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         node_id: NodeId,
         endpoint_id: EndpointId,
         cluster: Cluster,
-        to_engine: &EventSender,
+        to_engine: &IntegrationSender,
     ) {
         if let Err(e) = to_engine
             .send(Event::Report {
@@ -607,11 +611,8 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
         INTEGRATION_NAME
     }
 
-    async fn setup(
-        &mut self,
-        tx: EventSender,
-        node_ids: NodeIdAllocator,
-    ) -> Result<(), Box<dyn Error + Send>> {
+    async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
+        let node_ids = tx.allocator();
         self.to_engine = Some(tx.clone());
 
         // Devices are declared, not discovered, so every node is known now.
@@ -686,11 +687,13 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
                 node_id,
                 endpoint_id,
                 command,
+                ..
             } => self.invoke_command(node_id, endpoint_id, command).await,
             ToIntegrationMessage::WriteAttribute {
                 node_id,
                 endpoint_id,
                 write,
+                ..
             } => self.write_attribute(node_id, endpoint_id, write).await,
         }
     }
@@ -714,6 +717,8 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::engine::NodeIdAllocator;
+    use crate::engine::Stamped;
     use crate::integrations::ecoflow::cloud::auth::AuthError;
     use crate::integrations::ecoflow::cloud::auth::MqttCredentials;
     use crate::integrations::ecoflow::cloud::auth::Session;
@@ -839,30 +844,37 @@ mod tests {
         encode_inbound_for_test(CMD_ID_DISPLAY_FULL, &payload.into_vec(), 500, 66, 1, SERIAL)
     }
 
+    /// The integration's end of an engine stream, and the receiving end.
+    fn engine_channel() -> (IntegrationSender, mpsc::Receiver<Stamped>) {
+        let (tx, rx) = mpsc::channel(64);
+        (
+            IntegrationSender::new(INTEGRATION_NAME, tx, NodeIdAllocator::for_test()),
+            rx,
+        )
+    }
+
     /// Await a message from the engine channel, failing rather than hanging.
-    async fn next_engine_message(rx: &mut mpsc::Receiver<Event>) -> Event {
+    async fn next_engine_message(rx: &mut mpsc::Receiver<Stamped>) -> Event {
         tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("timed out waiting for a message from the integration")
             .expect("integration channel closed")
+            .event
     }
 
     #[tokio::test]
     async fn declared_devices_are_announced_before_any_telemetry() {
         let (mut integration, _inbound, _state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
 
         match next_engine_message(&mut rx).await {
             Event::NodeAdded { node_id, node } => {
                 assert_eq!(node_id, NodeId::from_raw(1));
                 assert_eq!(node.entity_id, "climate.bedroom");
                 assert_eq!(node.name.as_deref(), Some("Bedroom AC"));
-                assert_eq!(node.integration, INTEGRATION_NAME);
+                assert_eq!(node.key, LocalKey::from(SERIAL));
                 // The full shape exists immediately; attributes are null.
                 assert!(node.endpoints.contains_key(&wave3_matter::EP_BATTERY));
                 assert!(node.endpoints.contains_key(&wave3_matter::EP_POWER_PV));
@@ -874,12 +886,9 @@ mod tests {
     #[tokio::test]
     async fn a_session_subscribes_every_topic_and_asks_for_a_snapshot() {
         let (mut integration, _inbound, state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
         next_engine_message(&mut rx).await;
 
         // Let the session task authenticate, connect and subscribe.
@@ -910,12 +919,9 @@ mod tests {
     #[tokio::test]
     async fn telemetry_reaches_the_engine_as_attribute_changes() {
         let (mut integration, inbound, _state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
         next_engine_message(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -946,12 +952,9 @@ mod tests {
     #[tokio::test]
     async fn an_unrecognised_topic_is_ignored() {
         let (mut integration, inbound, _state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
         next_engine_message(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -972,12 +975,9 @@ mod tests {
     #[tokio::test]
     async fn our_own_echoed_commands_are_ignored() {
         let (mut integration, inbound, _state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
         next_engine_message(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -1006,12 +1006,9 @@ mod tests {
         // device stays quiet. If publishing needed the same lock, no command
         // would ever go out.
         let (mut integration, _inbound, state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
         next_engine_message(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -1021,6 +1018,7 @@ mod tests {
             Duration::from_secs(5),
             integration.handle_message(ToIntegrationMessage::InvokeCommand {
                 node_id: NodeId::from_raw(1),
+                key: LocalKey::from(SERIAL),
                 endpoint_id: wave3_matter::EP_AIR_CONDITIONER,
                 command: ClusterCommand::OnOff(OnOffCommand::Off),
             }),
@@ -1051,12 +1049,9 @@ mod tests {
     #[tokio::test]
     async fn an_attribute_write_is_published_as_a_config_write() {
         let (mut integration, _inbound, state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
         next_engine_message(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -1065,6 +1060,7 @@ mod tests {
         integration
             .handle_message(ToIntegrationMessage::WriteAttribute {
                 node_id: NodeId::from_raw(1),
+                key: LocalKey::from(SERIAL),
                 endpoint_id: wave3_matter::EP_AIR_CONDITIONER,
                 write: AttributeWrite {
                     cluster: "Thermostat".into(),
@@ -1093,18 +1089,16 @@ mod tests {
     #[tokio::test]
     async fn an_optimistic_update_is_reported_without_waiting_for_the_device() {
         let (mut integration, _inbound, _state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
         next_engine_message(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         integration
             .handle_message(ToIntegrationMessage::InvokeCommand {
                 node_id: NodeId::from_raw(1),
+                key: LocalKey::from(SERIAL),
                 endpoint_id: wave3_matter::EP_BEEPER,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
             })
@@ -1127,18 +1121,16 @@ mod tests {
     #[tokio::test]
     async fn a_command_for_an_unknown_node_is_refused() {
         let (mut integration, _inbound, _state) = harness();
-        let (tx, mut rx) = mpsc::channel(64);
+        let (tx, mut rx) = engine_channel();
 
-        integration
-            .setup(tx, NodeIdAllocator::for_test())
-            .await
-            .unwrap();
+        integration.setup(tx).await.unwrap();
         next_engine_message(&mut rx).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let result = integration
             .handle_message(ToIntegrationMessage::InvokeCommand {
                 node_id: NodeId::from_raw(99),
+                key: LocalKey::from(SERIAL),
                 endpoint_id: wave3_matter::EP_AIR_CONDITIONER,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
             })

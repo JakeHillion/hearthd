@@ -11,11 +11,15 @@ use tracing::info;
 use tracing::warn;
 
 use super::event::Event;
-use super::integration::EventReceiver;
-use super::integration::EventSender;
 use super::integration::Integration;
+use super::integration::IntegrationSender;
+use super::integration::Source;
+use super::integration::Stamped;
+use super::integration::StreamReceiver;
+use super::integration::StreamSender;
 use super::integration::ToIntegrationSender;
 use super::message::ToIntegrationMessage;
+use super::node_id::NodeKey;
 use super::state::State;
 use crate::engine::IntegrationContext;
 use crate::engine::NodeId;
@@ -29,17 +33,19 @@ pub struct Engine {
     /// Centralized state snapshot (readers load the Arc, writer stores a new one)
     state: ArcSwap<State>,
 
-    /// Map of NodeId -> integration name for routing commands.
-    node_integration_map: std::sync::Mutex<HashMap<NodeId, String>>,
+    /// What each node id is bound to: the integration that announced it and
+    /// its local key. Routes invokes and writes, and is what makes a node id
+    /// mean one thing for as long as it is bound.
+    bindings: std::sync::Mutex<HashMap<NodeId, NodeKey>>,
 
     /// Communication channels to integrations (for commands)
     integration_channels: HashMap<String, ToIntegrationSender>,
 
     /// The consuming end of the event stream, held by `run`.
-    event_rx: Mutex<EventReceiver>,
+    event_rx: Mutex<StreamReceiver>,
 
     /// The producing end of the event stream, cloned to every producer.
-    event_tx: EventSender,
+    event_tx: StreamSender,
 
     /// Handles for integration tasks
     integration_handles: Vec<JoinHandle<()>>,
@@ -53,13 +59,17 @@ pub struct Engine {
 /// faster than the engine can process.
 const EVENT_CHANNEL_SIZE: usize = 1024;
 
+fn engine_error(message: String) -> Box<dyn Error + Send> {
+    Box::new(std::io::Error::other(message))
+}
+
 impl Engine {
     /// Create a new Engine instance
     pub fn new() -> Self {
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
         Self {
             state: ArcSwap::new(Arc::default()),
-            node_integration_map: std::sync::Mutex::new(HashMap::new()),
+            bindings: std::sync::Mutex::new(HashMap::new()),
             integration_channels: HashMap::new(),
             event_rx: Mutex::new(event_rx),
             event_tx,
@@ -93,14 +103,18 @@ impl Engine {
         Ok(())
     }
 
+    /// The stream handle an integration of this name produces through.
+    fn sender_for(&self, name: &str) -> IntegrationSender {
+        IntegrationSender::new(name, self.event_tx.clone(), self.node_ids.clone())
+    }
+
     /// Register an integration with the engine
     ///
     /// This spawns the integration in a background task, wires up channels,
     /// and starts its setup process.
     pub fn register_integration(&mut self, name: String, mut integration: Box<dyn Integration>) {
         let (to_integration_tx, mut to_integration_rx) = mpsc::unbounded_channel();
-        let event_tx = self.event_tx.clone();
-        let node_ids = self.node_ids.clone();
+        let sender = self.sender_for(&name);
 
         self.integration_channels
             .insert(name.clone(), to_integration_tx);
@@ -108,7 +122,7 @@ impl Engine {
         // Spawn integration task
         let handle = tokio::spawn(async move {
             // Setup integration (gives it the sender for events)
-            if let Err(e) = integration.setup(event_tx, node_ids).await {
+            if let Err(e) = integration.setup(sender).await {
                 warn!("Integration '{}' setup failed: {}", name, e);
                 return;
             }
@@ -128,37 +142,54 @@ impl Engine {
         self.integration_handles.push(handle);
     }
 
-    /// Route a message to the integration that owns the target node.
-    fn send_to_owner(&self, msg: ToIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
-        let node_id = match &msg {
-            ToIntegrationMessage::InvokeCommand { node_id, .. }
-            | ToIntegrationMessage::WriteAttribute { node_id, .. } => *node_id,
-        };
-
-        let map = self
-            .node_integration_map
+    /// What `node_id` is currently bound to, if anything.
+    fn binding(&self, node_id: NodeId) -> Result<Option<NodeKey>, Box<dyn Error + Send>> {
+        let bindings = self
+            .bindings
             .lock()
-            .map_err(|e| -> Box<dyn Error + Send> {
-                Box::new(std::io::Error::other(e.to_string()))
+            .map_err(|e| engine_error(e.to_string()))?;
+        Ok(bindings.get(&node_id).cloned())
+    }
+
+    /// The binding for `node_id`, which must be owned by `source`.
+    fn owned_binding(
+        &self,
+        node_id: NodeId,
+        source: &Source,
+    ) -> Result<NodeKey, Box<dyn Error + Send>> {
+        let key = self.binding(node_id)?.ok_or_else(|| {
+            engine_error(format!("node {node_id} is not bound to any integration"))
+        })?;
+        match source {
+            Source::Integration(name) if *name == key.integration => Ok(key),
+            _ => Err(engine_error(format!(
+                "node {node_id} belongs to {}, not to {source}",
+                key.integration
+            ))),
+        }
+    }
+
+    /// Route a message to the integration that owns the target node.
+    fn send_to_owner(
+        &self,
+        node_id: NodeId,
+        message: impl FnOnce(NodeKey) -> ToIntegrationMessage,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        let key = self
+            .binding(node_id)?
+            .ok_or_else(|| engine_error(format!("No integration found for node: {node_id}")))?;
+
+        let tx = self
+            .integration_channels
+            .get(key.integration.as_ref())
+            .ok_or_else(|| {
+                engine_error(format!(
+                    "Integration channel not found: {}",
+                    key.integration
+                ))
             })?;
 
-        let integration_name = map.get(&node_id).ok_or_else(|| -> Box<dyn Error + Send> {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("No integration found for node: {}", node_id),
-            ))
-        })?;
-
-        let tx = self.integration_channels.get(integration_name).ok_or_else(
-            || -> Box<dyn Error + Send> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Integration channel not found: {}", integration_name),
-                ))
-            },
-        )?;
-
-        tx.send(msg)
+        tx.send(message(key))
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })
     }
 
@@ -169,8 +200,8 @@ impl Engine {
         info!("Engine starting");
 
         let mut rx = self.event_rx.lock().await;
-        while let Some(event) = rx.recv().await {
-            if let Err(e) = self.handle_event(event).await {
+        while let Some(stamped) = rx.recv().await {
+            if let Err(e) = self.handle_event(stamped).await {
                 warn!("Error handling event: {}", e);
             }
         }
@@ -191,30 +222,53 @@ impl Engine {
         self.state.load().by_entity_id.get(entity_id).copied()
     }
 
-    /// Put an event on the stream.
+    /// Put an event on the stream on behalf of the API.
     ///
     /// The one way anything other than an integration produces onto the
     /// stream. Waits while the queue is full, and fails only once the engine
     /// has stopped consuming.
     pub async fn submit(&self, event: Event) -> Result<(), Box<dyn Error + Send>> {
         self.event_tx
-            .send(event)
+            .send(Stamped {
+                source: Source::Api,
+                event,
+            })
             .await
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })
     }
 
     /// Handle one event off the stream.
-    async fn handle_event(&self, event: Event) -> Result<(), Box<dyn Error + Send>> {
+    async fn handle_event(&self, stamped: Stamped) -> Result<(), Box<dyn Error + Send>> {
+        let Stamped { source, event } = stamped;
         match event {
             Event::NodeAdded { node_id, node } => {
-                info!(
-                    "Node added: {} ({}) from {}",
-                    node_id, node.entity_id, node.integration
-                );
+                let Source::Integration(integration) = &source else {
+                    return Err(engine_error(format!(
+                        "node {node_id} ({}) announced by {source}, which owns no nodes",
+                        node.entity_id
+                    )));
+                };
+                let key = NodeKey {
+                    integration: integration.clone(),
+                    local: node.key.clone(),
+                };
 
-                if let Ok(mut map) = self.node_integration_map.lock() {
-                    map.insert(node_id, node.integration.clone());
+                {
+                    let mut bindings = self
+                        .bindings
+                        .lock()
+                        .map_err(|e| engine_error(e.to_string()))?;
+                    if let Some(existing) = bindings.get(&node_id) {
+                        if *existing != key {
+                            return Err(engine_error(format!(
+                                "node {node_id} is bound to {existing}, refusing to rebind it to {key}"
+                            )));
+                        }
+                    }
+                    bindings.insert(node_id, key.clone());
                 }
+
+                info!("Node added: {} ({}) from {}", node_id, node.entity_id, key);
 
                 for (endpoint_id, endpoint) in &node.endpoints {
                     for (device_type, cluster_id) in endpoint.missing_mandatory_clusters() {
@@ -246,6 +300,7 @@ impl Engine {
                 }
             }
             Event::NodeRemoved { node_id } => {
+                self.owned_binding(node_id, &source)?;
                 info!("Node removed: {}", node_id);
 
                 {
@@ -256,8 +311,8 @@ impl Engine {
                     self.state.store(Arc::new(state));
                 }
 
-                if let Ok(mut map) = self.node_integration_map.lock() {
-                    map.remove(&node_id);
+                if let Ok(mut bindings) = self.bindings.lock() {
+                    bindings.remove(&node_id);
                 }
             }
             Event::Report {
@@ -265,6 +320,7 @@ impl Engine {
                 endpoint_id,
                 cluster,
             } => {
+                self.owned_binding(node_id, &source)?;
                 info!(
                     "Report: node={} endpoint={} cluster={}",
                     node_id,
@@ -292,8 +348,9 @@ impl Engine {
                     "Invoke: node={} endpoint={} command={:?}",
                     node_id, endpoint_id, command
                 );
-                self.send_to_owner(ToIntegrationMessage::InvokeCommand {
+                self.send_to_owner(node_id, |key| ToIntegrationMessage::InvokeCommand {
                     node_id,
+                    key: key.local,
                     endpoint_id,
                     command,
                 })?;
@@ -307,8 +364,9 @@ impl Engine {
                     "Write: node={} endpoint={} write={:?}",
                     node_id, endpoint_id, write
                 );
-                self.send_to_owner(ToIntegrationMessage::WriteAttribute {
+                self.send_to_owner(node_id, |key| ToIntegrationMessage::WriteAttribute {
                     node_id,
+                    key: key.local,
                     endpoint_id,
                     write,
                 })?;
@@ -330,8 +388,11 @@ mod tests {
 
     use super::*;
     use crate::matter::AttributeWrite;
+    use crate::matter::Cluster;
     use crate::matter::ClusterCommand;
+    use crate::matter::LocalKey;
     use crate::matter::Node;
+    use crate::matter::OnOffCluster;
     use crate::matter::OnOffCommand;
 
     /// Forwards every message the engine sends it to a channel the test reads.
@@ -345,11 +406,7 @@ mod tests {
             "recorder"
         }
 
-        async fn setup(
-            &mut self,
-            _tx: EventSender,
-            _node_ids: NodeIdAllocator,
-        ) -> Result<(), Box<dyn Error + Send>> {
+        async fn setup(&mut self, _tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
             Ok(())
         }
 
@@ -367,13 +424,23 @@ mod tests {
         }
     }
 
-    /// A running engine with one recorded node owned by the recorder, and the
-    /// channel the recorder forwards to.
-    async fn engine_with_recorded_node() -> (
+    fn lamp(key: &str) -> Node {
+        Node {
+            key: LocalKey::from(key),
+            entity_id: "light.lamp".into(),
+            name: None,
+            endpoints: HashMap::new(),
+        }
+    }
+
+    type Running = JoinHandle<Result<(), Box<dyn Error + Send>>>;
+
+    /// A running engine with the recorder registered, and the channel the
+    /// recorder forwards to.
+    fn running_engine() -> (
         Arc<Engine>,
-        NodeId,
         mpsc::UnboundedReceiver<ToIntegrationMessage>,
-        JoinHandle<Result<(), Box<dyn Error + Send>>>,
+        Running,
     ) {
         let mut engine = Engine::new();
         let (tx, rx) = mpsc::unbounded_channel();
@@ -383,25 +450,44 @@ mod tests {
             let engine = engine.clone();
             async move { engine.run().await }
         });
+        (engine, rx, running)
+    }
 
-        let node_id = engine.node_ids.allocate();
-        engine
-            .submit(Event::NodeAdded {
+    /// A running engine with one node announced by the recorder.
+    async fn engine_with_recorded_node() -> (
+        Arc<Engine>,
+        NodeId,
+        mpsc::UnboundedReceiver<ToIntegrationMessage>,
+        Running,
+    ) {
+        let (engine, rx, running) = running_engine();
+        let recorder = engine.sender_for("recorder");
+        let node_id = recorder.allocator().allocate();
+        recorder
+            .send(Event::NodeAdded {
                 node_id,
-                node: Node {
-                    entity_id: "light.lamp".into(),
-                    integration: "recorder".into(),
-                    name: None,
-                    endpoints: HashMap::new(),
-                },
+                node: lamp("lamp-1"),
             })
             .await
             .expect("engine is running");
         (engine, node_id, rx, running)
     }
 
+    /// Wait for the engine to have drained everything queued so far.
+    async fn settled(engine: &Engine) {
+        // The API path goes through the same queue, so once a probe report
+        // for an unbound node has been dequeued everything before it has too.
+        for _ in 0..50 {
+            if engine.event_tx.capacity() == EVENT_CHANNEL_SIZE {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("engine did not drain its queue");
+    }
+
     #[tokio::test]
-    async fn an_invoke_on_the_stream_reaches_the_owning_integration() {
+    async fn an_invoke_on_the_stream_reaches_the_owning_integration_by_key() {
         let (engine, node_id, mut rx, running) = engine_with_recorded_node().await;
         engine
             .submit(Event::Invoke {
@@ -420,15 +506,16 @@ mod tests {
             msg,
             ToIntegrationMessage::InvokeCommand {
                 node_id: n,
+                key,
                 endpoint_id: 1,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
-            } if n == node_id
+            } if n == node_id && key == LocalKey::from("lamp-1")
         ));
         running.abort();
     }
 
     #[tokio::test]
-    async fn a_write_on_the_stream_reaches_the_owning_integration() {
+    async fn a_write_on_the_stream_reaches_the_owning_integration_by_key() {
         let (engine, node_id, mut rx, running) = engine_with_recorded_node().await;
         let write = AttributeWrite {
             cluster: "Thermostat".into(),
@@ -449,10 +536,97 @@ mod tests {
             msg,
             ToIntegrationMessage::WriteAttribute {
                 node_id: n,
+                key,
                 endpoint_id: 1,
                 write: w,
-            } if n == node_id && w == write
+            } if n == node_id && key == LocalKey::from("lamp-1") && w == write
         ));
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_node_announced_by_the_api_is_refused() {
+        let (engine, _rx, running) = running_engine();
+        let node_id = engine.node_ids.allocate();
+        engine
+            .submit(Event::NodeAdded {
+                node_id,
+                node: lamp("lamp-1"),
+            })
+            .await
+            .expect("engine is running");
+        settled(&engine).await;
+
+        assert!(engine.state_snapshot().nodes.is_empty());
+        assert_eq!(engine.binding(node_id).unwrap(), None);
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_node_id_cannot_be_rebound_to_a_different_key() {
+        let (engine, node_id, _rx, running) = engine_with_recorded_node().await;
+        engine
+            .sender_for("recorder")
+            .send(Event::NodeAdded {
+                node_id,
+                node: lamp("lamp-2"),
+            })
+            .await
+            .expect("engine is running");
+        settled(&engine).await;
+
+        let binding = engine.binding(node_id).unwrap().expect("still bound");
+        assert_eq!(binding.local, LocalKey::from("lamp-1"));
+        assert_eq!(
+            engine.state_snapshot().nodes[&node_id].key,
+            LocalKey::from("lamp-1")
+        );
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn a_report_from_an_integration_that_does_not_own_the_node_is_dropped() {
+        let (engine, node_id, _rx, running) = engine_with_recorded_node().await;
+        let report = Event::Report {
+            node_id,
+            endpoint_id: 1,
+            cluster: Cluster::OnOff(OnOffCluster { on_off: true }),
+        };
+
+        engine
+            .sender_for("impostor")
+            .send(report.clone())
+            .await
+            .expect("engine is running");
+        settled(&engine).await;
+        assert!(engine.state_snapshot().nodes[&node_id].endpoints.is_empty());
+
+        engine
+            .sender_for("recorder")
+            .send(report)
+            .await
+            .expect("engine is running");
+        settled(&engine).await;
+        assert!(
+            engine.state_snapshot().nodes[&node_id]
+                .endpoints
+                .contains_key(&1)
+        );
+        running.abort();
+    }
+
+    #[tokio::test]
+    async fn removal_releases_the_binding() {
+        let (engine, node_id, _rx, running) = engine_with_recorded_node().await;
+        engine
+            .sender_for("recorder")
+            .send(Event::NodeRemoved { node_id })
+            .await
+            .expect("engine is running");
+        settled(&engine).await;
+
+        assert!(engine.state_snapshot().nodes.is_empty());
+        assert_eq!(engine.binding(node_id).unwrap(), None);
         running.abort();
     }
 }

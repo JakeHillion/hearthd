@@ -13,15 +13,15 @@ use super::Site;
 use super::forecast;
 use super::forecast::ForecastResponse;
 use crate::engine::Event;
-use crate::engine::EventSender;
 use crate::engine::Integration;
+use crate::engine::IntegrationSender;
 use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::DeviceType;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
+use crate::matter::LocalKey;
 use crate::matter::Node;
 
 const INTEGRATION_NAME: &str = "metno";
@@ -84,8 +84,8 @@ impl MetnoIntegration {
         );
 
         Node {
+            key: LocalKey::from(name),
             entity_id: entity_id.to_string(),
-            integration: INTEGRATION_NAME.to_string(),
             name: Some(format!("{name} weather")),
             endpoints,
         }
@@ -133,7 +133,7 @@ impl MetnoIntegration {
 
     /// Poll every site forever, emitting a `Report` for each cluster
     /// whose value differs from the last one published.
-    async fn run(client: reqwest::Client, mut sites: Vec<SiteState>, to_engine: EventSender) {
+    async fn run(client: reqwest::Client, mut sites: Vec<SiteState>, to_engine: IntegrationSender) {
         // The first tick fires immediately, so sites are fetched at startup.
         let mut interval = tokio::time::interval(POLL_INTERVAL);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -165,13 +165,13 @@ impl MetnoIntegration {
         }
     }
 
-    async fn send_node_added(node_id: NodeId, node: Node, to_engine: &EventSender) {
+    async fn send_node_added(node_id: NodeId, node: Node, to_engine: &IntegrationSender) {
         if let Err(e) = to_engine.send(Event::NodeAdded { node_id, node }).await {
             warn!("metno: failed to send NodeAdded: {}", e);
         }
     }
 
-    async fn send_report(node_id: NodeId, cluster: Cluster, to_engine: &EventSender) {
+    async fn send_report(node_id: NodeId, cluster: Cluster, to_engine: &IntegrationSender) {
         if let Err(e) = to_engine
             .send(Event::Report {
                 node_id,
@@ -191,11 +191,9 @@ impl Integration for MetnoIntegration {
         INTEGRATION_NAME
     }
 
-    async fn setup(
-        &mut self,
-        tx: EventSender,
-        node_ids: NodeIdAllocator,
-    ) -> Result<(), Box<dyn Error + Send>> {
+    async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
+        let node_ids = tx.allocator();
+
         // Left to itself reqwest has no crypto provider at all under
         // `rustls-no-provider`, and builds its roots from the host's trust
         // store, which is absent in a build sandbox or a minimal container.
@@ -269,7 +267,7 @@ mod tests {
     fn build_node_advertises_all_weather_clusters() {
         let node = MetnoIntegration::build_node("home", "weather.home");
         assert_eq!(node.entity_id, "weather.home");
-        assert_eq!(node.integration, "metno");
+        assert_eq!(node.key, LocalKey::from("home"));
         let endpoint = node.endpoints.get(&METNO_ENDPOINT).unwrap();
         assert_eq!(endpoint.clusters.len(), 9);
         assert!(endpoint.clusters.contains_key("WeatherCondition"));
@@ -292,11 +290,12 @@ mod tests {
         use crate::engine::NodeIdAllocator;
 
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let tx = IntegrationSender::new(INTEGRATION_NAME, tx, NodeIdAllocator::for_test());
         // No sites: the poll task starts but makes no requests.
         let mut integration = MetnoIntegration::new(Vec::new());
 
         integration
-            .setup(tx, NodeIdAllocator::for_test())
+            .setup(tx)
             .await
             .expect("setup should build a client");
     }
@@ -310,6 +309,7 @@ mod tests {
         let result = integration
             .handle_message(ToIntegrationMessage::InvokeCommand {
                 node_id: NodeId::from_raw(1),
+                key: LocalKey::from("home"),
                 endpoint_id: METNO_ENDPOINT,
                 command: ClusterCommand::OnOff(OnOffCommand::On),
             })
@@ -325,6 +325,7 @@ mod tests {
         let result = integration
             .handle_message(ToIntegrationMessage::WriteAttribute {
                 node_id: NodeId::from_raw(1),
+                key: LocalKey::from("home"),
                 endpoint_id: METNO_ENDPOINT,
                 write: AttributeWrite {
                     cluster: "TemperatureMeasurement".into(),
