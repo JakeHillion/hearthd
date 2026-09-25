@@ -166,10 +166,11 @@ curl http://127.0.0.1:8565/v1/info
 curl http://127.0.0.1:8565/v1/state
 ```
 
-Commands to an entity use POST:
+Commands address a node by alias, by the slugged name its integration
+gave it, or by its id as `/v1/state` shows them, and use POST:
 
 ```
-curl -X POST http://127.0.0.1:8565/v1/entities/<id>/command \
+curl -X POST http://127.0.0.1:8565/v1/nodes/<name>/command \
   -H 'content-type: application/json' \
   -d '{"endpoint": 1, "command": {"command": "OnOffOn"}}'
 ```
@@ -178,7 +179,7 @@ Attribute writes name the cluster, the attribute's field and its value as
 `/v1/state` shows them:
 
 ```
-curl -X POST http://127.0.0.1:8565/v1/entities/<id>/write \
+curl -X POST http://127.0.0.1:8565/v1/nodes/<name>/write \
   -H 'content-type: application/json' \
   -d '{"endpoint": 1, "write": {"cluster": "Thermostat", "attribute": "system_mode", "value": "Cool"}}'
 ```

@@ -18,6 +18,7 @@ pub struct Config {
     pub http: HttpConfig,
     pub integrations: IntegrationsConfig,
     pub automations: AutomationsConfig,
+    pub aliases: AliasesConfig,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -130,6 +131,34 @@ pub struct AutomationEntry {
     pub file: String,
 }
 
+/// Extra names for nodes. Each alias names an integration and that
+/// integration's own key for the node, which is what the node's id is
+/// derived from, so an alias resolves before its node has appeared and
+/// survives the node being renamed upstream.
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+pub struct AliasesConfig {
+    #[serde(flatten)]
+    pub aliases: HashMap<String, AliasTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TryFromPartial, SubConfig)]
+#[config(no_span)]
+pub struct AliasTarget {
+    /// Name of the integration that owns the node.
+    pub integration: String,
+    /// The integration's own key for the node, as `/v1/state` shows it.
+    pub key: String,
+}
+
+/// Whether `name` can stand as an identifier: `[a-z_][a-z0-9_]*`. Aliases
+/// are the names automations will address nodes by, so they are held to
+/// the same syntax now rather than becoming unaddressable later.
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
 impl Config {
     /// Load configuration from multiple TOML files with import resolution
     pub fn from_files(paths: &[PathBuf]) -> Result<(Self, Diagnostics), Diagnostics> {
@@ -149,10 +178,10 @@ impl Config {
         };
 
         // Validate cross-field constraints
-        if let Err(validation_error) = config.validate() {
+        if let Err((field_path, message)) = config.validate() {
             diagnostics.push(Diagnostic::Error(Error::Validation(ValidationError {
-                field_path: "locations.default".to_string(),
-                message: validation_error,
+                field_path,
+                message,
                 span: None,
                 source: None,
             })));
@@ -167,14 +196,25 @@ impl Config {
         }
     }
 
-    /// Validate the configuration
-    pub fn validate(&self) -> Result<(), String> {
+    /// Validate the configuration, naming the offending field on failure.
+    pub fn validate(&self) -> Result<(), (String, String)> {
         // Validate that default location exists if specified
         if let Some(ref default) = self.locations.default {
             if !self.locations.locations.contains_key(default) {
-                return Err(format!(
-                    "default location '{}' not found in locations",
-                    default
+                return Err((
+                    "locations.default".to_string(),
+                    format!("default location '{}' not found in locations", default),
+                ));
+            }
+        }
+
+        for name in self.aliases.aliases.keys() {
+            if !is_identifier(name) {
+                return Err((
+                    format!("aliases.{name}"),
+                    format!(
+                        "alias '{name}' must be an identifier: lowercase letters, digits and underscores, not starting with a digit"
+                    ),
                 ));
             }
         }
@@ -189,6 +229,55 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    fn load_single(name: &str, contents: &str) -> Result<(Config, Diagnostics), Diagnostics> {
+        let dir = std::env::temp_dir().join(format!("hearthd_test_{name}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        fs::write(&path, contents).unwrap();
+        let result = Config::from_files(&[path]);
+        fs::remove_dir_all(&dir).ok();
+        result
+    }
+
+    #[test]
+    fn aliases_name_an_integration_and_its_key() {
+        let (config, diagnostics) = load_single(
+            "aliases_parse",
+            r#"
+[aliases]
+lamp = { integration = "mqtt", key = "light/0x00158d0001abcd12" }
+desktop = { integration = "wake_on_lan", key = "desktop" }
+"#,
+        )
+        .unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        assert_eq!(config.aliases.aliases.len(), 2);
+        assert_eq!(
+            config.aliases.aliases["lamp"],
+            AliasTarget {
+                integration: "mqtt".to_string(),
+                key: "light/0x00158d0001abcd12".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_alias_that_is_not_an_identifier_is_rejected() {
+        for bad in ["Living Room", "1st_lamp", "lamp-1"] {
+            let result = load_single(
+                "aliases_reject",
+                &format!(
+                    "[aliases]
+\"{bad}\" = {{ integration = \"mqtt\", key = \"x\" }}
+"
+                ),
+            );
+            let err = result.expect_err("config should be rejected").to_string();
+            assert!(err.contains(&format!("aliases.{bad}")), "{err}");
+        }
+    }
 
     // All tests now use Config::from_files() with actual file I/O
     // This ensures we test the real loading path
