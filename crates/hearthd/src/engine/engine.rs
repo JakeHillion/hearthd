@@ -10,11 +10,11 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-use super::integration::FromIntegrationReceiver;
-use super::integration::FromIntegrationSender;
+use super::event::Event;
+use super::integration::EventReceiver;
+use super::integration::EventSender;
 use super::integration::Integration;
 use super::integration::ToIntegrationSender;
-use super::message::FromIntegrationMessage;
 use super::message::ToIntegrationMessage;
 use super::state::State;
 use crate::engine::IntegrationContext;
@@ -37,11 +37,11 @@ pub struct Engine {
     /// Communication channels to integrations (for commands)
     integration_channels: HashMap<String, ToIntegrationSender>,
 
-    /// Receive messages from integrations (events)
-    message_rx: Mutex<FromIntegrationReceiver>,
+    /// The consuming end of the event stream, held by `run`.
+    event_rx: Mutex<EventReceiver>,
 
-    /// Sender for integrations to report events back to the engine
-    message_tx: FromIntegrationSender,
+    /// The producing end of the event stream, cloned to every producer.
+    event_tx: EventSender,
 
     /// Handles for integration tasks
     integration_handles: Vec<JoinHandle<()>>,
@@ -51,20 +51,20 @@ pub struct Engine {
     node_ids: NodeIdAllocator,
 }
 
-/// Capacity for the integration→engine message channel
-/// Provides backpressure when integrations send faster than the engine can process
-const FROM_INTEGRATION_CHANNEL_SIZE: usize = 1024;
+/// Capacity of the event stream. Provides backpressure when producers send
+/// faster than the engine can process.
+const EVENT_CHANNEL_SIZE: usize = 1024;
 
 impl Engine {
     /// Create a new Engine instance
     pub fn new() -> Self {
-        let (message_tx, message_rx) = mpsc::channel(FROM_INTEGRATION_CHANNEL_SIZE);
+        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
         Self {
             state: ArcSwap::new(Arc::default()),
             node_integration_map: std::sync::Mutex::new(HashMap::new()),
             integration_channels: HashMap::new(),
-            message_rx: Mutex::new(message_rx),
-            message_tx,
+            event_rx: Mutex::new(event_rx),
+            event_tx,
             integration_handles: Vec::new(),
             node_ids: NodeIdAllocator::new(),
         }
@@ -101,7 +101,7 @@ impl Engine {
     /// and starts its setup process.
     pub fn register_integration(&mut self, name: String, mut integration: Box<dyn Integration>) {
         let (to_integration_tx, mut to_integration_rx) = mpsc::unbounded_channel();
-        let from_integration_tx = self.message_tx.clone();
+        let event_tx = self.event_tx.clone();
         let node_ids = self.node_ids.clone();
 
         self.integration_channels
@@ -110,7 +110,7 @@ impl Engine {
         // Spawn integration task
         let handle = tokio::spawn(async move {
             // Setup integration (gives it the sender for events)
-            if let Err(e) = integration.setup(from_integration_tx, node_ids).await {
+            if let Err(e) = integration.setup(event_tx, node_ids).await {
                 warn!("Integration '{}' setup failed: {}", name, e);
                 return;
             }
@@ -167,14 +167,13 @@ impl Engine {
 
     /// Run the engine's main event loop
     ///
-    /// Processes incoming events from integrations and updates state.
+    /// Consumes the event stream in arrival order and updates state.
     pub async fn run(&self) -> Result<(), Box<dyn Error + Send>> {
         info!("Engine starting");
 
-        // Main event loop - only receives FromIntegration messages
-        let mut rx = self.message_rx.lock().await;
-        while let Some(msg) = rx.recv().await {
-            if let Err(e) = self.handle_event(msg).await {
+        let mut rx = self.event_rx.lock().await;
+        while let Some(event) = rx.recv().await {
+            if let Err(e) = self.handle_event(event).await {
                 warn!("Error handling event: {}", e);
             }
         }
@@ -209,10 +208,10 @@ impl Engine {
         })
     }
 
-    /// Handle an event from an integration
-    async fn handle_event(&self, msg: FromIntegrationMessage) -> Result<(), Box<dyn Error + Send>> {
-        match msg {
-            FromIntegrationMessage::NodeAdded { node_id, node } => {
+    /// Handle one event off the stream.
+    async fn handle_event(&self, event: Event) -> Result<(), Box<dyn Error + Send>> {
+        match event {
+            Event::NodeAdded { node_id, node } => {
                 info!(
                     "Node added: {} ({}) from {}",
                     node_id, node.entity_id, node.integration
@@ -251,7 +250,7 @@ impl Engine {
                     self.state.store(Arc::new(state));
                 }
             }
-            FromIntegrationMessage::NodeRemoved { node_id } => {
+            Event::NodeRemoved { node_id } => {
                 info!("Node removed: {}", node_id);
 
                 {
@@ -266,13 +265,13 @@ impl Engine {
                     map.remove(&node_id);
                 }
             }
-            FromIntegrationMessage::AttributeChanged {
+            Event::Report {
                 node_id,
                 endpoint_id,
                 cluster,
             } => {
                 info!(
-                    "Attribute changed: node={} endpoint={} cluster={}",
+                    "Report: node={} endpoint={} cluster={}",
                     node_id,
                     endpoint_id,
                     cluster.name()

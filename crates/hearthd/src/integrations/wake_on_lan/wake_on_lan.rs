@@ -39,8 +39,8 @@ use tracing::warn;
 
 use super::config::Config;
 use super::config::HostConfig;
-use crate::engine::FromIntegrationMessage;
-use crate::engine::FromIntegrationSender;
+use crate::engine::Event;
+use crate::engine::EventSender;
 use crate::engine::Integration;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
@@ -81,7 +81,7 @@ struct State {
     /// Socket magic packets are sent through. Bound without a peer so each
     /// send targets its own computed broadcast address.
     socket: Arc<UdpSocket>,
-    to_engine: FromIntegrationSender,
+    to_engine: EventSender,
     hosts: Mutex<Vec<Host>>,
     ping_timeout: Duration,
 }
@@ -183,11 +183,7 @@ impl WolIntegration {
     }
 
     /// Shared `setup` body, so the trait boundary can box the error once.
-    async fn setup_inner(
-        &mut self,
-        tx: FromIntegrationSender,
-        node_ids: NodeIdAllocator,
-    ) -> Result<()> {
+    async fn setup_inner(&mut self, tx: EventSender, node_ids: NodeIdAllocator) -> Result<()> {
         let client =
             Client::new(&PingConfig::default()).context("failed to open the ICMP ping socket")?;
 
@@ -219,7 +215,7 @@ impl WolIntegration {
         // Announce every host. They start offline until the first ping says
         // otherwise, and flip up individually as their own ping task fires.
         for host in &hosts {
-            tx.send(FromIntegrationMessage::NodeAdded {
+            tx.send(Event::NodeAdded {
                 node_id: host.node_id,
                 node: node_for(host),
             })
@@ -390,7 +386,7 @@ async fn report_reachability(state: &Arc<State>, node_id: NodeId, on_off: bool) 
     if let Some(cluster) = changed {
         if state
             .to_engine
-            .send(FromIntegrationMessage::AttributeChanged {
+            .send(Event::Report {
                 node_id,
                 endpoint_id: WOL_ENDPOINT,
                 cluster: Cluster::OnOff(cluster),
@@ -411,7 +407,7 @@ impl Integration for WolIntegration {
 
     async fn setup(
         &mut self,
-        tx: FromIntegrationSender,
+        tx: EventSender,
         node_ids: NodeIdAllocator,
     ) -> Result<(), Box<dyn Error + Send>> {
         // Boxed once here rather than at every `?`: `Box<dyn Error + Send>`
