@@ -21,8 +21,8 @@ use super::light::Light;
 use super::light::Z2M_ENDPOINT;
 use super::sensor::Measurement;
 use super::sensor::Sensor;
-use crate::engine::FromIntegrationMessage;
-use crate::engine::FromIntegrationSender;
+use crate::engine::Event;
+use crate::engine::EventSender;
 use crate::engine::Integration;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
@@ -62,7 +62,7 @@ pub struct MqttIntegration<C: MqttClient> {
     client: Arc<Mutex<C>>,
     config: MqttConfig,
     inner: SharedInner,
-    to_engine: Option<FromIntegrationSender>,
+    to_engine: Option<EventSender>,
     /// Handle to the background message processing task
     _message_task: Option<JoinHandle<()>>,
 }
@@ -85,7 +85,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         config: MqttConfig,
         inner: SharedInner,
         node_ids: NodeIdAllocator,
-        to_engine: FromIntegrationSender,
+        to_engine: EventSender,
     ) {
         loop {
             let msg = {
@@ -128,7 +128,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
         node_ids: &NodeIdAllocator,
-        to_engine: &FromIntegrationSender,
+        to_engine: &EventSender,
     ) -> Result<(), Box<dyn Error + Send>> {
         let (component, node_id_str, object_id) =
             parse_discovery_topic(&msg.topic, &config.discovery_prefix).ok_or_else(
@@ -180,7 +180,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
         node_ids: &NodeIdAllocator,
-        to_engine: &FromIntegrationSender,
+        to_engine: &EventSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let entity_id = format!("light.{}", z2m_node_id);
@@ -241,7 +241,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
         node_ids: &NodeIdAllocator,
-        to_engine: &FromIntegrationSender,
+        to_engine: &EventSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let entity_id = format!("binary_sensor.{}", z2m_node_id);
@@ -324,7 +324,7 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
         node_ids: &NodeIdAllocator,
-        to_engine: &FromIntegrationSender,
+        to_engine: &EventSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
         let entity_id = format!("sensor.{}", z2m_node_id);
@@ -425,11 +425,7 @@ impl<C: MqttClient> MqttIntegration<C> {
     }
 
     /// Remove an entity given its entity_id alias and notify the engine.
-    async fn remove_entity_by_alias(
-        entity_id: &str,
-        inner: &SharedInner,
-        to_engine: &FromIntegrationSender,
-    ) {
+    async fn remove_entity_by_alias(entity_id: &str, inner: &SharedInner, to_engine: &EventSender) {
         let removed = {
             let mut guard = inner.lock().await;
             if let Some(&node_id) = guard.entity_to_node.get(entity_id) {
@@ -443,50 +439,40 @@ impl<C: MqttClient> MqttIntegration<C> {
         };
         if let Some(node_id) = removed {
             info!("Removed entity: {} (node {})", entity_id, node_id);
-            if let Err(e) = to_engine
-                .send(FromIntegrationMessage::NodeRemoved { node_id })
-                .await
-            {
+            if let Err(e) = to_engine.send(Event::NodeRemoved { node_id }).await {
                 warn!("Failed to send NodeRemoved: {}", e);
             }
         }
     }
 
-    async fn send_node_added(
-        node_id: NodeId,
-        node: crate::matter::Node,
-        to_engine: &FromIntegrationSender,
-    ) {
-        if let Err(e) = to_engine
-            .send(FromIntegrationMessage::NodeAdded { node_id, node })
-            .await
-        {
+    async fn send_node_added(node_id: NodeId, node: crate::matter::Node, to_engine: &EventSender) {
+        if let Err(e) = to_engine.send(Event::NodeAdded { node_id, node }).await {
             warn!("Failed to send NodeAdded message: {}", e);
         }
     }
 
-    async fn send_attribute_changed(
+    async fn send_report(
         node_id: NodeId,
         endpoint_id: EndpointId,
         cluster: Cluster,
-        to_engine: &FromIntegrationSender,
+        to_engine: &EventSender,
     ) {
         if let Err(e) = to_engine
-            .send(FromIntegrationMessage::AttributeChanged {
+            .send(Event::Report {
                 node_id,
                 endpoint_id,
                 cluster,
             })
             .await
         {
-            warn!("Failed to send AttributeChanged message: {}", e);
+            warn!("Failed to send Report: {}", e);
         }
     }
 
     async fn handle_state_update(
         msg: &MqttMessage,
         inner: &SharedInner,
-        to_engine: &FromIntegrationSender,
+        to_engine: &EventSender,
     ) -> Result<(), Box<dyn Error + Send>> {
         // Resolve topic → (NodeId, entity handle) and release the outer lock
         // before parsing the payload.
@@ -519,7 +505,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     )?
                 };
                 for cluster in clusters {
-                    Self::send_attribute_changed(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
+                    Self::send_report(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
                 }
             }
             MqttEntity::BinarySensor(sensor_arc) => {
@@ -535,7 +521,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     )?
                 };
                 if let Some(cluster) = cluster {
-                    Self::send_attribute_changed(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
+                    Self::send_report(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
                 }
             }
             MqttEntity::Sensor(sensor_arc) => {
@@ -551,7 +537,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     )?
                 };
                 for cluster in clusters {
-                    Self::send_attribute_changed(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
+                    Self::send_report(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
                 }
             }
         }
@@ -628,7 +614,7 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
 
     async fn setup(
         &mut self,
-        tx: FromIntegrationSender,
+        tx: EventSender,
         node_ids: NodeIdAllocator,
     ) -> Result<(), Box<dyn Error + Send>> {
         self.to_engine = Some(tx.clone());

@@ -171,7 +171,7 @@ impl Light {
 
     /// Apply an MQTT state-update payload to this light and return the
     /// list of clusters whose attributes changed, so the integration can
-    /// emit one `AttributeChanged` message per cluster.
+    /// emit one `Report` per cluster.
     ///
     /// Zigbee2MQTT sends state updates as JSON, e.g.
     /// `{"state": "ON", "brightness": 128}`. Multiple attributes ride on the

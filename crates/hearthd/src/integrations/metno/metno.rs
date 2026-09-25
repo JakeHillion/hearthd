@@ -12,8 +12,8 @@ use tracing::warn;
 use super::Site;
 use super::forecast;
 use super::forecast::ForecastResponse;
-use crate::engine::FromIntegrationMessage;
-use crate::engine::FromIntegrationSender;
+use crate::engine::Event;
+use crate::engine::EventSender;
 use crate::engine::Integration;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
@@ -131,13 +131,9 @@ impl MetnoIntegration {
         Ok(Some((forecast, last_modified)))
     }
 
-    /// Poll every site forever, emitting an `AttributeChanged` for each cluster
+    /// Poll every site forever, emitting a `Report` for each cluster
     /// whose value differs from the last one published.
-    async fn run(
-        client: reqwest::Client,
-        mut sites: Vec<SiteState>,
-        to_engine: FromIntegrationSender,
-    ) {
+    async fn run(client: reqwest::Client, mut sites: Vec<SiteState>, to_engine: EventSender) {
         // The first tick fires immediately, so sites are fetched at startup.
         let mut interval = tokio::time::interval(POLL_INTERVAL);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -158,7 +154,7 @@ impl MetnoIntegration {
                                 continue;
                             }
                             state.last.insert(name.to_string(), cluster.clone());
-                            Self::send_attribute_changed(state.node_id, cluster, &to_engine).await;
+                            Self::send_report(state.node_id, cluster, &to_engine).await;
                         }
                     }
                     Err(e) => {
@@ -169,29 +165,22 @@ impl MetnoIntegration {
         }
     }
 
-    async fn send_node_added(node_id: NodeId, node: Node, to_engine: &FromIntegrationSender) {
-        if let Err(e) = to_engine
-            .send(FromIntegrationMessage::NodeAdded { node_id, node })
-            .await
-        {
+    async fn send_node_added(node_id: NodeId, node: Node, to_engine: &EventSender) {
+        if let Err(e) = to_engine.send(Event::NodeAdded { node_id, node }).await {
             warn!("metno: failed to send NodeAdded: {}", e);
         }
     }
 
-    async fn send_attribute_changed(
-        node_id: NodeId,
-        cluster: Cluster,
-        to_engine: &FromIntegrationSender,
-    ) {
+    async fn send_report(node_id: NodeId, cluster: Cluster, to_engine: &EventSender) {
         if let Err(e) = to_engine
-            .send(FromIntegrationMessage::AttributeChanged {
+            .send(Event::Report {
                 node_id,
                 endpoint_id: METNO_ENDPOINT,
                 cluster,
             })
             .await
         {
-            warn!("metno: failed to send AttributeChanged: {}", e);
+            warn!("metno: failed to send Report: {}", e);
         }
     }
 }
@@ -204,7 +193,7 @@ impl Integration for MetnoIntegration {
 
     async fn setup(
         &mut self,
-        tx: FromIntegrationSender,
+        tx: EventSender,
         node_ids: NodeIdAllocator,
     ) -> Result<(), Box<dyn Error + Send>> {
         // Left to itself reqwest has no crypto provider at all under

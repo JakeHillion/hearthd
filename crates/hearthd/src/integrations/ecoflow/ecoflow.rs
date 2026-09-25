@@ -42,8 +42,8 @@ use super::wave3::codec::ConfigWrite;
 use super::wave3::matter as wave3_matter;
 use super::wave3::state::DeviceState;
 use super::wave3::wire;
-use crate::engine::FromIntegrationMessage;
-use crate::engine::FromIntegrationSender;
+use crate::engine::Event;
+use crate::engine::EventSender;
 use crate::engine::Integration;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
@@ -125,7 +125,7 @@ pub struct EcoFlowIntegration<A: EcoFlowApi, T: Transport> {
     /// Command topics are user-scoped, so this is what makes a command
     /// sendable; its absence is how the integration knows it cannot send one.
     user_id: Arc<Mutex<Option<String>>>,
-    to_engine: Option<FromIntegrationSender>,
+    to_engine: Option<EventSender>,
     session_task: Option<JoinHandle<()>>,
     watchdog_task: Option<JoinHandle<()>>,
 }
@@ -213,7 +213,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         inner: SharedInner,
         client_uuid: String,
         user_id: Arc<Mutex<Option<String>>>,
-        to_engine: FromIntegrationSender,
+        to_engine: EventSender,
     ) {
         let mut backoff = Backoff::default();
 
@@ -260,7 +260,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         inner: &SharedInner,
         client_uuid: &str,
         user_id: &Arc<Mutex<Option<String>>>,
-        to_engine: &FromIntegrationSender,
+        to_engine: &EventSender,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Both calls run on every attempt: neither credential advertises its
         // expiry, so refreshing is cheaper than detecting staleness.
@@ -343,11 +343,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
     /// A failure here logs and drops the message. Firmware revisions add
     /// fields and occasionally new command ids, so a decoding failure is not a
     /// reason to tear down a working connection.
-    async fn handle_incoming(
-        message: &Message,
-        inner: &SharedInner,
-        to_engine: &FromIntegrationSender,
-    ) {
+    async fn handle_incoming(message: &Message, inner: &SharedInner, to_engine: &EventSender) {
         let node_id = {
             let guard = inner.lock().await;
             // A serial always occupies a whole path segment, in both
@@ -436,7 +432,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         };
 
         for (endpoint_id, cluster) in changed {
-            Self::send_attribute_changed(node_id, endpoint_id, cluster, to_engine).await;
+            Self::send_report(node_id, endpoint_id, cluster, to_engine).await;
         }
     }
 
@@ -466,21 +462,21 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
         changed
     }
 
-    async fn send_attribute_changed(
+    async fn send_report(
         node_id: NodeId,
         endpoint_id: EndpointId,
         cluster: Cluster,
-        to_engine: &FromIntegrationSender,
+        to_engine: &EventSender,
     ) {
         if let Err(e) = to_engine
-            .send(FromIntegrationMessage::AttributeChanged {
+            .send(Event::Report {
                 node_id,
                 endpoint_id,
                 cluster,
             })
             .await
         {
-            warn!("failed to send AttributeChanged: {e}");
+            warn!("failed to send Report: {e}");
         }
     }
 
@@ -554,7 +550,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> EcoFlowIntegration<A, T> {
 
         if let Some(to_engine) = &self.to_engine {
             for (endpoint_id, cluster) in changed {
-                Self::send_attribute_changed(node_id, endpoint_id, cluster, to_engine).await;
+                Self::send_report(node_id, endpoint_id, cluster, to_engine).await;
             }
         }
 
@@ -574,7 +570,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
 
     async fn setup(
         &mut self,
-        tx: FromIntegrationSender,
+        tx: EventSender,
         node_ids: NodeIdAllocator,
     ) -> Result<(), Box<dyn Error + Send>> {
         self.to_engine = Some(tx.clone());
@@ -618,10 +614,7 @@ impl<A: EcoFlowApi + 'static, T: Transport + 'static> Integration for EcoFlowInt
                 "declared EcoFlow device: {} (node {node_id})",
                 node.entity_id
             );
-            if let Err(e) = tx
-                .send(FromIntegrationMessage::NodeAdded { node_id, node })
-                .await
-            {
+            if let Err(e) = tx.send(Event::NodeAdded { node_id, node }).await {
                 warn!("failed to send NodeAdded: {e}");
             }
         }
@@ -803,9 +796,7 @@ mod tests {
     }
 
     /// Await a message from the engine channel, failing rather than hanging.
-    async fn next_engine_message(
-        rx: &mut mpsc::Receiver<FromIntegrationMessage>,
-    ) -> FromIntegrationMessage {
+    async fn next_engine_message(rx: &mut mpsc::Receiver<Event>) -> Event {
         tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("timed out waiting for a message from the integration")
@@ -823,7 +814,7 @@ mod tests {
             .unwrap();
 
         match next_engine_message(&mut rx).await {
-            FromIntegrationMessage::NodeAdded { node_id, node } => {
+            Event::NodeAdded { node_id, node } => {
                 assert_eq!(node_id, NodeId::from_raw(1));
                 assert_eq!(node.entity_id, "climate.bedroom");
                 assert_eq!(node.name.as_deref(), Some("Bedroom AC"));
@@ -894,7 +885,7 @@ mod tests {
         let mut saw_temperature = false;
         for _ in 0..12 {
             match next_engine_message(&mut rx).await {
-                FromIntegrationMessage::AttributeChanged { cluster, .. } => {
+                Event::Report { cluster, .. } => {
                     if let Cluster::TemperatureMeasurement(t) = cluster {
                         if t.measured_value == Some(2150) {
                             saw_temperature = true;
@@ -902,7 +893,7 @@ mod tests {
                         }
                     }
                 }
-                other => panic!("expected AttributeChanged, got {other:?}"),
+                other => panic!("expected Report, got {other:?}"),
             }
         }
         assert!(saw_temperature, "no temperature reading reached the engine");
@@ -1035,7 +1026,7 @@ mod tests {
             .unwrap();
 
         match next_engine_message(&mut rx).await {
-            FromIntegrationMessage::AttributeChanged {
+            Event::Report {
                 endpoint_id,
                 cluster,
                 ..
@@ -1043,7 +1034,7 @@ mod tests {
                 assert_eq!(endpoint_id, wave3_matter::EP_BEEPER);
                 assert!(matches!(cluster, Cluster::OnOff(c) if c.on_off));
             }
-            other => panic!("expected AttributeChanged, got {other:?}"),
+            other => panic!("expected Report, got {other:?}"),
         }
     }
 

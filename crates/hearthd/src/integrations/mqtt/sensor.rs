@@ -198,7 +198,7 @@ impl Sensor {
 
     /// Apply an MQTT state-update payload and return the list of clusters
     /// whose attributes changed, so the integration can emit one
-    /// `AttributeChanged` message per cluster.
+    /// `Report` per cluster.
     ///
     /// Zigbee2MQTT sends the whole device state as one JSON object, e.g.
     /// `{"temperature": 22.5, "humidity": 55.3, "battery": 90}`; each channel

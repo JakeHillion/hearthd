@@ -33,8 +33,8 @@ use super::models::Client;
 use super::models::GetStatusResult;
 use super::models::Group;
 use super::models::Stream;
-use crate::engine::FromIntegrationMessage;
-use crate::engine::FromIntegrationSender;
+use crate::engine::Event;
+use crate::engine::EventSender;
 use crate::engine::Integration;
 use crate::engine::NodeId;
 use crate::engine::NodeIdAllocator;
@@ -115,7 +115,7 @@ struct Inner {
 /// Everything built during `setup` and shared with the background tasks.
 struct State {
     client: SnapcastRpcClient,
-    to_engine: FromIntegrationSender,
+    to_engine: EventSender,
     node_ids: NodeIdAllocator,
     refresh_tx: mpsc::Sender<()>,
     inner: Mutex<Inner>,
@@ -264,7 +264,7 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
             .map(|(_, node_id)| *node_id)
             .collect();
         for node_id in departed {
-            messages.push(FromIntegrationMessage::NodeRemoved { node_id });
+            messages.push(Event::NodeRemoved { node_id });
             inner.published.remove(&node_id);
         }
 
@@ -302,23 +302,18 @@ async fn refresh(state: &State) -> Result<(), RefreshError> {
 /// A node the engine has not seen is announced whole; one it already has
 /// reports only the clusters whose contents differ, which is what makes the
 /// engine emit attribute-change events rather than repeated discovery.
-fn publish(
-    inner: &mut Inner,
-    messages: &mut Vec<FromIntegrationMessage>,
-    node_id: NodeId,
-    node: Node,
-) {
+fn publish(inner: &mut Inner, messages: &mut Vec<Event>, node_id: NodeId, node: Node) {
     match inner.published.get(&node_id) {
         // Identity is only carried by NodeAdded, so a device renamed in
         // Snapcast has to be re-announced rather than described by a cluster
         // diff that has no field for it.
         Some(previous) if previous.entity_id != node.entity_id || previous.name != node.name => {
-            messages.push(FromIntegrationMessage::NodeAdded {
+            messages.push(Event::NodeAdded {
                 node_id,
                 node: node.clone(),
             });
         }
-        None => messages.push(FromIntegrationMessage::NodeAdded {
+        None => messages.push(Event::NodeAdded {
             node_id,
             node: node.clone(),
         }),
@@ -331,7 +326,7 @@ fn publish(
                         .and_then(|e| e.clusters.get(name))
                         .is_some_and(|p| p == cluster);
                     if !unchanged {
-                        messages.push(FromIntegrationMessage::AttributeChanged {
+                        messages.push(Event::Report {
                             node_id,
                             endpoint_id: *endpoint_id,
                             cluster: cluster.clone(),
@@ -353,7 +348,7 @@ impl Integration for SnapcastIntegration {
 
     async fn setup(
         &mut self,
-        tx: FromIntegrationSender,
+        tx: EventSender,
         node_ids: NodeIdAllocator,
     ) -> Result<(), Box<dyn Error + Send>> {
         let (client, mut events) = SnapcastRpcClient::new(
@@ -489,7 +484,7 @@ mod tests {
 
         assert!(matches!(
             messages.as_slice(),
-            [FromIntegrationMessage::NodeAdded { node_id, .. }] if *node_id == id
+            [Event::NodeAdded { node_id, .. }] if *node_id == id
         ));
     }
 
@@ -522,7 +517,7 @@ mod tests {
 
         match messages.as_slice() {
             [
-                FromIntegrationMessage::AttributeChanged {
+                Event::Report {
                     node_id,
                     endpoint_id,
                     cluster: Cluster::OnOff(c),
@@ -555,7 +550,7 @@ mod tests {
         );
 
         match messages.as_slice() {
-            [FromIntegrationMessage::NodeAdded { node_id, node }] => {
+            [Event::NodeAdded { node_id, node }] => {
                 assert_eq!(*node_id, id);
                 assert_eq!(node.entity_id, "speaker.kitchen");
                 assert_eq!(node.name.as_deref(), Some("Kitchen"));
