@@ -56,6 +56,7 @@ use crate::matter::AttributeWrite;
 use crate::matter::BooleanStateCluster;
 use crate::matter::CLUSTER_NAME_FAN_CONTROL;
 use crate::matter::CLUSTER_NAME_THERMOSTAT;
+use crate::matter::CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::ControlSequenceOfOperation;
@@ -86,7 +87,6 @@ use crate::matter::TemperatureMeasurementCluster;
 use crate::matter::ThermostatCluster;
 use crate::matter::ThermostatCommand;
 use crate::matter::ThermostatUserInterfaceConfigurationCluster;
-use crate::matter::ThermostatUserInterfaceConfigurationCommand;
 
 pub const EP_AIR_CONDITIONER: EndpointId = 1;
 pub const EP_BATTERY: EndpointId = 2;
@@ -635,6 +635,21 @@ pub fn write_to_config_write(
             )),
         },
 
+        (
+            EP_AIR_CONDITIONER,
+            CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION,
+            "temperature_display_mode",
+        ) => {
+            let unit = match value_as(write)? {
+                TemperatureDisplayMode::Celsius => UserTempUnit::Celsius,
+                TemperatureDisplayMode::Fahrenheit => UserTempUnit::Fahrenheit,
+            };
+            Ok(ConfigWrite {
+                cfg_user_temp_unit: Some(unit.to_wire()),
+                ..Default::default()
+            })
+        }
+
         _ => Err(CommandError::UnsupportedWrite {
             endpoint,
             cluster: write.cluster.clone(),
@@ -659,18 +674,6 @@ pub fn command_to_config_write(
             let DehumidificationControlCommand::SetRhDehumidificationSetpoint { percent } = cmd;
             Ok(ConfigWrite {
                 cfg_humi_set: Some(semantics::clamp_humi_set(u32::from(*percent)) as f32),
-                ..Default::default()
-            })
-        }
-        (EP_AIR_CONDITIONER, ClusterCommand::ThermostatUserInterfaceConfiguration(cmd)) => {
-            let ThermostatUserInterfaceConfigurationCommand::SetTemperatureDisplayMode { mode } =
-                cmd;
-            let unit = match mode {
-                TemperatureDisplayMode::Celsius => UserTempUnit::Celsius,
-                TemperatureDisplayMode::Fahrenheit => UserTempUnit::Fahrenheit,
-            };
-            Ok(ConfigWrite {
-                cfg_user_temp_unit: Some(unit.to_wire()),
                 ..Default::default()
             })
         }
@@ -1632,6 +1635,23 @@ mod tests {
             );
             assert!(matches!(result, Err(CommandError::Unsupported(_))));
         }
+    }
+
+    #[test]
+    fn a_display_mode_write_sets_the_panel_unit() {
+        let write = write_for_attribute(
+            &state_in_mode(1),
+            EP_AIR_CONDITIONER,
+            attribute(
+                "ThermostatUserInterfaceConfiguration",
+                "temperature_display_mode",
+                serde_json::json!("Fahrenheit"),
+            ),
+        );
+        assert_eq!(
+            write.cfg_user_temp_unit,
+            Some(UserTempUnit::Fahrenheit.to_wire())
+        );
     }
 
     #[test]

@@ -28,8 +28,6 @@ use super::clusters::CLUSTER_ID_MEDIA_PLAYBACK;
 use super::clusters::CLUSTER_ID_MODE_SELECT;
 use super::clusters::CLUSTER_ID_ON_OFF;
 use super::clusters::CLUSTER_ID_THERMOSTAT;
-use super::clusters::CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
-use super::clusters::TemperatureDisplayMode;
 
 /// OnOff cluster (0x0006) commands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -112,13 +110,6 @@ pub enum DehumidificationControlCommand {
     SetRhDehumidificationSetpoint { percent: u8 },
 }
 
-/// ThermostatUserInterfaceConfiguration cluster (0x0204) commands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ThermostatUserInterfaceConfigurationCommand {
-    /// Write to attribute 0x0000 `TemperatureDisplayMode`.
-    SetTemperatureDisplayMode { mode: TemperatureDisplayMode },
-}
-
 /// ModeSelect cluster (0x0050) commands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ModeSelectCommand {
@@ -172,7 +163,6 @@ pub enum ClusterCommand {
     ColorControl(ColorControlCommand),
     Thermostat(ThermostatCommand),
     DehumidificationControl(DehumidificationControlCommand),
-    ThermostatUserInterfaceConfiguration(ThermostatUserInterfaceConfigurationCommand),
     ModeSelect(ModeSelectCommand),
     MediaPlayback(MediaPlaybackCommand),
     MediaInput(MediaInputCommand),
@@ -187,9 +177,6 @@ impl ClusterCommand {
             ClusterCommand::ColorControl(_) => CLUSTER_ID_COLOR_CONTROL,
             ClusterCommand::Thermostat(_) => CLUSTER_ID_THERMOSTAT,
             ClusterCommand::DehumidificationControl(_) => CLUSTER_ID_DEHUMIDIFICATION_CONTROL,
-            ClusterCommand::ThermostatUserInterfaceConfiguration(_) => {
-                CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION
-            }
             ClusterCommand::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
             ClusterCommand::MediaPlayback(_) => CLUSTER_ID_MEDIA_PLAYBACK,
             ClusterCommand::MediaInput(_) => CLUSTER_ID_MEDIA_INPUT,
