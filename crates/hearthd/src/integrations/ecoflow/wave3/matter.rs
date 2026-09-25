@@ -54,6 +54,7 @@ use super::semantics::UserTempUnit;
 use super::state::DeviceState;
 use crate::matter::AttributeWrite;
 use crate::matter::BooleanStateCluster;
+use crate::matter::CLUSTER_NAME_FAN_CONTROL;
 use crate::matter::CLUSTER_NAME_THERMOSTAT;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
@@ -65,7 +66,6 @@ use crate::matter::ElectricalPowerMeasurementCluster;
 use crate::matter::Endpoint;
 use crate::matter::EndpointId;
 use crate::matter::FanControlCluster;
-use crate::matter::FanControlCommand;
 use crate::matter::FanMode;
 use crate::matter::FanModeSequence;
 use crate::matter::LevelControlCluster;
@@ -616,6 +616,25 @@ pub fn write_to_config_write(
             setpoint_write(state, centi_to_celsius(value_as(write)?), false),
         ),
 
+        (EP_AIR_CONDITIONER, CLUSTER_NAME_FAN_CONTROL, "speed_setting") => {
+            fan_write(value_as(write)?)
+        }
+        // Snap first: the device accepts only the five discrete percentages,
+        // so an arbitrary percentage has to be resolved to a step and then
+        // back to a permitted value.
+        (EP_AIR_CONDITIONER, CLUSTER_NAME_FAN_CONTROL, "percent_setting") => {
+            fan_write(semantics::fan_percent_to_step(value_as(write)?))
+        }
+        (EP_AIR_CONDITIONER, CLUSTER_NAME_FAN_CONTROL, "fan_mode") => match value_as(write)? {
+            FanMode::Low => fan_write(1),
+            FanMode::Medium => fan_write(3),
+            FanMode::High | FanMode::On => fan_write(5),
+            FanMode::Off => fan_write(0),
+            FanMode::Auto | FanMode::Smart => Err(CommandError::Unsupported(
+                "the Wave 3 has no automatic fan mode",
+            )),
+        },
+
         _ => Err(CommandError::UnsupportedWrite {
             endpoint,
             cluster: write.cluster.clone(),
@@ -636,7 +655,6 @@ pub fn command_to_config_write(
     match (endpoint, command) {
         (EP_AIR_CONDITIONER, ClusterCommand::OnOff(cmd)) => air_conditioner_power(state, cmd),
         (EP_AIR_CONDITIONER, ClusterCommand::Thermostat(cmd)) => thermostat_command(state, cmd),
-        (EP_AIR_CONDITIONER, ClusterCommand::FanControl(cmd)) => fan_command(cmd),
         (EP_AIR_CONDITIONER, ClusterCommand::DehumidificationControl(cmd)) => {
             let DehumidificationControlCommand::SetRhDehumidificationSetpoint { percent } = cmd;
             Ok(ConfigWrite {
@@ -822,28 +840,8 @@ fn set_system_mode(mode: SystemMode) -> Result<ConfigWrite, CommandError> {
     })
 }
 
-fn fan_command(command: &FanControlCommand) -> Result<ConfigWrite, CommandError> {
-    let step = match command {
-        FanControlCommand::SetSpeedSetting { speed } => *speed,
-        // Snap first: the device accepts only the five discrete percentages,
-        // so an arbitrary percentage has to be resolved to a step and then
-        // back to a permitted value.
-        FanControlCommand::SetPercentSetting { percent } => {
-            semantics::fan_percent_to_step(u32::from(*percent))
-        }
-        FanControlCommand::SetFanMode { mode } => match mode {
-            FanMode::Low => 1,
-            FanMode::Medium => 3,
-            FanMode::High | FanMode::On => 5,
-            FanMode::Off => 0,
-            FanMode::Auto | FanMode::Smart => {
-                return Err(CommandError::Unsupported(
-                    "the Wave 3 has no automatic fan mode",
-                ));
-            }
-        },
-    };
-
+/// Build the write for a fan speed step (1..=5).
+fn fan_write(step: u8) -> Result<ConfigWrite, CommandError> {
     let percent = semantics::fan_step_to_percent(step).ok_or(CommandError::Unsupported(
         "fan speed 0 stops the unit; use the OnOff cluster instead",
     ))?;
@@ -1584,10 +1582,10 @@ mod tests {
     #[test]
     fn fan_speed_steps_map_to_the_permitted_percentages() {
         for (step, percent) in [(1u8, 20u32), (2, 40), (3, 60), (4, 80), (5, 100)] {
-            let write = write_for(
+            let write = write_for_attribute(
                 &state_in_mode(1),
                 EP_AIR_CONDITIONER,
-                ClusterCommand::FanControl(FanControlCommand::SetSpeedSetting { speed: step }),
+                attribute("FanControl", "speed_setting", serde_json::json!(step)),
             );
             assert_eq!(write.cfg_airflow_speed, Some(percent), "step {step}");
         }
@@ -1596,31 +1594,41 @@ mod tests {
     #[test]
     fn an_arbitrary_fan_percentage_is_snapped_before_it_is_sent() {
         // The device accepts only five values, so 71 % must not go out as-is.
-        let write = write_for(
+        let write = write_for_attribute(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            ClusterCommand::FanControl(FanControlCommand::SetPercentSetting { percent: 71 }),
+            attribute("FanControl", "percent_setting", serde_json::json!(71)),
         );
         assert_eq!(write.cfg_airflow_speed, Some(80));
     }
 
     #[test]
-    fn fan_speed_zero_is_refused_with_a_pointer_to_on_off() {
-        let result = command_to_config_write(
+    fn a_fan_mode_selects_its_step() {
+        let write = write_for_attribute(
             &state_in_mode(1),
             EP_AIR_CONDITIONER,
-            &ClusterCommand::FanControl(FanControlCommand::SetSpeedSetting { speed: 0 }),
+            attribute("FanControl", "fan_mode", serde_json::json!("Medium")),
+        );
+        assert_eq!(write.cfg_airflow_speed, Some(60));
+    }
+
+    #[test]
+    fn fan_speed_zero_is_refused_with_a_pointer_to_on_off() {
+        let result = write_to_config_write(
+            &state_in_mode(1),
+            EP_AIR_CONDITIONER,
+            &attribute("FanControl", "speed_setting", serde_json::json!(0)),
         );
         assert!(matches!(result, Err(CommandError::Unsupported(_))));
     }
 
     #[test]
     fn automatic_fan_modes_are_refused() {
-        for mode in [FanMode::Auto, FanMode::Smart] {
-            let result = command_to_config_write(
+        for mode in ["Auto", "Smart"] {
+            let result = write_to_config_write(
                 &state_in_mode(1),
                 EP_AIR_CONDITIONER,
-                &ClusterCommand::FanControl(FanControlCommand::SetFanMode { mode }),
+                &attribute("FanControl", "fan_mode", serde_json::json!(mode)),
             );
             assert!(matches!(result, Err(CommandError::Unsupported(_))));
         }

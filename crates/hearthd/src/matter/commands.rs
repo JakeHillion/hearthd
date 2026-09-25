@@ -22,7 +22,6 @@ use serde::Serialize;
 
 use super::clusters::CLUSTER_ID_COLOR_CONTROL;
 use super::clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
-use super::clusters::CLUSTER_ID_FAN_CONTROL;
 use super::clusters::CLUSTER_ID_LEVEL_CONTROL;
 use super::clusters::CLUSTER_ID_MEDIA_INPUT;
 use super::clusters::CLUSTER_ID_MEDIA_PLAYBACK;
@@ -30,7 +29,6 @@ use super::clusters::CLUSTER_ID_MODE_SELECT;
 use super::clusters::CLUSTER_ID_ON_OFF;
 use super::clusters::CLUSTER_ID_THERMOSTAT;
 use super::clusters::CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
-use super::clusters::FanMode;
 use super::clusters::TemperatureDisplayMode;
 
 /// OnOff cluster (0x0006) commands.
@@ -107,19 +105,6 @@ pub enum ThermostatCommand {
     SetpointRaiseLower { mode: SetpointMode, amount: i8 },
 }
 
-/// FanControl cluster (0x0202) commands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum FanControlCommand {
-    /// Write to attribute 0x0000 `FanMode`.
-    SetFanMode { mode: FanMode },
-
-    /// Write to attribute 0x0002 `PercentSetting` (0-100).
-    SetPercentSetting { percent: u8 },
-
-    /// Write to attribute 0x0005 `SpeedSetting` (0 = off, up to `SpeedMax`).
-    SetSpeedSetting { speed: u8 },
-}
-
 /// DehumidificationControl cluster (0x0203) commands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DehumidificationControlCommand {
@@ -186,7 +171,6 @@ pub enum ClusterCommand {
     LevelControl(LevelControlCommand),
     ColorControl(ColorControlCommand),
     Thermostat(ThermostatCommand),
-    FanControl(FanControlCommand),
     DehumidificationControl(DehumidificationControlCommand),
     ThermostatUserInterfaceConfiguration(ThermostatUserInterfaceConfigurationCommand),
     ModeSelect(ModeSelectCommand),
@@ -202,7 +186,6 @@ impl ClusterCommand {
             ClusterCommand::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
             ClusterCommand::ColorControl(_) => CLUSTER_ID_COLOR_CONTROL,
             ClusterCommand::Thermostat(_) => CLUSTER_ID_THERMOSTAT,
-            ClusterCommand::FanControl(_) => CLUSTER_ID_FAN_CONTROL,
             ClusterCommand::DehumidificationControl(_) => CLUSTER_ID_DEHUMIDIFICATION_CONTROL,
             ClusterCommand::ThermostatUserInterfaceConfiguration(_) => {
                 CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION
