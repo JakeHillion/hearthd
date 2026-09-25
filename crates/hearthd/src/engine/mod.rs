@@ -1,12 +1,10 @@
 mod engine;
-mod event;
 mod integration;
 mod message;
 mod node_id;
 pub mod state;
 
 pub use engine::Engine;
-pub use event::Event;
 pub use integration::FromIntegrationSender;
 pub use integration::Integration;
 pub use integration::IntegrationContext;
