@@ -163,6 +163,11 @@ pub struct BinarySensor {
 }
 
 impl BinarySensor {
+    /// The local key for the binary sensor on Zigbee2MQTT node `node_id`.
+    pub fn key_for(node_id: &str) -> LocalKey {
+        LocalKey::from(format!("binary_sensor/{node_id}"))
+    }
+
     pub fn from_discovery(
         discovery: DiscoveryMessage,
         kind: BinarySensorKind,
@@ -184,7 +189,7 @@ impl BinarySensor {
         let device_class = discovery.device_class.map(BinarySensorDeviceClass::from);
 
         Ok(Self {
-            key: LocalKey::from(format!("binary_sensor/{node_id}")),
+            key: Self::key_for(&node_id),
             entity_id,
             name,
             unique_id,

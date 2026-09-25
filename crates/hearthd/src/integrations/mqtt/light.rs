@@ -56,6 +56,11 @@ pub struct Light {
 }
 
 impl Light {
+    /// The local key for the light on Zigbee2MQTT node `node_id`.
+    pub fn key_for(node_id: &str) -> LocalKey {
+        LocalKey::from(format!("light/{node_id}"))
+    }
+
     /// Create a Light entity from a Zigbee2MQTT discovery message
     pub fn from_discovery(
         discovery: DiscoveryMessage,
@@ -101,7 +106,7 @@ impl Light {
         };
 
         Ok(Self {
-            key: LocalKey::from(format!("light/{node_id}")),
+            key: Self::key_for(&node_id),
             entity_id,
             name,
             unique_id,

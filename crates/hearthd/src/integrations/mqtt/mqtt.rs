@@ -21,15 +21,14 @@ use super::light::Light;
 use super::light::Z2M_ENDPOINT;
 use super::sensor::Measurement;
 use super::sensor::Sensor;
-use crate::engine::Event;
 use crate::engine::Integration;
 use crate::engine::IntegrationSender;
-use crate::engine::NodeId;
-use crate::engine::NodeIdAllocator;
 use crate::engine::ToIntegrationMessage;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::EndpointId;
+use crate::matter::LocalKey;
+use crate::matter::Node;
 
 /// Integration name reported to the engine.
 const INTEGRATION_NAME: &str = "mqtt";
@@ -42,14 +41,13 @@ enum MqttEntity {
     Sensor(Arc<Mutex<Sensor>>),
 }
 
-/// Shared inner state for the integration. All maps are keyed by NodeId.
+/// Shared inner state for the integration. All maps are keyed by the
+/// entity's local key.
 #[derive(Default)]
 struct Inner {
-    entities: HashMap<NodeId, MqttEntity>,
-    /// Reverse index: state-update topic → NodeId
-    topic_to_node: HashMap<String, NodeId>,
-    /// Reverse index: entity_id alias → NodeId (for re-discovery / removal)
-    entity_to_node: HashMap<String, NodeId>,
+    entities: HashMap<LocalKey, MqttEntity>,
+    /// Reverse index: state-update topic → local key
+    topic_to_key: HashMap<String, LocalKey>,
 }
 
 type SharedInner = Arc<Mutex<Inner>>;
@@ -84,7 +82,6 @@ impl<C: MqttClient> MqttIntegration<C> {
         client: Arc<Mutex<C>>,
         config: MqttConfig,
         inner: SharedInner,
-        node_ids: NodeIdAllocator,
         to_engine: IntegrationSender,
     ) {
         loop {
@@ -103,10 +100,8 @@ impl<C: MqttClient> MqttIntegration<C> {
                     info!("Received message on topic: {}", msg.topic);
 
                     if msg.topic.ends_with("/config") {
-                        if let Err(e) = Self::handle_discovery(
-                            &msg, &config, &client, &inner, &node_ids, &to_engine,
-                        )
-                        .await
+                        if let Err(e) =
+                            Self::handle_discovery(&msg, &config, &client, &inner, &to_engine).await
                         {
                             warn!("Error handling discovery message: {}", e);
                         }
@@ -127,7 +122,6 @@ impl<C: MqttClient> MqttIntegration<C> {
         config: &MqttConfig,
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
-        node_ids: &NodeIdAllocator,
         to_engine: &IntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
         let (component, node_id_str, object_id) =
@@ -147,26 +141,17 @@ impl<C: MqttClient> MqttIntegration<C> {
 
         match component.as_str() {
             "light" => {
-                Self::handle_light_discovery(msg, client, inner, node_ids, to_engine, &node_id_str)
-                    .await
+                Self::handle_light_discovery(msg, client, inner, to_engine, &node_id_str).await
             }
             "binary_sensor" => {
-                Self::handle_binary_sensor_discovery(
-                    msg,
-                    client,
-                    inner,
-                    node_ids,
-                    to_engine,
-                    &node_id_str,
-                )
-                .await
+                Self::handle_binary_sensor_discovery(msg, client, inner, to_engine, &node_id_str)
+                    .await
             }
             "sensor" => {
                 // TODO: Z2M also publishes auxiliary `sensor` components
                 // (battery, linkquality, illuminance) that should become
                 // their own Matter clusters.
-                Self::handle_sensor_discovery(msg, client, inner, node_ids, to_engine, &node_id_str)
-                    .await
+                Self::handle_sensor_discovery(msg, client, inner, to_engine, &node_id_str).await
             }
             _ => {
                 debug!("Ignoring unsupported component: {}", component);
@@ -179,23 +164,23 @@ impl<C: MqttClient> MqttIntegration<C> {
         msg: &MqttMessage,
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
-        node_ids: &NodeIdAllocator,
         to_engine: &IntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
+        let key = Light::key_for(z2m_node_id);
         let entity_id = format!("light.{}", z2m_node_id);
 
         // Empty payload = retained discovery deletion
         if msg.payload.is_empty() {
-            Self::remove_entity_by_alias(&entity_id, inner, to_engine).await;
+            Self::remove_entity(&key, inner, to_engine).await;
             return Ok(());
         }
 
         // Already-known entity: ignore (Z2M can re-publish discovery)
         {
             let guard = inner.lock().await;
-            if guard.entity_to_node.contains_key(&entity_id) {
-                debug!("Ignoring re-discovery for {}", entity_id);
+            if guard.entities.contains_key(&key) {
+                debug!("Ignoring re-discovery for {}", key);
                 return Ok(());
             }
         }
@@ -203,26 +188,27 @@ impl<C: MqttClient> MqttIntegration<C> {
         let discovery: DiscoveryMessage = serde_json::from_slice(&msg.payload)
             .map_err(|e| -> Box<dyn Error + Send> { Box::new(e) })?;
 
-        let light = Light::from_discovery(discovery, entity_id.clone(), z2m_node_id.to_string())
-            .map_err(|e| -> Box<dyn Error + Send> {
+        let light = Light::from_discovery(discovery, entity_id, z2m_node_id.to_string()).map_err(
+            |e| -> Box<dyn Error + Send> {
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     e.to_string(),
                 ))
-            })?;
+            },
+        )?;
 
         let state_topic = light.state_topic.clone();
         let node = light.to_node();
-        info!("Discovered light entity: {} ({})", light.name, entity_id);
+        info!("Discovered light entity: {} ({})", light.name, key);
 
-        let node_id = node_ids.allocate();
         let light_arc = Arc::new(Mutex::new(light));
 
         {
             let mut guard = inner.lock().await;
-            guard.entities.insert(node_id, MqttEntity::Light(light_arc));
-            guard.topic_to_node.insert(state_topic.clone(), node_id);
-            guard.entity_to_node.insert(entity_id, node_id);
+            guard
+                .entities
+                .insert(key.clone(), MqttEntity::Light(light_arc));
+            guard.topic_to_key.insert(state_topic.clone(), key);
         }
 
         // Subscribe after registering so the retained state message routes correctly.
@@ -231,7 +217,7 @@ impl<C: MqttClient> MqttIntegration<C> {
             client_guard.subscribe(&state_topic).await?;
         }
 
-        Self::send_node_added(node_id, node, to_engine).await;
+        Self::send_node_added(node, to_engine).await;
 
         Ok(())
     }
@@ -240,21 +226,21 @@ impl<C: MqttClient> MqttIntegration<C> {
         msg: &MqttMessage,
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
-        node_ids: &NodeIdAllocator,
         to_engine: &IntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
+        let key = BinarySensor::key_for(z2m_node_id);
         let entity_id = format!("binary_sensor.{}", z2m_node_id);
 
         if msg.payload.is_empty() {
-            Self::remove_entity_by_alias(&entity_id, inner, to_engine).await;
+            Self::remove_entity(&key, inner, to_engine).await;
             return Ok(());
         }
 
         {
             let guard = inner.lock().await;
-            if guard.entity_to_node.contains_key(&entity_id) {
-                debug!("Ignoring re-discovery for {}", entity_id);
+            if guard.entities.contains_key(&key) {
+                debug!("Ignoring re-discovery for {}", key);
                 return Ok(());
             }
         }
@@ -272,41 +258,32 @@ impl<C: MqttClient> MqttIntegration<C> {
         let Some(kind) = kind else {
             warn!(
                 "Skipping binary sensor {} with unsupported device_class {:?}",
-                entity_id, discovery.device_class
+                key, discovery.device_class
             );
             return Ok(());
         };
 
-        let sensor = BinarySensor::from_discovery(
-            discovery,
-            kind,
-            entity_id.clone(),
-            z2m_node_id.to_string(),
-        )
-        .map_err(|e| -> Box<dyn Error + Send> {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
+        let sensor =
+            BinarySensor::from_discovery(discovery, kind, entity_id, z2m_node_id.to_string())
+                .map_err(|e| -> Box<dyn Error + Send> {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e.to_string(),
+                    ))
+                })?;
 
         let state_topic = sensor.state_topic.clone();
         let node = sensor.to_node();
-        info!(
-            "Discovered binary sensor entity: {} ({})",
-            sensor.name, entity_id
-        );
+        info!("Discovered binary sensor entity: {} ({})", sensor.name, key);
 
-        let node_id = node_ids.allocate();
         let sensor_arc = Arc::new(Mutex::new(sensor));
 
         {
             let mut guard = inner.lock().await;
             guard
                 .entities
-                .insert(node_id, MqttEntity::BinarySensor(sensor_arc));
-            guard.topic_to_node.insert(state_topic.clone(), node_id);
-            guard.entity_to_node.insert(entity_id, node_id);
+                .insert(key.clone(), MqttEntity::BinarySensor(sensor_arc));
+            guard.topic_to_key.insert(state_topic.clone(), key);
         }
 
         {
@@ -314,7 +291,7 @@ impl<C: MqttClient> MqttIntegration<C> {
             client_guard.subscribe(&state_topic).await?;
         }
 
-        Self::send_node_added(node_id, node, to_engine).await;
+        Self::send_node_added(node, to_engine).await;
 
         Ok(())
     }
@@ -323,14 +300,14 @@ impl<C: MqttClient> MqttIntegration<C> {
         msg: &MqttMessage,
         client: &Arc<Mutex<C>>,
         inner: &SharedInner,
-        node_ids: &NodeIdAllocator,
         to_engine: &IntegrationSender,
         z2m_node_id: &str,
     ) -> Result<(), Box<dyn Error + Send>> {
+        let key = Sensor::key_for(z2m_node_id);
         let entity_id = format!("sensor.{}", z2m_node_id);
 
         if msg.payload.is_empty() {
-            Self::remove_entity_by_alias(&entity_id, inner, to_engine).await;
+            Self::remove_entity(&key, inner, to_engine).await;
             return Ok(());
         }
 
@@ -345,7 +322,7 @@ impl<C: MqttClient> MqttIntegration<C> {
             None => {
                 debug!(
                     "Skipping sensor {} with unsupported device_class {:?}",
-                    entity_id, discovery.device_class
+                    key, discovery.device_class
                 );
                 return Ok(());
             }
@@ -357,61 +334,49 @@ impl<C: MqttClient> MqttIntegration<C> {
         // one of its readings.
         let existing = {
             let guard = inner.lock().await;
-            guard.entity_to_node.get(&entity_id).copied()
+            match guard.entities.get(&key) {
+                Some(MqttEntity::Sensor(s)) => Some(s.clone()),
+                Some(_) => return Ok(()),
+                None => None,
+            }
         };
-        if let Some(node_id) = existing {
-            let sensor_arc = {
-                let guard = inner.lock().await;
-                match guard.entities.get(&node_id) {
-                    Some(MqttEntity::Sensor(s)) => s.clone(),
-                    _ => return Ok(()),
-                }
-            };
+        if let Some(sensor_arc) = existing {
             let node = {
                 let mut sensor = sensor_arc.lock().await;
                 if !sensor.add_channel(measurement, &discovery) {
-                    debug!(
-                        "Ignoring re-discovery of {:?} for {}",
-                        measurement, entity_id
-                    );
+                    debug!("Ignoring re-discovery of {:?} for {}", measurement, key);
                     return Ok(());
                 }
                 sensor.to_node()
             };
-            info!("Added {:?} channel to sensor {}", measurement, entity_id);
+            info!("Added {:?} channel to sensor {}", measurement, key);
             // Re-announce the node so the engine picks up the new cluster; the
             // state topic is already subscribed from the first channel.
-            Self::send_node_added(node_id, node, to_engine).await;
+            Self::send_node_added(node, to_engine).await;
             return Ok(());
         }
 
-        let sensor = Sensor::from_discovery(
-            discovery,
-            measurement,
-            entity_id.clone(),
-            z2m_node_id.to_string(),
-        )
-        .map_err(|e| -> Box<dyn Error + Send> {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e.to_string(),
-            ))
-        })?;
+        let sensor =
+            Sensor::from_discovery(discovery, measurement, entity_id, z2m_node_id.to_string())
+                .map_err(|e| -> Box<dyn Error + Send> {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e.to_string(),
+                    ))
+                })?;
 
         let state_topic = sensor.state_topic.clone();
         let node = sensor.to_node();
-        info!("Discovered sensor entity: {} ({})", sensor.name, entity_id);
+        info!("Discovered sensor entity: {} ({})", sensor.name, key);
 
-        let node_id = node_ids.allocate();
         let sensor_arc = Arc::new(Mutex::new(sensor));
 
         {
             let mut guard = inner.lock().await;
             guard
                 .entities
-                .insert(node_id, MqttEntity::Sensor(sensor_arc));
-            guard.topic_to_node.insert(state_topic.clone(), node_id);
-            guard.entity_to_node.insert(entity_id, node_id);
+                .insert(key.clone(), MqttEntity::Sensor(sensor_arc));
+            guard.topic_to_key.insert(state_topic.clone(), key);
         }
 
         {
@@ -419,60 +384,40 @@ impl<C: MqttClient> MqttIntegration<C> {
             client_guard.subscribe(&state_topic).await?;
         }
 
-        Self::send_node_added(node_id, node, to_engine).await;
+        Self::send_node_added(node, to_engine).await;
 
         Ok(())
     }
 
-    /// Remove an entity given its entity_id alias and notify the engine.
-    async fn remove_entity_by_alias(
-        entity_id: &str,
-        inner: &SharedInner,
-        to_engine: &IntegrationSender,
-    ) {
+    /// Forget an entity and withdraw its node from the engine.
+    async fn remove_entity(key: &LocalKey, inner: &SharedInner, to_engine: &IntegrationSender) {
         let removed = {
             let mut guard = inner.lock().await;
-            if let Some(&node_id) = guard.entity_to_node.get(entity_id) {
-                guard.entity_to_node.remove(entity_id);
-                guard.entities.remove(&node_id);
-                guard.topic_to_node.retain(|_, &mut v| v != node_id);
-                Some(node_id)
-            } else {
-                None
-            }
+            let removed = guard.entities.remove(key).is_some();
+            guard.topic_to_key.retain(|_, k| k != key);
+            removed
         };
-        if let Some(node_id) = removed {
-            info!("Removed entity: {} (node {})", entity_id, node_id);
-            if let Err(e) = to_engine.send(Event::NodeRemoved { node_id }).await {
+        if removed {
+            info!("Removed entity: {}", key);
+            if let Err(e) = to_engine.node_removed(key).await {
                 warn!("Failed to send NodeRemoved: {}", e);
             }
         }
     }
 
-    async fn send_node_added(
-        node_id: NodeId,
-        node: crate::matter::Node,
-        to_engine: &IntegrationSender,
-    ) {
-        if let Err(e) = to_engine.send(Event::NodeAdded { node_id, node }).await {
+    async fn send_node_added(node: Node, to_engine: &IntegrationSender) {
+        if let Err(e) = to_engine.node_added(node).await {
             warn!("Failed to send NodeAdded message: {}", e);
         }
     }
 
     async fn send_report(
-        node_id: NodeId,
+        key: &LocalKey,
         endpoint_id: EndpointId,
         cluster: Cluster,
         to_engine: &IntegrationSender,
     ) {
-        if let Err(e) = to_engine
-            .send(Event::Report {
-                node_id,
-                endpoint_id,
-                cluster,
-            })
-            .await
-        {
+        if let Err(e) = to_engine.report(key, endpoint_id, cluster).await {
             warn!("Failed to send Report: {}", e);
         }
     }
@@ -482,21 +427,21 @@ impl<C: MqttClient> MqttIntegration<C> {
         inner: &SharedInner,
         to_engine: &IntegrationSender,
     ) -> Result<(), Box<dyn Error + Send>> {
-        // Resolve topic → (NodeId, entity handle) and release the outer lock
+        // Resolve topic → (key, entity handle) and release the outer lock
         // before parsing the payload.
-        let (node_id, entity) = {
+        let (key, entity) = {
             let guard = inner.lock().await;
-            let node_id = match guard.topic_to_node.get(&msg.topic) {
-                Some(id) => *id,
+            let key = match guard.topic_to_key.get(&msg.topic) {
+                Some(key) => key.clone(),
                 None => return Ok(()),
             };
-            let entity = match guard.entities.get(&node_id) {
+            let entity = match guard.entities.get(&key) {
                 Some(MqttEntity::Light(l)) => MqttEntity::Light(l.clone()),
                 Some(MqttEntity::BinarySensor(b)) => MqttEntity::BinarySensor(b.clone()),
                 Some(MqttEntity::Sensor(s)) => MqttEntity::Sensor(s.clone()),
                 None => return Ok(()),
             };
-            (node_id, entity)
+            (key, entity)
         };
 
         match entity {
@@ -513,7 +458,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     )?
                 };
                 for cluster in clusters {
-                    Self::send_report(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
+                    Self::send_report(&key, Z2M_ENDPOINT, cluster, to_engine).await;
                 }
             }
             MqttEntity::BinarySensor(sensor_arc) => {
@@ -529,7 +474,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     )?
                 };
                 if let Some(cluster) = cluster {
-                    Self::send_report(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
+                    Self::send_report(&key, Z2M_ENDPOINT, cluster, to_engine).await;
                 }
             }
             MqttEntity::Sensor(sensor_arc) => {
@@ -545,7 +490,7 @@ impl<C: MqttClient> MqttIntegration<C> {
                     )?
                 };
                 for cluster in clusters {
-                    Self::send_report(node_id, Z2M_ENDPOINT, cluster, to_engine).await;
+                    Self::send_report(&key, Z2M_ENDPOINT, cluster, to_engine).await;
                 }
             }
         }
@@ -556,31 +501,31 @@ impl<C: MqttClient> MqttIntegration<C> {
     /// Execute a cluster command against a discovered node.
     async fn invoke_command(
         &self,
-        node_id: NodeId,
+        key: &LocalKey,
         endpoint_id: EndpointId,
         command: ClusterCommand,
     ) -> Result<(), Box<dyn Error + Send>> {
         if endpoint_id != Z2M_ENDPOINT {
             return Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("Unknown endpoint {} on node {}", endpoint_id, node_id),
+                format!("Unknown endpoint {} on {}", endpoint_id, key),
             )));
         }
 
         let light_arc = {
             let guard = self.inner.lock().await;
-            match guard.entities.get(&node_id) {
+            match guard.entities.get(key) {
                 Some(MqttEntity::Light(l)) => l.clone(),
                 Some(MqttEntity::BinarySensor(_)) | Some(MqttEntity::Sensor(_)) => {
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
-                        format!("Node {} is a read-only sensor", node_id),
+                        format!("{} is a read-only sensor", key),
                     )));
                 }
                 None => {
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
-                        format!("Unknown node: {}", node_id),
+                        format!("Unknown entity: {}", key),
                     )));
                 }
             }
@@ -606,8 +551,8 @@ impl<C: MqttClient> MqttIntegration<C> {
         }
 
         info!(
-            "Sent command to node {} (endpoint {}): {:?}",
-            node_id, endpoint_id, command
+            "Sent command to {} (endpoint {}): {:?}",
+            key, endpoint_id, command
         );
 
         Ok(())
@@ -621,7 +566,6 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
     }
 
     async fn setup(&mut self, tx: IntegrationSender) -> Result<(), Box<dyn Error + Send>> {
-        let node_ids = tx.allocator();
         self.to_engine = Some(tx.clone());
 
         info!(
@@ -656,7 +600,7 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
         let inner = self.inner.clone();
 
         let task = tokio::spawn(async move {
-            Self::process_messages_task(client, config, inner, node_ids, tx).await;
+            Self::process_messages_task(client, config, inner, tx).await;
         });
         self._message_task = Some(task);
 
@@ -670,19 +614,19 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
     ) -> Result<(), Box<dyn Error + Send>> {
         match msg {
             ToIntegrationMessage::InvokeCommand {
-                node_id,
+                key,
                 endpoint_id,
                 command,
                 ..
             } => {
                 info!(
-                    "Handling InvokeCommand for node {} endpoint {}: {:?}",
-                    node_id, endpoint_id, command
+                    "Handling InvokeCommand for {} endpoint {}: {:?}",
+                    key, endpoint_id, command
                 );
-                self.invoke_command(node_id, endpoint_id, command).await?;
+                self.invoke_command(&key, endpoint_id, command).await?;
             }
             ToIntegrationMessage::WriteAttribute {
-                node_id,
+                key,
                 endpoint_id,
                 write,
                 ..
@@ -690,7 +634,7 @@ impl<C: MqttClient + 'static> Integration for MqttIntegration<C> {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!(
-                        "MQTT does not accept attribute writes: node {node_id} endpoint {endpoint_id} {write:?}"
+                        "MQTT does not accept attribute writes: {key} endpoint {endpoint_id} {write:?}"
                     ),
                 )));
             }
@@ -742,7 +686,6 @@ mod tests {
 
         let guard = integration.inner.lock().await;
         assert!(guard.entities.is_empty());
-        assert!(guard.topic_to_node.is_empty());
-        assert!(guard.entity_to_node.is_empty());
+        assert!(guard.topic_to_key.is_empty());
     }
 }

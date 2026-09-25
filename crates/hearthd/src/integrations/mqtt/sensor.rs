@@ -78,6 +78,11 @@ pub struct Sensor {
 }
 
 impl Sensor {
+    /// The local key for the sensor on Zigbee2MQTT node `node_id`.
+    pub fn key_for(node_id: &str) -> LocalKey {
+        LocalKey::from(format!("sensor/{node_id}"))
+    }
+
     /// Create a `Sensor` from a Zigbee2MQTT `sensor` discovery carrying the
     /// given `measurement`.
     pub fn from_discovery(
@@ -99,7 +104,7 @@ impl Sensor {
             .ok_or("Missing state_topic in discovery message")?;
 
         let mut sensor = Self {
-            key: LocalKey::from(format!("sensor/{node_id}")),
+            key: Self::key_for(&node_id),
             entity_id,
             name,
             unique_id,
