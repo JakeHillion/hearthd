@@ -7,6 +7,7 @@
 
 use crate::automations::check::function::FunctionIdentity;
 use crate::automations::check::typed::Ty;
+use crate::automations::domain::Domain;
 use crate::automations::lexer::UnitType;
 use crate::automations::parser::ast;
 
@@ -84,6 +85,17 @@ pub enum Op {
     ConstUnit {
         value: String,
         unit: UnitType,
+    },
+
+    /// An entity the automation names, e.g. `state.light.living_room_lamp`.
+    ///
+    /// A constant whose value is not known yet: the name is fixed at compile
+    /// time, the node it stands for is supplied by relocation. The whole
+    /// access collapses to this, so there is no field lookup left to do at
+    /// runtime.
+    EntityRef {
+        domain: Domain,
+        slug: String,
     },
 
     /// The unit/void value.

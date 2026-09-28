@@ -34,6 +34,15 @@ pub enum VmError {
     /// resolve one. This is only ever the VM lagging the checker, never the
     /// automation author's fault.
     NotImplemented(FunctionIdentity),
+    /// A field read off a [`super::Value::Node`], which this VM cannot serve.
+    ///
+    /// The instruction is correct: a node is a handle, and reading a field
+    /// means dereferencing it against the engine's current state. The VM
+    /// has no such state to consult yet, so it reports the gap. Carries the
+    /// field name, since that is all it knows. As with
+    /// [`VmError::NotImplemented`], this is the VM lagging the checker and
+    /// never the automation author's fault.
+    NodeFieldNotImplemented(String),
     /// A condition the compiler and runner are supposed to make impossible:
     /// a register holding a type no opcode should have put there, a constant
     /// pool slot of the wrong kind, an undecodable opcode or tag, or an
@@ -49,6 +58,9 @@ impl std::fmt::Display for VmError {
             VmError::DivideByZero => write!(f, "divide by zero"),
             VmError::Overflow(s) => write!(f, "integer overflow: {}", s),
             VmError::NotImplemented(function) => write!(f, "{} is not implemented", function),
+            VmError::NodeFieldNotImplemented(field) => {
+                write!(f, "field access `.{}` on a node is not implemented", field)
+            }
             VmError::InvariantViolation(s) => write!(f, "VM invariant violated: {}", s),
         }
     }

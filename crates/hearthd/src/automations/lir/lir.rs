@@ -15,6 +15,7 @@
 
 use crate::automations::check::function::FunctionIdentity;
 use crate::automations::check::typed::Ty;
+use crate::automations::domain::Domain;
 use crate::automations::hir::HirBinOp;
 use crate::automations::hir::NumTy;
 use crate::automations::lexer::UnitType;
@@ -102,6 +103,12 @@ pub enum LirInstr {
         dst: Reg,
         value: String,
         unit: UnitType,
+    },
+    /// An entity the automation names, resolved by relocation.
+    EntityRef {
+        dst: Reg,
+        domain: Domain,
+        slug: String,
     },
     Unit {
         dst: Reg,

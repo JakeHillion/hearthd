@@ -90,6 +90,9 @@ fn write_instr(instr: &LirInstr, f: &mut std::fmt::Formatter<'_>) -> std::fmt::R
         LirInstr::ConstUnit { dst, value, unit } => {
             write!(f, "{} = const_unit {}{}", dst, value, unit)
         }
+        LirInstr::EntityRef {
+            dst, domain, slug, ..
+        } => write!(f, "{} = entity {}.{}", dst, domain, slug),
         LirInstr::Unit { dst } => write!(f, "{} = unit", dst),
         LirInstr::TypedBinOp {
             dst,
