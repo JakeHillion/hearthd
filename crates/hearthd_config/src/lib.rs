@@ -1,6 +1,7 @@
 mod diagnostics;
 mod document;
 mod finalize;
+mod from_config;
 mod located;
 
 // Re-export diagnostic types
@@ -19,6 +20,13 @@ pub use document::Document;
 pub use document::Node;
 pub use document::Sources;
 pub use finalize::TryFromPartial;
+pub use from_config::Context;
+pub use from_config::Definitions;
+pub use from_config::FromConfig;
+pub use from_config::Tables;
+pub use from_config::from_sources;
+pub use from_config::load;
+pub use hearthd_config_derive::FromConfig;
 pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;
 pub use hearthd_config_derive::TryFromPartial;

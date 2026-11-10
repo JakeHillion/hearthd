@@ -4,14 +4,14 @@ use std::path::PathBuf;
 use hearthd_config::Diagnostic;
 use hearthd_config::Diagnostics;
 use hearthd_config::Error;
-use hearthd_config::MergeableConfig;
+use hearthd_config::FromConfig;
 use hearthd_config::SubConfig;
 use hearthd_config::TryFromPartial;
 use hearthd_config::ValidationError;
 use serde::Deserialize;
 use tracing_subscriber::filter::LevelFilter;
 
-#[derive(Debug, Default, TryFromPartial, MergeableConfig)]
+#[derive(Debug, FromConfig)]
 pub struct Config {
     pub logging: LoggingConfig,
     pub locations: LocationsConfig,
@@ -177,36 +177,27 @@ fn is_identifier(name: &str) -> bool {
 impl Config {
     /// Load configuration from multiple TOML files with import resolution
     pub fn from_files(paths: &[PathBuf]) -> Result<(Self, Diagnostics), Diagnostics> {
-        // Use generated load and merge
-        let configs = PartialConfig::load_with_imports(paths)?;
-
-        let (partial, mut diagnostics) = PartialConfig::merge(configs);
-
-        // Convert from partial config using TryFromPartial
-        let config = match Config::try_from_partial(partial) {
-            Ok(cfg) => cfg,
-            Err(errs) => {
-                diagnostics.extend(errs);
-                Config::default()
-            }
-        };
+        let (config, mut diagnostics) = hearthd_config::load::<Config>(paths);
 
         // Validate cross-field constraints
-        if let Err((field_path, message)) = config.validate() {
-            diagnostics.push(Diagnostic::Error(Error::Validation(ValidationError {
-                field_path,
-                message,
-                span: None,
-                source: None,
-            })));
+        if let Some(config) = &config {
+            if let Err((field_path, message)) = config.validate() {
+                diagnostics
+                    .0
+                    .push(Diagnostic::Error(Error::Validation(ValidationError {
+                        field_path,
+                        message,
+                        span: None,
+                        source: None,
+                    })));
+            }
         }
 
-        let has_errors = diagnostics.iter().any(|d| d.is_error());
-
-        if has_errors {
-            Err(Diagnostics(diagnostics))
-        } else {
-            Ok((config, Diagnostics(diagnostics)))
+        match config {
+            Some(config) if !diagnostics.0.iter().any(Diagnostic::is_error) => {
+                Ok((config, diagnostics))
+            }
+            _ => Err(diagnostics),
         }
     }
 
@@ -312,6 +303,25 @@ port = 9000
         assert_eq!(config.http.port, 9000);
         assert_eq!(config.logging.level, LogLevel::Info);
         assert_eq!(config.logging.overrides["hearthd::api"], LogLevel::Debug);
+    }
+
+    #[test]
+    fn mistakes_in_separate_sections_are_all_reported() {
+        let err = load_single(
+            "two_sections",
+            r#"
+[http]
+port = "8565"
+
+[logging]
+level = "loud"
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("expected u16"), "{err}");
+        assert!(err.contains("unknown variant `loud`"), "{err}");
     }
 
     // All tests now use Config::from_files() with actual file I/O
