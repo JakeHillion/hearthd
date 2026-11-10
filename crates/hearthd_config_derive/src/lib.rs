@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use syn::DeriveInput;
 use syn::parse_macro_input;
 
+mod config_value;
 mod from_config;
 mod generate;
 
@@ -175,6 +176,22 @@ pub fn derive_from_config(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     match from_config::expand(input) {
+        Ok(expanded) => expanded.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derive `FromConfig` for a type that is written as a single value, such
+/// as an enum or a string that is parsed.
+///
+/// The type says how it is read by implementing `serde::Deserialize`. It is
+/// then required wherever it appears, cannot be set in two files, and a
+/// value serde rejects is reported where it is written.
+#[proc_macro_derive(ConfigValue)]
+pub fn derive_config_value(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    match config_value::expand(input) {
         Ok(expanded) => expanded.into(),
         Err(err) => err.to_compile_error().into(),
     }

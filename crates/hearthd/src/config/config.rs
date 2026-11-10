@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use hearthd_config::ConfigValue;
 use hearthd_config::Diagnostic;
 use hearthd_config::Diagnostics;
 use hearthd_config::Error;
 use hearthd_config::FromConfig;
-use hearthd_config::SubConfig;
-use hearthd_config::TryFromPartial;
 use hearthd_config::ValidationError;
 use serde::Deserialize;
 use tracing_subscriber::filter::LevelFilter;
@@ -21,7 +20,7 @@ pub struct Config {
     pub aliases: AliasesConfig,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, ConfigValue)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
@@ -44,14 +43,10 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
-fn default_level() -> LogLevel {
-    LogLevel::default()
-}
-
-#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Default, FromConfig)]
 pub struct LoggingConfig {
     /// Log level: trace, debug, info, warn, error
-    #[config(default = "default_level")]
+    #[config(default = LogLevel::default())]
     pub level: LogLevel,
 
     pub overrides: HashMap<String, LogLevel>,
@@ -281,6 +276,25 @@ port = 9000
         assert_eq!(config.http.port, 9000);
         assert_eq!(config.logging.level, LogLevel::Info);
         assert_eq!(config.logging.overrides["hearthd::api"], LogLevel::Debug);
+    }
+
+    #[test]
+    fn a_log_override_may_share_a_name_with_a_field() {
+        let (config, diagnostics) = load_single(
+            "override_level",
+            r#"
+[logging]
+level = "info"
+
+[logging.overrides]
+level = "debug"
+"#,
+        )
+        .unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        assert_eq!(config.logging.level, LogLevel::Info);
+        assert_eq!(config.logging.overrides["level"], LogLevel::Debug);
     }
 
     #[test]
