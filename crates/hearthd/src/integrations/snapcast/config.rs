@@ -1,26 +1,16 @@
-use hearthd_config::SubConfig;
-use hearthd_config::TryFromPartial;
-use serde::Deserialize;
-
-fn default_port() -> u16 {
-    1705
-}
-
-fn default_reconnect_interval_ms() -> u64 {
-    5000
-}
+use hearthd_config::FromConfig;
 
 /// Configuration for the Snapcast integration.
-#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Clone, FromConfig)]
 pub struct Config {
     /// Snapserver hostname or IP address.
     pub host: String,
 
     /// Snapserver JSON-RPC TCP port (default: 1705).
-    #[config(default = "default_port")]
+    #[config(default = 1705)]
     pub port: u16,
 
     /// Reconnect interval in milliseconds (default: 5000).
-    #[config(default = "default_reconnect_interval_ms")]
+    #[config(default = 5000)]
     pub reconnect_interval_ms: u64,
 }
