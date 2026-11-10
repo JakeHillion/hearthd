@@ -20,6 +20,17 @@ pub trait FromConfig: Sized {
     fn from_config(definitions: Definitions<'_>, context: &mut Context) -> Option<Self>;
 }
 
+/// Left out of every file, an optional value is `None`.
+impl<T: FromConfig> FromConfig for Option<T> {
+    fn from_config(definitions: Definitions<'_>, context: &mut Context) -> Option<Self> {
+        if definitions.is_absent() {
+            Some(None)
+        } else {
+            T::from_config(definitions, context).map(Some)
+        }
+    }
+}
+
 /// What has been found wrong so far.
 #[derive(Debug, Default)]
 pub struct Context {
@@ -62,6 +73,11 @@ impl<'a> Definitions<'a> {
 
     pub fn nodes(&self) -> &[Node<'a>] {
         &self.nodes
+    }
+
+    /// Whether no file gives this path a value.
+    pub fn is_absent(&self) -> bool {
+        self.nodes.is_empty()
     }
 
     /// These definitions as one table, unless some are not tables, which is
