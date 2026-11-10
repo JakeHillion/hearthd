@@ -284,3 +284,50 @@ fn test_mixed_config_missing_required() {
         _ => panic!("Expected validation error"),
     }
 }
+
+// An absent section is read as an empty one.
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+#[config(no_span)]
+struct BrokerConfig {
+    host: String,
+
+    #[config(default = "default_port")]
+    port: u16,
+}
+
+#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+#[config(no_span)]
+struct ListenConfig {
+    #[config(default = "default_port")]
+    port: u16,
+}
+
+#[derive(Debug, Deserialize, TryFromPartial, SubConfig)]
+#[config(no_span)]
+struct ServiceConfig {
+    listen: ListenConfig,
+    broker: BrokerConfig,
+}
+
+#[test]
+fn an_absent_section_with_a_required_field_is_reported() {
+    let partial: PartialServiceConfig = toml::from_str("").unwrap();
+    let errors = ServiceConfig::try_from_partial(partial).unwrap_err();
+
+    insta::assert_snapshot!(hearthd_config::format_diagnostics_plain(&errors), @"
+    Error: Validation error in 'broker.host'
+      ┌─ <unknown>:1:1
+      │
+      = host is required
+    ");
+}
+
+#[test]
+fn an_absent_section_takes_its_field_defaults() {
+    let partial: PartialServiceConfig = toml::from_str("[broker]\nhost = \"mq\"\n").unwrap();
+    let config = ServiceConfig::try_from_partial(partial).unwrap();
+
+    assert_eq!(config.listen.port, 8080);
+    assert_eq!(config.broker.host, "mq");
+    assert_eq!(config.broker.port, 8080);
+}

@@ -1367,15 +1367,15 @@ fn generate_try_from_partial_conversions(
                         };
                     }
                 } else {
-                    // Required nested field without default - use Default::default()
+                    // An absent section is read as an empty one, so its own
+                    // defaults and required fields decide the outcome.
                     quote! {
-                        let #name = match partial.#name.map(|partial_nested| <#ty>::try_from_partial(partial_nested)) {
-                            Some(Ok(value)) => value,
-                            Some(Err(errs)) => {
+                        let #name = match <#ty>::try_from_partial(partial.#name.unwrap_or_default()) {
+                            Ok(value) => value,
+                            Err(errs) => {
                                 diagnostics.extend(errs.into_iter().map(|d| d.prepend_path(#name_str)));
                                 <#ty>::default()
                             }
-                            None => <#ty>::default(),
                         };
                     }
                 }
