@@ -90,6 +90,29 @@ For a type written as a single value, such as an enum or a string that is
 parsed. The type says how it is read by implementing `serde::Deserialize`, and
 whatever its deserializer rejects is reported where it is written.
 
+### `Validate`
+
+For checks that involve more than one field. Implement it for a struct that
+derives `FromConfig` and it runs once the struct has been read; a struct
+without an implementation is not checked.
+
+```rust
+impl Validate for Pdu {
+    fn validate(&self, validation: &mut Validation<'_>) {
+        for number in self.outlets.keys().filter(|n| **n > self.model.outlets()) {
+            validation
+                .field("outlets")
+                .key(number)
+                .error(format!("a {} has no outlet {number}", self.model));
+        }
+    }
+}
+```
+
+`field` moves to a field or a map entry, `key` to the key naming it, and
+`error` reports there. Something no file writes, such as a field left to its
+default, is reported against the table it belongs in.
+
 ## Imports
 
 A file may list others to load before it:

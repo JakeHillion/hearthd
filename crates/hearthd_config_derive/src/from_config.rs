@@ -112,7 +112,14 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 let tables = definitions.tables(context)?;
                 #(#reads)*
                 #unknown
-                Some(Self { #(#names: #names?,)* })
+                let value = Self { #(#names: #names?,)* };
+                {
+                    use hearthd_config::__private::WithValidate as _;
+                    use hearthd_config::__private::WithoutValidate as _;
+                    (&hearthd_config::__private::Probe(&value))
+                        .run(&mut tables.validation(context));
+                }
+                Some(value)
             }
         }
     })
