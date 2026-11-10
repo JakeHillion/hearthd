@@ -1,4 +1,5 @@
 mod diagnostics;
+mod document;
 mod finalize;
 mod located;
 
@@ -14,6 +15,9 @@ pub use diagnostics::ValidationError;
 pub use diagnostics::Warning;
 pub use diagnostics::format_diagnostics;
 pub use diagnostics::format_diagnostics_plain;
+pub use document::Document;
+pub use document::Node;
+pub use document::Sources;
 pub use finalize::TryFromPartial;
 pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;

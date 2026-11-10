@@ -888,74 +888,27 @@ fn generate_load_impl(config_name: &Ident) -> Result<TokenStream> {
 
     Ok(quote! {
         impl #partial_name {
-            pub fn from_file(path: &std::path::Path) -> Result<Self, hearthd_config::LoadError> {
-                let content = std::fs::read_to_string(path).map_err(|e| hearthd_config::LoadError::Io {
-                    path: path.to_path_buf(),
-                    error: e.to_string(),
-                })?;
+            pub fn load_with_imports(paths: &[std::path::PathBuf]) -> Result<Vec<Self>, hearthd_config::Diagnostics> {
+                let sources = hearthd_config::Sources::load(paths)?;
+                let mut configs = Vec::new();
+                let mut errors = Vec::new();
 
-                let mut config: Self = toml::from_str(&content).map_err(|e| hearthd_config::LoadError::Parse {
-                    path: path.to_path_buf(),
-                    error: e.to_string(),
-                })?;
-
-                let source_info = hearthd_config::SourceInfo {
-                    file_path: path.to_path_buf(),
-                    content,
-                };
-
-                config.source = Some(source_info.clone());
-                config.attach_source_info(source_info);
-
-                Ok(config)
-            }
-
-            pub fn load_with_imports(paths: &[std::path::PathBuf]) -> Result<Vec<Self>, hearthd_config::LoadError> {
-                let mut visited = std::collections::HashSet::new();
-                let mut all_configs = Vec::new();
-
-                for path in paths {
-                    Self::load_recursive(path, &mut visited, &mut all_configs)?;
+                for document in sources.parse()? {
+                    match document.root().deserialize::<Self>() {
+                        Ok(mut config) => {
+                            config.source = Some(document.source().clone());
+                            config.attach_source_info(document.source().clone());
+                            configs.push(config);
+                        }
+                        Err(error) => errors.push(error),
+                    }
                 }
 
-                Ok(all_configs)
-            }
-
-            fn load_recursive(
-                path: &std::path::Path,
-                visited: &mut std::collections::HashSet<std::path::PathBuf>,
-                configs: &mut Vec<Self>,
-            ) -> Result<(), hearthd_config::LoadError> {
-                let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-
-                if visited.contains(&canonical_path) {
-                    return Err(hearthd_config::LoadError::ImportCycle {
-                        path: canonical_path.clone(),
-                        cycle: visited.iter().cloned().collect(),
-                    });
+                if errors.is_empty() {
+                    Ok(configs)
+                } else {
+                    Err(hearthd_config::Diagnostics(errors))
                 }
-
-                visited.insert(canonical_path.clone());
-
-                let config = Self::from_file(path)?;
-
-                for import_path in &config.imports {
-                    let import_path_buf = std::path::PathBuf::from(import_path);
-
-                    let resolved_path = if import_path_buf.is_absolute() {
-                        import_path_buf
-                    } else {
-                        let parent_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-                        parent_dir.join(import_path_buf)
-                    };
-
-                    Self::load_recursive(&resolved_path, visited, configs)?;
-                }
-
-                configs.push(config);
-                visited.remove(&canonical_path);
-
-                Ok(())
             }
         }
     })

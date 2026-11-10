@@ -178,8 +178,7 @@ impl Config {
     /// Load configuration from multiple TOML files with import resolution
     pub fn from_files(paths: &[PathBuf]) -> Result<(Self, Diagnostics), Diagnostics> {
         // Use generated load and merge
-        let configs = PartialConfig::load_with_imports(paths)
-            .map_err(|e| Diagnostics(vec![Diagnostic::Error(hearthd_config::Error::Load(e))]))?;
+        let configs = PartialConfig::load_with_imports(paths)?;
 
         let (partial, mut diagnostics) = PartialConfig::merge(configs);
 
