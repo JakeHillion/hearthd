@@ -45,6 +45,7 @@ chumsky = "0.13"
 facet = "0.46"
 strum = { version = "0.28", features = ["derive"] }
 surge-ping = "0.9"
+snmp2 = { version = "0.5", default-features = false, features = ["heap_buffers", "tokio"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 twox-hash = { version = "2", default-features = false, features = ["xxhash3_128"] }

@@ -103,6 +103,9 @@ pub struct IntegrationsConfig {
     #[cfg(feature = "integration_snapcast")]
     pub snapcast: Option<crate::integrations::snapcast::SnapcastConfig>,
 
+    #[cfg(feature = "integration_apc")]
+    pub apc: Option<crate::integrations::apc::ApcConfig>,
+
     #[cfg(feature = "integration_wake_on_lan")]
     pub wake_on_lan: Option<crate::integrations::wake_on_lan::WolConfig>,
 }
@@ -1357,5 +1360,99 @@ broadcast = "192.168.1.255"
         assert_eq!(ws.name, None);
 
         fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn apc_integration_config() {
+        let (config, diagnostics) = load_single(
+            "apc",
+            r#"
+[integrations.apc.pdus.rack]
+model = "apc_ap7921"
+host = "10.0.0.2"
+write_community = "secret"
+
+[integrations.apc.pdus.rack.outlets.3]
+switchable = false
+
+[integrations.apc.pdus.rack.outlets.8]
+enabled = false
+"#,
+        )
+        .unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        let apc = config.integrations.apc.expect("apc configured");
+        let rack = &apc.pdus["rack"];
+        assert_eq!(rack.model.to_string(), "apc_ap7921");
+        assert_eq!(rack.write_community, "secret");
+        assert_eq!(rack.port, 161);
+        assert_eq!(rack.read_community, "public");
+        assert_eq!(rack.poll_interval_ms, 10_000);
+        assert_eq!(rack.timeout_ms, 2_000);
+
+        let outlets = &rack.outlets;
+        assert_eq!(outlets.len(), 2);
+        assert!(outlets[&3].enabled);
+        assert!(!outlets[&3].switchable);
+        assert!(!outlets[&8].enabled);
+        assert!(outlets[&8].switchable);
+    }
+
+    #[test]
+    fn apc_unknown_model_and_outlets_are_reported_in_place() {
+        let errors = load_errors(
+            "apc_invalid",
+            r#"
+[integrations.apc.pdus.rack]
+model = "apc_ap9999"
+host = "10.0.0.2"
+write_community = "secret"
+
+[integrations.apc.pdus.other]
+model = "apc_ap7921"
+host = "10.0.0.3"
+write_community = "secret"
+outlets.0.enabled = false
+outlets.9.enabled = false
+
+[integrations.apc.pdus.spare]
+model = "apc_ap7921"
+host = "10.0.0.4"
+write_community = "secret"
+outlets.three.enabled = false
+"#,
+        );
+
+        insta::assert_snapshot!(errors, @r#"
+        Error: Validation error in 'integrations.apc.pdus.other.outlets.0'
+            ╭─[ config.toml:11:9 ]
+            │
+         11 │ outlets.0.enabled = false
+            │         ┬  
+            │         ╰── apc_ap7921 has outlets 1 to 8, not 0
+        ────╯
+        Error: Validation error in 'integrations.apc.pdus.other.outlets.9'
+            ╭─[ config.toml:12:9 ]
+            │
+         12 │ outlets.9.enabled = false
+            │         ┬  
+            │         ╰── apc_ap7921 has outlets 1 to 8, not 9
+        ────╯
+        Error: Validation error in 'integrations.apc.pdus.rack.model'
+           ╭─[ config.toml:3:9 ]
+           │
+         3 │ model = "apc_ap9999"
+           │         ──────┬─────  
+           │               ╰─────── unknown variant `apc_ap9999`, expected `apc_ap7921`
+        ───╯
+        Error: Validation error in 'integrations.apc.pdus.spare.outlets.three'
+            ╭─[ config.toml:18:9 ]
+            │
+         18 │ outlets.three.enabled = false
+            │         ──┬──  
+            │           ╰──── invalid key: invalid digit found in string
+        ────╯
+        "#);
     }
 }

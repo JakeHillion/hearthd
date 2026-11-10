@@ -71,6 +71,35 @@ longitude = 10.7579
 # nothing is lost by waiting.
 # reconnect_interval_ms = 5000
 
+# APC switched rack PDUs, over SNMPv1. Each PDU names its model; the device must
+# report that model before anything else is read from it. Every outlet
+# becomes a "switch" node keyed "<pdu>/<n>" and named by the PDU's own outlet
+# label (add an alias to name it yourself), and the whole unit's meter becomes
+# a node keyed "<pdu>" reporting its current draw.
+#
+# Supported models: apc_ap7921.
+#
+# The write community needs "Write+" access on APC cards: plain "Write" is
+# refused while anyone is logged into the telnet or web console.
+#
+# [integrations.apc.pdus.rack]
+# model = "apc_ap7921"
+# host = "192.168.1.24"
+# write_community is a secret: it switches power to everything plugged in.
+# Keep it in a separate, tightly permissioned file listed after this one.
+# write_community = "..."
+# read_community = "public"        # community for polling
+# port = 161
+# poll_interval_ms = 10000         # how often state and load are read (ms)
+# timeout_ms = 2000                # per request, before retrying (ms)
+#
+# Outlets not listed are enabled and switchable. A non-switchable outlet still
+# reports its state but refuses every command; a disabled one has no node.
+# [integrations.apc.pdus.rack.outlets.3]
+# switchable = false
+# [integrations.apc.pdus.rack.outlets.8]
+# enabled = false
+
 # Wake on LAN, over ICMP ping. Each configured host becomes a "switch.<name>"
 # entity whose state reflects whether the host answers a ping. Toggling the
 # switch on sends a Wake-on-LAN magic packet to wake the host; "off" is a
