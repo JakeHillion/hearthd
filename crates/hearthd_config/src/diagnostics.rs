@@ -28,7 +28,16 @@ pub enum Diagnostic {
 /// Warning messages that don't prevent config loading
 #[derive(Debug, Clone)]
 pub enum Warning {
-    EmptyConfig { file_path: PathBuf },
+    EmptyConfig {
+        file_path: PathBuf,
+    },
+    /// A key that no part of the configuration reads, most often a
+    /// misspelling or an option from another version.
+    UnknownKey {
+        field_path: String,
+        span: Range<usize>,
+        source: SourceInfo,
+    },
 }
 
 /// Error messages that indicate problems with the config
@@ -225,6 +234,24 @@ fn render(diagnostics: &[Diagnostic], color: bool) -> String {
                     .as_bytes(),
                 );
                 output.push(b'\n');
+            }
+            Diagnostic::Warning(Warning::UnknownKey {
+                field_path,
+                span,
+                source,
+            }) => {
+                let id = file_id(&source.file_path);
+                Report::build(ReportKind::Warning, (id.clone(), span.clone()))
+                    .with_config(config)
+                    .with_message(format!("Unknown key '{field_path}'"))
+                    .with_label(
+                        Label::new((id.clone(), span.clone()))
+                            .with_message("nothing reads this key")
+                            .with_color(Color::Yellow),
+                    )
+                    .finish()
+                    .write((id, Source::from(source.content.as_str())), &mut output)
+                    .ok();
             }
             Diagnostic::Error(Error::Merge(merge_error)) => {
                 let first = &merge_error.conflicts[0];

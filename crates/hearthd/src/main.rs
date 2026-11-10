@@ -51,10 +51,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Display any warnings (errors would have prevented loading)
+    // Display any warnings (errors would have prevented loading). The log
+    // escapes control characters, so they are rendered without colour.
     for diagnostic in &diagnostics.0 {
         if diagnostic.is_warning() {
-            warn!("{}", diagnostic);
+            warn!(
+                "{}",
+                hearthd::format_diagnostics_plain(std::slice::from_ref(diagnostic))
+            );
         }
     }
 

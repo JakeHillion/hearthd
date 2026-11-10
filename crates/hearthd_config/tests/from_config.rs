@@ -746,3 +746,68 @@ fn a_list_must_be_written_as_a_list() {
     ───╯
     "#);
 }
+
+#[test]
+fn a_key_nothing_reads_is_warned_about_and_ignored() {
+    let (config, diagnostics) = load::<Cluster>(&[
+        (
+            "a.toml",
+            "[server]\nhost = \"a.lan\"\nprot = 81\n\n[replica.b]\nhost = \"b.lan\"\n",
+        ),
+        ("b.toml", "[server]\nprot = 82\n"),
+    ]);
+
+    let config = config.unwrap();
+    assert_eq!(config.server.port, None);
+    assert!(config.replicas.is_empty());
+    insta::assert_snapshot!(diagnostics, @"
+    Warning: Unknown key 'server.prot'
+       ╭─[ a.toml:3:1 ]
+       │
+     3 │ prot = 81
+       │ ──┬─  
+       │   ╰─── nothing reads this key
+    ───╯
+    Warning: Unknown key 'server.prot'
+       ╭─[ b.toml:2:1 ]
+       │
+     2 │ prot = 82
+       │ ──┬─  
+       │   ╰─── nothing reads this key
+    ───╯
+    Warning: Unknown key 'replica'
+       ╭─[ a.toml:5:2 ]
+       │
+     5 │ [replica.b]
+       │  ───┬───  
+       │     ╰───── nothing reads this key
+    ───╯
+    ");
+}
+
+#[test]
+fn imports_are_only_read_at_the_top_of_a_file() {
+    let (config, diagnostics) = load::<Cluster>(&[(
+        "a.toml",
+        "imports = []\n\n[server]\nimports = [\"extra.toml\"]\nhost = \"a.lan\"\n",
+    )]);
+
+    assert!(config.is_some());
+    insta::assert_snapshot!(diagnostics, @r#"
+    Warning: Unknown key 'server.imports'
+       ╭─[ a.toml:4:1 ]
+       │
+     4 │ imports = ["extra.toml"]
+       │ ───┬───  
+       │    ╰───── nothing reads this key
+    ───╯
+    "#);
+}
+
+#[test]
+fn a_flattened_map_leaves_no_key_unread() {
+    let (config, diagnostics) = load::<Servers>(&[("a.toml", "[anything]\nport = 81\n")]);
+
+    assert_eq!(diagnostics, "");
+    assert_eq!(config.unwrap().others["anything"].port, 81);
+}

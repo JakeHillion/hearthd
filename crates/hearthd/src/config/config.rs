@@ -288,6 +288,44 @@ port = 9000
     }
 
     #[test]
+    fn a_misspelt_key_is_warned_about_but_still_loads() {
+        let dir = std::env::temp_dir().join("hearthd_test_misspelt");
+        let (config, diagnostics) = load_single(
+            "misspelt",
+            r#"
+[http]
+prot = 9000
+
+[integrations.wake_on_lan.hosts.lab_server]
+host = "192.168.1.50"
+mac = "AA:BB:CC:DD:EE:FF"
+ping_interval = 5000
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.http.port, 8565);
+        let warnings = hearthd_config::format_diagnostics_plain(&diagnostics.0)
+            .replace(&format!("{}/", dir.display()), "");
+        insta::assert_snapshot!(warnings, @"
+        Warning: Unknown key 'http.prot'
+           ╭─[ config.toml:3:1 ]
+           │
+         3 │ prot = 9000
+           │ ──┬─  
+           │   ╰─── nothing reads this key
+        ───╯
+        Warning: Unknown key 'integrations.wake_on_lan.hosts.lab_server.ping_interval'
+           ╭─[ config.toml:8:1 ]
+           │
+         8 │ ping_interval = 5000
+           │ ──────┬──────  
+           │       ╰──────── nothing reads this key
+        ───╯
+        ");
+    }
+
+    #[test]
     fn a_log_override_may_share_a_name_with_a_field() {
         let (config, diagnostics) = load_single(
             "override_level",
