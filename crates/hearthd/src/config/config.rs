@@ -114,7 +114,7 @@ impl Default for HttpConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Default, FromConfig)]
 pub struct IntegrationsConfig {
     #[cfg(feature = "integration_mqtt")]
     pub mqtt: Option<crate::integrations::mqtt::MqttConfig>,

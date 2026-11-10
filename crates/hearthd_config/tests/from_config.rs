@@ -167,3 +167,41 @@ fn a_file_that_sets_nothing_is_warned_about() {
       = Config file 'empty.toml' is empty and has no effect
     ");
 }
+
+#[derive(Debug, FromConfig)]
+struct Integrations {
+    http: Option<Http>,
+    logging: Option<Logging>,
+}
+
+#[test]
+fn an_optional_section_is_none_when_no_file_mentions_it() {
+    let (config, diagnostics) = load::<Integrations>(&[("a.toml", "[http]\nport = 80\n")]);
+
+    assert_eq!(diagnostics, "");
+    let config = config.unwrap();
+    assert_eq!(
+        config.http,
+        Some(Http {
+            port: 80,
+            host: None,
+        })
+    );
+    assert_eq!(config.logging, None);
+}
+
+#[test]
+fn an_optional_section_that_is_written_must_be_valid() {
+    let (config, diagnostics) = load::<Integrations>(&[("a.toml", "[logging]\nlevel = 3\n")]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @"
+    Error: Failed to parse config file
+       ╭─[ a.toml:2:9 ]
+       │
+     2 │ level = 3
+       │         ┬  
+       │         ╰── invalid type: integer `3`, expected a string
+    ───╯
+    ");
+}
