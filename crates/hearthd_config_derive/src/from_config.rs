@@ -95,6 +95,14 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         names.push(ident);
     }
 
+    // A flattened map reads every key the fields leave, so there is nothing
+    // left over to warn about.
+    let unknown = if fields.iter().any(|(_, options)| options.flatten) {
+        quote! {}
+    } else {
+        quote! { tables.warn_unknown(&[#(#named),*], context); }
+    };
+
     Ok(quote! {
         impl hearthd_config::FromConfig for #name {
             fn from_config(
@@ -103,6 +111,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             ) -> Option<Self> {
                 let tables = definitions.tables(context)?;
                 #(#reads)*
+                #unknown
                 Some(Self { #(#names: #names?,)* })
             }
         }
@@ -232,6 +241,20 @@ mod tests {
             error("struct S { #[config(flatten, default = 1)] a: Map }"),
             "a field that takes the remaining keys cannot have a default"
         );
+    }
+
+    #[test]
+    fn keys_no_field_reads_are_checked_unless_a_field_takes_them() {
+        let plain = syn::parse_str("struct Http { host: String, port: u16 }").unwrap();
+        let output = expand(plain).unwrap().to_string();
+        assert!(
+            output.contains("tables . warn_unknown (& [\"host\" , \"port\"] , context)"),
+            "{output}"
+        );
+
+        let flattened = syn::parse_str("struct Hosts { #[config(flatten)] hosts: Map }").unwrap();
+        let output = expand(flattened).unwrap().to_string();
+        assert!(!output.contains("warn_unknown"), "{output}");
     }
 
     #[test]

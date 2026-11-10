@@ -15,5 +15,6 @@ pub use config::Diagnostic;
 pub use config::Diagnostics;
 pub use config::LogLevel;
 pub use config::format_diagnostics;
+pub use config::format_diagnostics_plain;
 pub use engine::Engine;
 pub use engine::State;

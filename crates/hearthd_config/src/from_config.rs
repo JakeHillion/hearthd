@@ -268,6 +268,25 @@ impl<'a> Tables<'a> {
         }
     }
 
+    /// Warn about every key written here that is not in `known`. Left as a
+    /// warning so that one file can serve versions with different options.
+    pub fn warn_unknown(&self, known: &[&str], context: &mut Context) {
+        for table in &self.tables {
+            for key in table.keys().filter(|key| !known.contains(key)) {
+                let Some(value) = table.get(key) else {
+                    continue;
+                };
+                context
+                    .diagnostics
+                    .push(Diagnostic::Warning(Warning::UnknownKey {
+                        field_path: self.field(key).path,
+                        span: value.key_span(),
+                        source: table.source().clone(),
+                    }));
+            }
+        }
+    }
+
     /// The keys set in any file, in order.
     pub fn keys(&self) -> BTreeSet<&'a str> {
         self.tables

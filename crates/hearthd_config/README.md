@@ -80,6 +80,10 @@ For a struct with named fields. Each field is read from the key of its name.
 A field with no default that nothing sets is an error. That includes the fields
 of a section no file mentions, which is read as an empty table.
 
+A key that no field reads is a warning, pointing at the key, and is otherwise
+ignored. It is not an error so that one set of files can serve versions of a
+program with different options.
+
 ### `#[derive(ConfigValue)]`
 
 For a type written as a single value, such as an enum or a string that is
