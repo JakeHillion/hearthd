@@ -156,6 +156,7 @@ impl<'s> Document<'s> {
             source: self.source,
             key: None,
             value: &self.root,
+            file: true,
         }
     }
 
@@ -178,6 +179,7 @@ pub struct Node<'a> {
     source: &'a SourceInfo,
     key: Option<&'a Spanned<DeString<'a>>>,
     value: &'a Spanned<DeValue<'a>>,
+    file: bool,
 }
 
 impl<'a> Node<'a> {
@@ -187,6 +189,11 @@ impl<'a> Node<'a> {
 
     pub fn span(&self) -> Range<usize> {
         self.value.span()
+    }
+
+    /// Whether this is the whole of a file, not something written in it.
+    pub fn is_file(&self) -> bool {
+        self.file
     }
 
     /// Where the key naming this value is written. The top of a file has
@@ -216,13 +223,29 @@ impl<'a> Node<'a> {
             source: self.source,
             key: Some(key),
             value,
+            file: false,
         })
     }
 
     /// Read this one value with serde, as if it were a whole file.
     pub fn deserialize<T: DeserializeOwned>(&self) -> Result<T, Diagnostic> {
+        self.read().map_err(|(span, message)| {
+            Diagnostic::Error(Error::Load(LoadError::Parse {
+                source: self.source.clone(),
+                span,
+                message,
+            }))
+        })
+    }
+
+    /// Read this one value with serde. On failure, where it went wrong and
+    /// why.
+    pub fn read<T: DeserializeOwned>(&self) -> Result<T, (Range<usize>, String)> {
         T::deserialize(ValueDeserializer::from(self.value.clone())).map_err(|error| {
-            Diagnostic::Error(Error::Load(parse_error(self.source, &error, self.span())))
+            (
+                error.span().unwrap_or(self.span()),
+                error.message().to_string(),
+            )
         })
     }
 }

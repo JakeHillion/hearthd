@@ -10,6 +10,8 @@ use crate::Diagnostic;
 use crate::Diagnostics;
 use crate::Document;
 use crate::Error;
+use crate::MergeConflictLocation;
+use crate::MergeError;
 use crate::Node;
 use crate::Sources;
 use crate::ValidationError;
@@ -89,21 +91,63 @@ pub struct Context {
 impl Context {
     /// Report `message` against what was written at `node`.
     pub fn error(&mut self, path: &str, node: Node<'_>, message: impl Into<String>) {
-        self.report(path, node, node.span(), message.into());
+        self.error_at(path, node, node.span(), message);
     }
 
     /// Report `message` against the key that names `node`.
     pub fn key_error(&mut self, path: &str, node: Node<'_>, message: impl Into<String>) {
-        self.report(path, node, node.key_span(), message.into());
+        self.error_at(path, node, node.key_span(), message);
     }
 
-    fn report(&mut self, path: &str, node: Node<'_>, span: Range<usize>, message: String) {
+    /// Report `message` against `span` in the file `node` is in.
+    pub fn error_at(
+        &mut self,
+        path: &str,
+        node: Node<'_>,
+        span: Range<usize>,
+        message: impl Into<String>,
+    ) {
         self.diagnostics
             .push(Diagnostic::Error(Error::Validation(ValidationError {
                 field_path: path.to_string(),
-                message,
+                message: message.into(),
                 span: Some(span),
                 source: Some(node.source().clone()),
+            })));
+    }
+
+    /// Report that nothing sets a value that has to be set, against the
+    /// table it belongs in where one is written.
+    pub fn missing(&mut self, definitions: &Definitions<'_>) {
+        let name = definitions.path.rsplit('.').next().unwrap_or_default();
+        let within = definitions.within.first();
+        self.diagnostics
+            .push(Diagnostic::Error(Error::Validation(ValidationError {
+                field_path: definitions.path.clone(),
+                message: format!("{name} is required"),
+                span: within.filter(|table| !table.is_file()).map(Node::span),
+                source: within.map(|table| table.source().clone()),
+            })));
+    }
+
+    /// Report that a value which can only be set once is set more than once.
+    pub fn conflict(&mut self, definitions: &Definitions<'_>) {
+        self.diagnostics
+            .push(Diagnostic::Error(Error::Merge(MergeError {
+                field_path: definitions.path.clone(),
+                message: format!(
+                    "Field '{}' defined in multiple config files",
+                    definitions.path
+                ),
+                conflicts: definitions
+                    .nodes
+                    .iter()
+                    .map(|node| MergeConflictLocation {
+                        file_path: node.source().file_path.clone(),
+                        span: node.span(),
+                        content: node.source().content.clone(),
+                    })
+                    .collect(),
             })));
     }
 }
@@ -114,6 +158,8 @@ impl Context {
 pub struct Definitions<'a> {
     path: String,
     nodes: Vec<Node<'a>>,
+    /// The nearest tables around this path that some file does write.
+    within: Vec<Node<'a>>,
     claimed: &'static [&'static str],
 }
 
@@ -122,6 +168,7 @@ impl<'a> Definitions<'a> {
         Self {
             path: String::new(),
             nodes: documents.iter().map(Document::root).collect(),
+            within: Vec::new(),
             claimed: &[],
         }
     }
@@ -150,6 +197,11 @@ impl<'a> Definitions<'a> {
         }
         all.then_some(Tables {
             path: self.path,
+            within: if self.nodes.is_empty() {
+                self.within
+            } else {
+                self.nodes.clone()
+            },
             tables: self.nodes,
             claimed: self.claimed,
         })
@@ -161,6 +213,7 @@ impl<'a> Definitions<'a> {
 pub struct Tables<'a> {
     path: String,
     tables: Vec<Node<'a>>,
+    within: Vec<Node<'a>>,
     claimed: &'static [&'static str],
 }
 
@@ -179,6 +232,7 @@ impl<'a> Tables<'a> {
                 .iter()
                 .filter_map(|table| table.get(name))
                 .collect(),
+            within: self.within.clone(),
             claimed: &[],
         }
     }
@@ -198,6 +252,7 @@ impl<'a> Tables<'a> {
         Definitions {
             path: self.path.clone(),
             nodes: self.tables.clone(),
+            within: self.within.clone(),
             claimed,
         }
     }
