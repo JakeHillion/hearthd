@@ -1319,6 +1319,65 @@ reconnect_interval_ms = 250
     }
 
     #[test]
+    fn ecoflow_credentials_can_live_in_their_own_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.toml");
+        fs::write(
+            &main,
+            r#"
+[integrations.ecoflow.devices.wave]
+serial = "KT21ZCH4HG170012"
+name = "Bedroom AC"
+"#,
+        )
+        .unwrap();
+        let secrets = dir.path().join("secrets.toml");
+        fs::write(
+            &secrets,
+            r#"
+[integrations.ecoflow]
+email = "someone@example.com"
+password = "hunter2"
+"#,
+        )
+        .unwrap();
+
+        let (config, diagnostics) = Config::from_files(&[main, secrets]).unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        let ecoflow = config.integrations.ecoflow.expect("ecoflow configured");
+        assert_eq!(ecoflow.email, "someone@example.com");
+        assert_eq!(ecoflow.password, "hunter2");
+        assert_eq!(ecoflow.devices["wave"].serial, "KT21ZCH4HG170012");
+        assert_eq!(ecoflow.devices["wave"].name.as_deref(), Some("Bedroom AC"));
+    }
+
+    #[test]
+    fn ecoflow_device_needs_a_serial() {
+        let errors = load_errors(
+            "ecoflow_invalid",
+            r#"
+[integrations.ecoflow]
+email = "someone@example.com"
+password = "hunter2"
+
+[integrations.ecoflow.devices.wave]
+name = "Bedroom AC"
+"#,
+        );
+
+        insta::assert_snapshot!(errors, @"
+        Error: Validation error in 'integrations.ecoflow.devices.wave.serial'
+           ╭─[ config.toml:6:1 ]
+           │
+         6 │ [integrations.ecoflow.devices.wave]
+           │ ─────────────────┬─────────────────  
+           │                  ╰─────────────────── serial is required
+        ───╯
+        ");
+    }
+
+    #[test]
     fn test_wol_integration_config() {
         let temp_dir = std::env::temp_dir().join("hearthd_test_wol");
         fs::create_dir_all(&temp_dir).unwrap();
