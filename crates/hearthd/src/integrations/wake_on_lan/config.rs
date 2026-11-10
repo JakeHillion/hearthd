@@ -8,28 +8,14 @@
 
 use std::collections::HashMap;
 
-use hearthd_config::SubConfig;
-use hearthd_config::TryFromPartial;
-use serde::Deserialize;
-
-fn default_port() -> u16 {
-    9
-}
-
-fn default_ping_interval_ms() -> u64 {
-    30_000
-}
-
-fn default_ping_timeout_ms() -> u64 {
-    2_000
-}
+use hearthd_config::FromConfig;
 
 /// Configuration for the Wake-on-LAN integration.
-#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Clone, FromConfig)]
 pub struct Config {
     /// ICMP timeout: how long a ping may take before the host counts as
     /// offline, in milliseconds.
-    #[config(default = "default_ping_timeout_ms")]
+    #[config(default = 2_000)]
     pub ping_timeout_ms: u64,
 
     /// Hosts to monitor and wake, keyed by the name they are exposed under.
@@ -37,10 +23,7 @@ pub struct Config {
 }
 
 /// One host to monitor and wake.
-#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
-// Required: the toml deserializer cannot wrap fields in Spanned when the
-// parent map is a HashMap.
-#[config(no_span)]
+#[derive(Debug, Clone, FromConfig)]
 pub struct HostConfig {
     /// Host to ping: an IP address or resolvable hostname.
     pub host: String,
@@ -54,12 +37,12 @@ pub struct HostConfig {
 
     /// UDP port for the magic packet. "Magic packet" packets are sent to port
     /// 9 and "Wake on Wake" ones to port 7 (default: 9).
-    #[config(default = "default_port")]
+    #[config(default = 9)]
     pub port: u16,
 
     /// How often this host is pinged to refresh its switch state, in
     /// milliseconds.
-    #[config(default = "default_ping_interval_ms")]
+    #[config(default = 30_000)]
     pub ping_interval_ms: u64,
 
     /// Explicit address the magic packet is sent to (an IPv4 address).

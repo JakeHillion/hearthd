@@ -1378,6 +1378,35 @@ name = "Bedroom AC"
     }
 
     #[test]
+    fn wol_host_problems_are_reported_together() {
+        let errors = load_errors(
+            "wol_invalid",
+            r#"
+[integrations.wake_on_lan.hosts.lab_server]
+host = "192.168.1.50"
+port = "9"
+"#,
+        );
+
+        insta::assert_snapshot!(errors, @r#"
+        Error: Validation error in 'integrations.wake_on_lan.hosts.lab_server.mac'
+           ╭─[ config.toml:2:1 ]
+           │
+         2 │ [integrations.wake_on_lan.hosts.lab_server]
+           │ ─────────────────────┬─────────────────────  
+           │                      ╰─────────────────────── mac is required
+        ───╯
+        Error: Validation error in 'integrations.wake_on_lan.hosts.lab_server.port'
+           ╭─[ config.toml:4:8 ]
+           │
+         4 │ port = "9"
+           │        ─┬─  
+           │         ╰─── invalid type: string "9", expected u16
+        ───╯
+        "#);
+    }
+
+    #[test]
     fn test_wol_integration_config() {
         let temp_dir = std::env::temp_dir().join("hearthd_test_wol");
         fs::create_dir_all(&temp_dir).unwrap();
@@ -1410,7 +1439,6 @@ broadcast = "192.168.1.255"
             .integrations
             .wake_on_lan
             .expect("wake_on_lan integration configured");
-        // Defaults from the generated default functions.
         assert_eq!(wake_on_lan.ping_timeout_ms, 2_000);
 
         let lab = &wake_on_lan.hosts["lab_server"];
@@ -1418,7 +1446,6 @@ broadcast = "192.168.1.255"
         assert_eq!(lab.mac, "AA:BB:CC:DD:EE:FF");
         assert_eq!(lab.name.as_deref(), Some("Lab server"));
         assert_eq!(lab.port, 9);
-        // Default ping interval from the generated default function.
         assert_eq!(lab.ping_interval_ms, 30_000);
         // Unset broadcast/netmask default to None and are resolved at runtime.
         assert_eq!(lab.broadcast, None);
