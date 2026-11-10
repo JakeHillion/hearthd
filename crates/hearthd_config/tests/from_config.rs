@@ -683,3 +683,78 @@ fn a_value_type_is_required_and_set_once_like_any_scalar() {
     ───╯
     "#);
 }
+
+#[derive(Debug, FromConfig)]
+struct Weather {
+    locations: Vec<String>,
+    stations: Vec<Server>,
+}
+
+#[test]
+fn lists_from_several_files_are_joined_in_load_order() {
+    let (config, diagnostics) = load::<Weather>(&[
+        ("a.toml", "locations = [\"home\", \"work\"]\n"),
+        (
+            "b.toml",
+            "locations = [\"cabin\"]\n\n[[stations]]\nhost = \"a.lan\"\n",
+        ),
+    ]);
+
+    assert_eq!(diagnostics, "");
+    let config = config.unwrap();
+    assert_eq!(config.locations, ["home", "work", "cabin"]);
+    assert_eq!(config.stations.len(), 1);
+    assert_eq!(config.stations[0].host, "a.lan");
+}
+
+#[test]
+fn a_list_no_file_mentions_is_empty() {
+    let (config, diagnostics) = load::<Weather>(&[("a.toml", "locations = []\n")]);
+
+    assert_eq!(diagnostics, "");
+    let config = config.unwrap();
+    assert!(config.locations.is_empty());
+    assert!(config.stations.is_empty());
+}
+
+#[test]
+fn a_mistake_in_a_list_names_the_item() {
+    let (config, diagnostics) = load::<Weather>(&[(
+        "a.toml",
+        "locations = [\"home\", 7]\n\n[[stations]]\nhost = \"a.lan\"\n\n[[stations]]\nport = 80\n",
+    )]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @r#"
+    Error: Validation error in 'locations[1]'
+       ╭─[ a.toml:1:22 ]
+       │
+     1 │ locations = ["home", 7]
+       │                      ┬  
+       │                      ╰── invalid type: integer `7`, expected a string
+    ───╯
+    Error: Validation error in 'stations[1].host'
+       ╭─[ a.toml:6:1 ]
+       │
+     6 │ [[stations]]
+       │ ──────┬─────  
+       │       ╰─────── host is required
+    ───╯
+    "#);
+}
+
+#[test]
+fn a_list_must_be_written_as_a_list() {
+    let (config, diagnostics) = load::<Weather>(&[("a.toml", "locations = \"home\"\n")]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @r#"
+    Error: Validation error in 'locations'
+       ╭─[ a.toml:1:13 ]
+       │
+     1 │ locations = "home"
+       │             ───┬──  
+       │                ╰──── expected a list
+    ───╯
+    "#);
+}

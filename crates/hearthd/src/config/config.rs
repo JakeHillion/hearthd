@@ -1378,6 +1378,33 @@ name = "Bedroom AC"
     }
 
     #[test]
+    fn metno_locations_from_every_file_are_joined() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home.toml");
+        fs::write(&home, "[integrations.metno]\nlocations = [\"home\"]\n").unwrap();
+        let away = dir.path().join("away.toml");
+        fs::write(
+            &away,
+            "[integrations.metno]\nlocations = [\"cabin\", \"work\"]\n",
+        )
+        .unwrap();
+
+        let (config, diagnostics) = Config::from_files(&[home, away]).unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        let metno = config.integrations.metno.expect("metno configured");
+        assert_eq!(metno.locations, ["home", "cabin", "work"]);
+    }
+
+    #[test]
+    fn metno_locations_default_to_none() {
+        let (config, _) = load_single("metno_empty", "[integrations.metno]\n").unwrap();
+
+        let metno = config.integrations.metno.expect("metno configured");
+        assert!(metno.locations.is_empty());
+    }
+
+    #[test]
     fn wol_host_problems_are_reported_together() {
         let errors = load_errors(
             "wol_invalid",

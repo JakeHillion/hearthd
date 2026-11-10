@@ -82,6 +82,37 @@ where
     }
 }
 
+/// Lists written in several files are joined, in the order the files were
+/// loaded.
+impl<T: FromConfig> FromConfig for Vec<T> {
+    fn from_config(definitions: Definitions<'_>, context: &mut Context) -> Option<Self> {
+        let mut items = Vec::new();
+        let mut complete = true;
+
+        for node in &definitions.nodes {
+            let Some(elements) = node.elements() else {
+                context.error(&definitions.path, *node, "expected a list");
+                complete = false;
+                continue;
+            };
+            for (index, element) in elements.enumerate() {
+                let item = Definitions {
+                    path: format!("{}[{index}]", definitions.path),
+                    nodes: vec![element],
+                    within: definitions.within.clone(),
+                    claimed: &[],
+                };
+                match T::from_config(item, context) {
+                    Some(item) => items.push(item),
+                    None => complete = false,
+                }
+            }
+        }
+
+        complete.then_some(items)
+    }
+}
+
 /// What has been found wrong so far.
 #[derive(Debug, Default)]
 pub struct Context {
