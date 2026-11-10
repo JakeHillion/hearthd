@@ -1,13 +1,7 @@
-use hearthd_config::SubConfig;
-use hearthd_config::TryFromPartial;
-use serde::Deserialize;
-
-fn default_discovery_prefix() -> String {
-    "homeassistant".to_string()
-}
+use hearthd_config::FromConfig;
 
 /// Configuration for the MQTT integration
-#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Clone, FromConfig)]
 pub struct Config {
     /// MQTT broker hostname or IP address
     pub broker: String,
@@ -19,7 +13,7 @@ pub struct Config {
     pub client_id: String,
 
     /// Discovery prefix for Zigbee2MQTT (default: "homeassistant")
-    #[config(default = "default_discovery_prefix")]
+    #[config(default = "homeassistant")]
     pub discovery_prefix: String,
 
     /// Optional username for authentication
