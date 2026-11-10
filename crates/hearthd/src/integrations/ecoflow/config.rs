@@ -21,16 +21,10 @@
 
 use std::collections::HashMap;
 
-use hearthd_config::SubConfig;
-use hearthd_config::TryFromPartial;
-use serde::Deserialize;
-
-fn default_api_host() -> String {
-    super::cloud::auth::DEFAULT_API_HOST.to_string()
-}
+use hearthd_config::FromConfig;
 
 /// Configuration for the EcoFlow integration.
-#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Clone, FromConfig)]
 pub struct Config {
     /// Private-API host. Not region-selected: EcoFlow routes by account, so
     /// the default suits every account.
@@ -38,7 +32,7 @@ pub struct Config {
     /// This is not the public developer API. `api-e.ecoflow.com` and
     /// `api-a.ecoflow.com` speak a different protocol that does not expose the
     /// Wave 3.
-    #[config(default = "default_api_host")]
+    #[config(default = super::cloud::auth::DEFAULT_API_HOST.to_string())]
     pub api_host: String,
 
     /// EcoFlow account email.
@@ -53,10 +47,7 @@ pub struct Config {
 }
 
 /// One declared device.
-#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
-// Required: the toml deserializer cannot wrap fields in Spanned when the
-// parent map is a HashMap.
-#[config(no_span)]
+#[derive(Debug, Clone, FromConfig)]
 pub struct DeviceConfig {
     /// Serial number, printed on the unit and shown in the EcoFlow app.
     pub serial: String,
