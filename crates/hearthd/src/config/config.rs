@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use hearthd_config::ConfigValue;
 use hearthd_config::Diagnostic;
 use hearthd_config::Diagnostics;
-use hearthd_config::Error;
 use hearthd_config::FromConfig;
-use hearthd_config::ValidationError;
+use hearthd_config::Validate;
+use hearthd_config::Validation;
 use serde::Deserialize;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -150,21 +150,7 @@ fn is_identifier(name: &str) -> bool {
 impl Config {
     /// Load configuration from multiple TOML files with import resolution
     pub fn from_files(paths: &[PathBuf]) -> Result<(Self, Diagnostics), Diagnostics> {
-        let (config, mut diagnostics) = hearthd_config::load::<Config>(paths);
-
-        // Validate cross-field constraints
-        if let Some(config) = &config {
-            if let Err((field_path, message)) = config.validate() {
-                diagnostics
-                    .0
-                    .push(Diagnostic::Error(Error::Validation(ValidationError {
-                        field_path,
-                        message,
-                        span: None,
-                        source: None,
-                    })));
-            }
-        }
+        let (config, diagnostics) = hearthd_config::load::<Config>(paths);
 
         match config {
             Some(config) if !diagnostics.0.iter().any(Diagnostic::is_error) => {
@@ -173,31 +159,29 @@ impl Config {
             _ => Err(diagnostics),
         }
     }
+}
 
-    /// Validate the configuration, naming the offending field on failure.
-    pub fn validate(&self) -> Result<(), (String, String)> {
-        // Validate that default location exists if specified
-        if let Some(ref default) = self.locations.default {
-            if !self.locations.locations.contains_key(default) {
-                return Err((
-                    "locations.default".to_string(),
-                    format!("default location '{}' not found in locations", default),
+impl Validate for LocationsConfig {
+    fn validate(&self, validation: &mut Validation<'_>) {
+        if let Some(default) = &self.default {
+            if !self.locations.contains_key(default) {
+                validation.field("default").error(format!(
+                    "default location '{default}' not found in locations"
                 ));
             }
         }
+    }
+}
 
-        for name in self.aliases.aliases.keys() {
+impl Validate for AliasesConfig {
+    fn validate(&self, validation: &mut Validation<'_>) {
+        for name in self.aliases.keys() {
             if !is_identifier(name) {
-                return Err((
-                    format!("aliases.{name}"),
-                    format!(
-                        "alias '{name}' must be an identifier: lowercase letters, digits and underscores, not starting with a digit"
-                    ),
+                validation.key(name).error(format!(
+                    "alias '{name}' must be an identifier: lowercase letters, digits and underscores, not starting with a digit"
                 ));
             }
         }
-
-        Ok(())
     }
 }
 
@@ -285,6 +269,41 @@ port = 9000
         assert_eq!(config.http.port, 9000);
         assert_eq!(config.logging.level, LogLevel::Info);
         assert_eq!(config.logging.overrides["hearthd::api"], LogLevel::Debug);
+    }
+
+    #[test]
+    fn cross_field_problems_point_at_what_is_wrong() {
+        let errors = load_errors(
+            "cross_field",
+            r#"
+[locations]
+default = "work"
+
+[locations.home]
+latitude = 59.9139
+longitude = 10.7522
+
+[aliases]
+"Living Room" = { integration = "mqtt", key = "light/1" }
+"#,
+        );
+
+        insta::assert_snapshot!(errors, @r#"
+        Error: Validation error in 'locations.default'
+           ╭─[ config.toml:3:11 ]
+           │
+         3 │ default = "work"
+           │           ───┬──  
+           │              ╰──── default location 'work' not found in locations
+        ───╯
+        Error: Validation error in 'aliases.Living Room'
+            ╭─[ config.toml:10:1 ]
+            │
+         10 │ "Living Room" = { integration = "mqtt", key = "light/1" }
+            │ ──────┬──────  
+            │       ╰──────── alias 'Living Room' must be an identifier: lowercase letters, digits and underscores, not starting with a digit
+        ────╯
+        "#);
     }
 
     #[test]

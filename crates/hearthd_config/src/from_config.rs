@@ -14,6 +14,7 @@ use crate::MergeConflictLocation;
 use crate::MergeError;
 use crate::Node;
 use crate::Sources;
+use crate::Validation;
 use crate::ValidationError;
 use crate::Warning;
 
@@ -147,18 +148,23 @@ impl Context {
             })));
     }
 
-    /// Report that nothing sets a value that has to be set, against the
-    /// table it belongs in where one is written.
-    pub fn missing(&mut self, definitions: &Definitions<'_>) {
-        let name = definitions.path.rsplit('.').next().unwrap_or_default();
-        let within = definitions.within.first();
+    /// Report `message` about a path as a whole: against the first place it
+    /// is written or, if no file writes it, the table it belongs in.
+    pub fn invalid(&mut self, definitions: &Definitions<'_>, message: impl Into<String>) {
+        let place = definitions.nodes.first().or(definitions.within.first());
         self.diagnostics
             .push(Diagnostic::Error(Error::Validation(ValidationError {
                 field_path: definitions.path.clone(),
-                message: format!("{name} is required"),
-                span: within.filter(|table| !table.is_file()).map(Node::span),
-                source: within.map(|table| table.source().clone()),
+                message: message.into(),
+                span: place.filter(|node| !node.is_file()).map(Node::span),
+                source: place.map(|node| node.source().clone()),
             })));
+    }
+
+    /// Report that nothing sets a value that has to be set.
+    pub fn missing(&mut self, definitions: &Definitions<'_>) {
+        let name = definitions.path.rsplit('.').next().unwrap_or_default();
+        self.invalid(definitions, format!("{name} is required"));
     }
 
     /// Report that a value which can only be set once is set more than once.
@@ -218,6 +224,21 @@ impl<'a> Definitions<'a> {
         self.nodes.is_empty()
     }
 
+    /// What the tables among these definitions set `name` to.
+    pub fn get(&self, name: &str) -> Definitions<'a> {
+        let tables: Vec<_> = self.nodes.iter().copied().filter(Node::is_table).collect();
+        Definitions {
+            path: join(&self.path, name),
+            nodes: tables.iter().filter_map(|table| table.get(name)).collect(),
+            within: if tables.is_empty() {
+                self.within.clone()
+            } else {
+                tables
+            },
+            claimed: &[],
+        }
+    }
+
     /// These definitions as one table, unless some are not tables, which is
     /// reported.
     pub fn tables(self, context: &mut Context) -> Option<Tables<'a>> {
@@ -251,13 +272,8 @@ pub struct Tables<'a> {
 impl<'a> Tables<'a> {
     /// Everywhere `name` is set in this table.
     pub fn field(&self, name: &str) -> Definitions<'a> {
-        let path = if self.path.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}.{name}", self.path)
-        };
         Definitions {
-            path,
+            path: join(&self.path, name),
             nodes: self
                 .tables
                 .iter()
@@ -266,6 +282,11 @@ impl<'a> Tables<'a> {
             within: self.within.clone(),
             claimed: &[],
         }
+    }
+
+    /// A handle for reporting problems with this table as a whole.
+    pub fn validation<'c>(&'c self, context: &'c mut Context) -> Validation<'c> {
+        Validation::new(context, self.rest(&[]))
     }
 
     /// Warn about every key written here that is not in `known`. Left as a
@@ -305,6 +326,14 @@ impl<'a> Tables<'a> {
             within: self.within.clone(),
             claimed,
         }
+    }
+}
+
+fn join(path: &str, name: &str) -> String {
+    if path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{path}.{name}")
     }
 }
 

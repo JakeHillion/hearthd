@@ -2,6 +2,7 @@ mod diagnostics;
 mod document;
 mod from_config;
 mod scalar;
+mod validate;
 
 pub use diagnostics::Diagnostic;
 pub use diagnostics::Diagnostics;
@@ -26,3 +27,13 @@ pub use from_config::load;
 pub use hearthd_config_derive::ConfigValue;
 pub use hearthd_config_derive::FromConfig;
 pub use scalar::scalar;
+pub use validate::Validate;
+pub use validate::Validation;
+
+/// What the derives expand to. Not for use by hand.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::validate::Probe;
+    pub use crate::validate::WithValidate;
+    pub use crate::validate::WithoutValidate;
+}

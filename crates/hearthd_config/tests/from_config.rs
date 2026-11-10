@@ -4,6 +4,8 @@ use hearthd_config::ConfigValue;
 use hearthd_config::FromConfig;
 use hearthd_config::SourceInfo;
 use hearthd_config::Sources;
+use hearthd_config::Validate;
+use hearthd_config::Validation;
 use hearthd_config::format_diagnostics_plain;
 use hearthd_config::from_sources;
 use serde::Deserialize;
@@ -810,4 +812,136 @@ fn a_flattened_map_leaves_no_key_unread() {
 
     assert_eq!(diagnostics, "");
     assert_eq!(config.unwrap().others["anything"].port, 81);
+}
+
+#[derive(Debug, FromConfig)]
+struct Racks {
+    strips: HashMap<String, Strip>,
+}
+
+#[derive(Debug, FromConfig)]
+struct Strip {
+    sockets: u8,
+    #[config(default = 1)]
+    first: u8,
+    outlets: HashMap<u8, Socket>,
+}
+
+#[derive(Debug, FromConfig)]
+struct Socket {
+    label: Option<String>,
+}
+
+impl Validate for Strip {
+    fn validate(&self, validation: &mut Validation<'_>) {
+        if self.outlets.is_empty() {
+            validation.error("a strip needs at least one outlet");
+        }
+        if self.first > self.sockets {
+            validation
+                .field("first")
+                .error(format!("there are only {} sockets", self.sockets));
+        }
+
+        let mut beyond: Vec<_> = self.outlets.keys().filter(|n| **n > self.sockets).collect();
+        beyond.sort();
+        for number in beyond {
+            validation
+                .field("outlets")
+                .key(number)
+                .error(format!("outlet {number} does not exist"));
+        }
+    }
+}
+
+#[test]
+fn a_value_that_passes_its_checks_reports_nothing() {
+    let (config, diagnostics) = load::<Racks>(&[(
+        "a.toml",
+        "[strips.rack]\nsockets = 8\n\n[strips.rack.outlets.3]\nlabel = \"nas\"\n",
+    )]);
+
+    assert_eq!(diagnostics, "");
+    let strip = &config.unwrap().strips["rack"];
+    assert_eq!(strip.first, 1);
+    assert_eq!(strip.outlets[&3].label.as_deref(), Some("nas"));
+}
+
+#[test]
+fn a_check_can_point_at_a_field_or_a_map_key() {
+    let (_, diagnostics) = load::<Racks>(&[
+        (
+            "a.toml",
+            "[strips.rack]\nsockets = 8\nfirst = 12\n\n[strips.rack.outlets.3]\n",
+        ),
+        (
+            "b.toml",
+            "[strips.rack.outlets.9]\n\n[strips.rack.outlets.10]\nlabel = \"spare\"\n",
+        ),
+    ]);
+
+    insta::assert_snapshot!(diagnostics, @"
+    Error: Validation error in 'strips.rack.first'
+       ╭─[ a.toml:3:9 ]
+       │
+     3 │ first = 12
+       │         ─┬  
+       │          ╰── there are only 8 sockets
+    ───╯
+    Error: Validation error in 'strips.rack.outlets.9'
+       ╭─[ b.toml:1:22 ]
+       │
+     1 │ [strips.rack.outlets.9]
+       │                      ┬  
+       │                      ╰── outlet 9 does not exist
+    ───╯
+    Error: Validation error in 'strips.rack.outlets.10'
+       ╭─[ b.toml:3:22 ]
+       │
+     3 │ [strips.rack.outlets.10]
+       │                      ─┬  
+       │                       ╰── outlet 10 does not exist
+    ───╯
+    ");
+}
+
+#[test]
+fn a_check_on_something_unwritten_points_at_its_table() {
+    let (_, diagnostics) = load::<Racks>(&[(
+        "a.toml",
+        "[strips.rack]\nsockets = 0\n\n[strips.rack.outlets]\n",
+    )]);
+
+    insta::assert_snapshot!(diagnostics, @"
+    Error: Validation error in 'strips.rack'
+       ╭─[ a.toml:1:1 ]
+       │
+     1 │ [strips.rack]
+       │ ──────┬──────  
+       │       ╰──────── a strip needs at least one outlet
+    ───╯
+    Error: Validation error in 'strips.rack.first'
+       ╭─[ a.toml:1:1 ]
+       │
+     1 │ [strips.rack]
+       │ ──────┬──────  
+       │       ╰──────── there are only 0 sockets
+    ───╯
+    ");
+}
+
+#[test]
+fn checks_wait_until_the_value_can_be_read() {
+    let (config, diagnostics) = load::<Racks>(&[("a.toml", "[strips.rack]\nfirst = 4\n")]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @"
+    Error: Validation error in 'strips.rack.sockets'
+       ╭─[ a.toml:1:1 ]
+       │
+     1 │ [strips.rack]
+       │ ──────┬──────  
+       │       ╰──────── sockets is required
+    ───╯
+    ");
 }
