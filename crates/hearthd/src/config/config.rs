@@ -132,10 +132,10 @@ pub struct IntegrationsConfig {
     pub wake_on_lan: Option<crate::integrations::wake_on_lan::WolConfig>,
 }
 
-#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Default, FromConfig)]
 pub struct AutomationsConfig {
     /// Named automations (key is name, value contains file path)
-    #[serde(flatten)]
+    #[config(flatten)]
     pub automations: HashMap<String, AutomationEntry>,
 }
 
@@ -150,9 +150,9 @@ pub struct AutomationEntry {
 /// integration's own key for the node, which is what the node's id is
 /// derived from, so an alias resolves before its node has appeared and
 /// survives the node being renamed upstream.
-#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Default, FromConfig)]
 pub struct AliasesConfig {
-    #[serde(flatten)]
+    #[config(flatten)]
     pub aliases: HashMap<String, AliasTarget>,
 }
 
@@ -303,6 +303,27 @@ port = 9000
         assert_eq!(config.http.port, 9000);
         assert_eq!(config.logging.level, LogLevel::Info);
         assert_eq!(config.logging.overrides["hearthd::api"], LogLevel::Debug);
+    }
+
+    #[test]
+    fn automations_name_their_files() {
+        let (config, diagnostics) = load_single(
+            "automations",
+            r#"
+[automations.lights]
+file = "lights.hda"
+
+[automations.heating]
+file = "heating.hda"
+"#,
+        )
+        .unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        let automations = &config.automations.automations;
+        assert_eq!(automations.len(), 2);
+        assert_eq!(automations["lights"].file, "lights.hda");
+        assert_eq!(automations["heating"].file, "heating.hda");
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use toml::Spanned;
+use toml::de::DeString;
 use toml::de::DeTable;
 use toml::de::DeValue;
 use toml::de::ValueDeserializer;
@@ -153,6 +154,7 @@ impl<'s> Document<'s> {
     pub fn root(&self) -> Node<'_> {
         Node {
             source: self.source,
+            key: None,
             value: &self.root,
         }
     }
@@ -174,6 +176,7 @@ impl<'s> Document<'s> {
 #[derive(Debug, Clone, Copy)]
 pub struct Node<'a> {
     source: &'a SourceInfo,
+    key: Option<&'a Spanned<DeString<'a>>>,
     value: &'a Spanned<DeValue<'a>>,
 }
 
@@ -186,15 +189,32 @@ impl<'a> Node<'a> {
         self.value.span()
     }
 
+    /// Where the key naming this value is written. The top of a file has
+    /// none, and the value's own position stands in for it.
+    pub fn key_span(&self) -> Range<usize> {
+        self.key.map_or_else(|| self.span(), Spanned::span)
+    }
+
     pub fn is_table(&self) -> bool {
         self.value.get_ref().is_table()
     }
 
+    /// The keys this table sets, if it is a table.
+    pub fn keys(&self) -> impl Iterator<Item = &'a str> {
+        self.value
+            .get_ref()
+            .as_table()
+            .into_iter()
+            .flat_map(|table| table.keys())
+            .map(|key| key.get_ref().as_ref())
+    }
+
     /// What this table sets `key` to, if it is a table and sets it.
     pub fn get(&self, key: &str) -> Option<Node<'a>> {
-        let value = self.value.get_ref().as_table()?.get(key)?;
+        let (key, value) = self.value.get_ref().as_table()?.get_key_value(key)?;
         Some(Node {
             source: self.source,
+            key: Some(key),
             value,
         })
     }
