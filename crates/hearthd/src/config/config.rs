@@ -1235,6 +1235,47 @@ longitude = 11.0
     }
 
     #[test]
+    fn mqtt_integration_config() {
+        let (config, diagnostics) = load_single(
+            "mqtt",
+            r#"
+[integrations.mqtt]
+broker = "mq.lan"
+port = 1883
+client_id = "hearthd"
+username = "hearth"
+"#,
+        )
+        .unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        let mqtt = config.integrations.mqtt.expect("mqtt configured");
+        assert_eq!(mqtt.broker, "mq.lan");
+        assert_eq!(mqtt.port, 1883);
+        assert_eq!(mqtt.client_id, "hearthd");
+        assert_eq!(mqtt.discovery_prefix, "homeassistant");
+        assert_eq!(mqtt.username.as_deref(), Some("hearth"));
+        assert_eq!(mqtt.password, None);
+    }
+
+    #[test]
+    fn mqtt_integration_config_reports_every_problem() {
+        let err = load_single(
+            "mqtt_invalid",
+            r#"
+[integrations.mqtt]
+port = "1883"
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("'integrations.mqtt.broker'"), "{err}");
+        assert!(err.contains("'integrations.mqtt.port'"), "{err}");
+        assert!(err.contains("'integrations.mqtt.client_id'"), "{err}");
+    }
+
+    #[test]
     fn test_wol_integration_config() {
         let temp_dir = std::env::temp_dir().join("hearthd_test_wol");
         fs::create_dir_all(&temp_dir).unwrap();
