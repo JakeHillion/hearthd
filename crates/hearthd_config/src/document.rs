@@ -216,6 +216,18 @@ impl<'a> Node<'a> {
             .map(|key| key.get_ref().as_ref())
     }
 
+    /// The items of this list, if it is a list.
+    pub fn elements(&self) -> Option<impl Iterator<Item = Node<'a>> + use<'a>> {
+        let source = self.source;
+        let items = self.value.get_ref().as_array()?;
+        Some(items.iter().map(move |value| Node {
+            source,
+            key: None,
+            value,
+            file: false,
+        }))
+    }
+
     /// What this table sets `key` to, if it is a table and sets it.
     pub fn get(&self, key: &str) -> Option<Node<'a>> {
         let (key, value) = self.value.get_ref().as_table()?.get_key_value(key)?;
