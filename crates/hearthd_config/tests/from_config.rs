@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use hearthd_config::ConfigValue;
 use hearthd_config::FromConfig;
 use hearthd_config::SourceInfo;
 use hearthd_config::Sources;
@@ -565,6 +566,120 @@ fn a_default_does_not_excuse_a_wrong_value() {
      2 │ port = "http"
        │        ───┬──  
        │           ╰──── invalid type: string "http", expected u16
+    ───╯
+    "#);
+}
+
+#[derive(Debug, PartialEq, Deserialize, ConfigValue)]
+#[serde(rename_all = "snake_case")]
+enum Model {
+    ApcAp7920,
+    ApcAp7921,
+}
+
+/// A value that is written as a string and parsed.
+#[derive(Debug, PartialEq, Deserialize, ConfigValue)]
+#[serde(try_from = "String")]
+struct Percent(u8);
+
+impl TryFrom<String> for Percent {
+    type Error = String;
+
+    fn try_from(written: String) -> Result<Self, Self::Error> {
+        written
+            .strip_suffix('%')
+            .and_then(|number| number.parse().ok())
+            .filter(|percent| *percent <= 100)
+            .map(Percent)
+            .ok_or_else(|| format!("`{written}` is not a percentage such as `80%`"))
+    }
+}
+
+#[derive(Debug, FromConfig)]
+struct Pdu {
+    model: Model,
+    #[config(default = Model::ApcAp7920)]
+    spare: Model,
+    alarm_at: Option<Percent>,
+    racks: HashMap<String, Model>,
+}
+
+#[test]
+fn a_value_type_is_read_by_its_own_deserializer() {
+    let (config, diagnostics) = load::<Pdu>(&[(
+        "a.toml",
+        "model = \"apc_ap7921\"\nalarm_at = \"80%\"\n\n[racks]\nnorth = \"apc_ap7920\"\n",
+    )]);
+
+    assert_eq!(diagnostics, "");
+    let config = config.unwrap();
+    assert_eq!(config.model, Model::ApcAp7921);
+    assert_eq!(config.spare, Model::ApcAp7920);
+    assert_eq!(config.alarm_at, Some(Percent(80)));
+    assert_eq!(config.racks["north"], Model::ApcAp7920);
+}
+
+#[test]
+fn a_value_its_type_rejects_is_reported_where_it_is_written() {
+    let (config, diagnostics) = load::<Pdu>(&[(
+        "a.toml",
+        "model = \"apc_ap9999\"\nalarm_at = \"loud\"\n\n[racks]\nnorth = 7920\n",
+    )]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @r#"
+    Error: Validation error in 'model'
+       ╭─[ a.toml:1:9 ]
+       │
+     1 │ model = "apc_ap9999"
+       │         ──────┬─────  
+       │               ╰─────── unknown variant `apc_ap9999`, expected `apc_ap7920` or `apc_ap7921`
+    ───╯
+    Error: Validation error in 'alarm_at'
+       ╭─[ a.toml:2:12 ]
+       │
+     2 │ alarm_at = "loud"
+       │            ───┬──  
+       │               ╰──── `loud` is not a percentage such as `80%`
+    ───╯
+    Error: Validation error in 'racks.north'
+       ╭─[ a.toml:5:9 ]
+       │
+     5 │ north = 7920
+       │         ──┬─  
+       │           ╰─── wanted string or table
+    ───╯
+    "#);
+}
+
+#[test]
+fn a_value_type_is_required_and_set_once_like_any_scalar() {
+    let (config, diagnostics) = load::<Pdu>(&[
+        ("a.toml", "[racks]\nnorth = \"apc_ap7920\"\n"),
+        ("b.toml", "[racks]\nnorth = \"apc_ap7921\"\n"),
+    ]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @r#"
+    Error: Validation error in 'model'
+      ┌─ a.toml:1:1
+      │
+      = model is required
+
+    Error: Merge conflict in field 'racks.north'
+       ╭─[ a.toml:2:9 ]
+       │
+     2 │ north = "apc_ap7920"
+       │         ──────┬─────  
+       │               ╰─────── first definition here
+       │
+       ├─[ b.toml:2:9 ]
+       │
+     2 │ north = "apc_ap7921"
+       │         ──────┬─────  
+       │               ╰─────── conflicts with this definition
+       │ 
+       │ Note: Field 'racks.north' defined in multiple config files
     ───╯
     "#);
 }

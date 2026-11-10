@@ -27,6 +27,7 @@ pub use from_config::FromConfig;
 pub use from_config::Tables;
 pub use from_config::from_sources;
 pub use from_config::load;
+pub use hearthd_config_derive::ConfigValue;
 pub use hearthd_config_derive::FromConfig;
 pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;
