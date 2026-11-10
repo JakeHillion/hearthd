@@ -44,9 +44,14 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
+fn default_level() -> LogLevel {
+    LogLevel::default()
+}
+
 #[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
 pub struct LoggingConfig {
     /// Log level: trace, debug, info, warn, error
+    #[config(default = "default_level")]
     pub level: LogLevel,
 
     pub overrides: HashMap<String, LogLevel>,
@@ -81,20 +86,30 @@ pub struct Location {
     pub timezone: Option<String>,
 }
 
+fn default_listen() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_http_port() -> u16 {
+    8565
+}
+
 #[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
 pub struct HttpConfig {
     /// Listen address for the HTTP API server
+    #[config(default = "default_listen")]
     pub listen: String,
 
     /// Port for the HTTP API server
+    #[config(default = "default_http_port")]
     pub port: u16,
 }
 
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
-            listen: "127.0.0.1".to_string(),
-            port: 8565,
+            listen: default_listen(),
+            port: default_http_port(),
         }
     }
 }
@@ -277,6 +292,27 @@ desktop = { integration = "wake_on_lan", key = "desktop" }
             let err = result.expect_err("config should be rejected").to_string();
             assert!(err.contains(&format!("aliases.{bad}")), "{err}");
         }
+    }
+
+    #[test]
+    fn a_section_can_set_one_field_and_default_the_rest() {
+        let (config, diagnostics) = load_single(
+            "partial_sections",
+            r#"
+[http]
+port = 9000
+
+[logging.overrides]
+"hearthd::api" = "debug"
+"#,
+        )
+        .unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        assert_eq!(config.http.listen, "127.0.0.1");
+        assert_eq!(config.http.port, 9000);
+        assert_eq!(config.logging.level, LogLevel::Info);
+        assert_eq!(config.logging.overrides["hearthd::api"], LogLevel::Debug);
     }
 
     // All tests now use Config::from_files() with actual file I/O
