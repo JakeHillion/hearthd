@@ -13,7 +13,6 @@ mod generate;
 ///
 /// - `Partial{TypeName}`: A version of your struct where all fields are `Option<T>` and
 ///   wrapped in `toml::Spanned<T>` for source location tracking
-/// - `from_file(path)`: Load a single TOML file
 /// - `load_with_imports(paths)`: Load multiple files with recursive import resolution
 /// - `merge(configs)`: Merge multiple partial configs with conflict detection
 ///

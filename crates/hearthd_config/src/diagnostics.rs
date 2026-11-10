@@ -71,8 +71,9 @@ pub enum LoadError {
         error: String, // Changed from std::io::Error since it's not Clone
     },
     Parse {
-        path: PathBuf,
-        error: String, // Changed from toml::de::Error since it's not Clone
+        source: SourceInfo,
+        span: Range<usize>,
+        message: String,
     },
     ImportCycle {
         path: PathBuf,
@@ -90,13 +91,26 @@ impl LoadError {
                 error,
                 color,
             ),
-            LoadError::Parse { path, error } => headline(
-                ReportKind::Error,
-                "Failed to parse config file",
-                path,
-                error,
-                color,
-            ),
+            LoadError::Parse {
+                source,
+                span,
+                message,
+            } => {
+                let id = file_id(&source.file_path);
+                let mut output = Vec::new();
+                Report::build(ReportKind::Error, (id.clone(), span.clone()))
+                    .with_config(report_config(color))
+                    .with_message("Failed to parse config file")
+                    .with_label(
+                        Label::new((id.clone(), span.clone()))
+                            .with_message(message)
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .write((id, Source::from(source.content.as_str())), &mut output)
+                    .ok();
+                String::from_utf8_lossy(&output).to_string()
+            }
             LoadError::ImportCycle { path, cycle } => headline(
                 ReportKind::Error,
                 "Import cycle detected",
@@ -127,6 +141,12 @@ impl std::fmt::Display for Diagnostics {
 }
 
 impl std::error::Error for Diagnostics {}
+
+impl From<LoadError> for Diagnostics {
+    fn from(error: LoadError) -> Self {
+        Self(vec![Diagnostic::Error(Error::Load(error))])
+    }
+}
 
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -207,11 +227,15 @@ fn file_id(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
-fn render(diagnostics: &[Diagnostic], color: bool) -> String {
+fn report_config(color: bool) -> Config {
     // toml reports byte offsets, which is not what ariadne assumes.
-    let config = Config::default()
+    Config::default()
         .with_color(color)
-        .with_index_type(IndexType::Byte);
+        .with_index_type(IndexType::Byte)
+}
+
+fn render(diagnostics: &[Diagnostic], color: bool) -> String {
+    let config = report_config(color);
     let mut output = Vec::new();
 
     for diagnostic in diagnostics {
@@ -552,14 +576,25 @@ latitude = 59.9139
     }
 
     #[test]
-    fn test_load_error_display_parse() {
-        let error = LoadError::Parse {
-            path: PathBuf::from("/tmp/config.toml"),
-            error: "invalid TOML syntax".to_string(),
-        };
-        let display = format!("{}", error);
-        assert!(display.contains("Failed to parse"));
-        assert!(display.contains("/tmp/config.toml"));
+    fn a_parse_error_shows_where_it_is() {
+        let diagnostics = vec![Diagnostic::Error(Error::Load(LoadError::Parse {
+            source: SourceInfo {
+                file_path: PathBuf::from("/tmp/config.toml"),
+                content: "[http]\nport = \n".to_string(),
+            },
+            span: 14..14,
+            message: "string values must be quoted, expected literal string".to_string(),
+        }))];
+
+        insta::assert_snapshot!(format_diagnostics_plain(&diagnostics), @"
+        Error: Failed to parse config file
+           ╭─[ /tmp/config.toml:2:8 ]
+           │
+         2 │ port =
+           │        │ 
+           │        ╰─ string values must be quoted, expected literal string
+        ───╯
+        ");
     }
 
     #[test]
