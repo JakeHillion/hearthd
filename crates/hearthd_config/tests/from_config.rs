@@ -510,3 +510,61 @@ fn a_value_written_in_two_files_conflicts() {
     ───╯
     "#);
 }
+
+const DEFAULT_PORT: u16 = 8565;
+
+#[derive(Debug, PartialEq, FromConfig)]
+struct Listener {
+    #[config(default = "127.0.0.1")]
+    address: String,
+    #[config(default = DEFAULT_PORT)]
+    port: u16,
+    #[config(default = 1.5)]
+    weight: f64,
+}
+
+#[derive(Debug, FromConfig)]
+struct Listeners {
+    main: Listener,
+    admin: Listener,
+}
+
+#[test]
+fn an_absent_value_takes_its_default() {
+    let (config, diagnostics) = load::<Listeners>(&[("a.toml", "[admin]\nport = 9000\n")]);
+
+    assert_eq!(diagnostics, "");
+    let config = config.unwrap();
+    assert_eq!(
+        config.main,
+        Listener {
+            address: "127.0.0.1".to_string(),
+            port: 8565,
+            weight: 1.5,
+        }
+    );
+    assert_eq!(
+        config.admin,
+        Listener {
+            address: "127.0.0.1".to_string(),
+            port: 9000,
+            weight: 1.5,
+        }
+    );
+}
+
+#[test]
+fn a_default_does_not_excuse_a_wrong_value() {
+    let (config, diagnostics) = load::<Listeners>(&[("a.toml", "[main]\nport = \"http\"\n")]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @r#"
+    Error: Validation error in 'main.port'
+       ╭─[ a.toml:2:8 ]
+       │
+     2 │ port = "http"
+       │        ───┬──  
+       │           ╰──── invalid type: string "http", expected u16
+    ───╯
+    "#);
+}
