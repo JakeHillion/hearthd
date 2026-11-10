@@ -218,6 +218,15 @@ mod tests {
         result
     }
 
+    /// What is reported for a config that does not load, without colour and
+    /// with the temporary directory left off the file name.
+    fn load_errors(name: &str, contents: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("hearthd_test_{name}"));
+        let diagnostics = load_single(name, contents).unwrap_err();
+        hearthd_config::format_diagnostics_plain(&diagnostics.0)
+            .replace(&format!("{}/", dir.display()), "")
+    }
+
     #[test]
     fn aliases_name_an_integration_and_its_key() {
         let (config, diagnostics) = load_single(
@@ -1273,6 +1282,40 @@ port = "1883"
         assert!(err.contains("'integrations.mqtt.broker'"), "{err}");
         assert!(err.contains("'integrations.mqtt.port'"), "{err}");
         assert!(err.contains("'integrations.mqtt.client_id'"), "{err}");
+    }
+
+    #[test]
+    fn snapcast_integration_config() {
+        let (config, diagnostics) = load_single(
+            "snapcast",
+            r#"
+[integrations.snapcast]
+host = "snap.lan"
+reconnect_interval_ms = 250
+"#,
+        )
+        .unwrap();
+
+        assert!(diagnostics.0.is_empty());
+        let snapcast = config.integrations.snapcast.expect("snapcast configured");
+        assert_eq!(snapcast.host, "snap.lan");
+        assert_eq!(snapcast.port, 1705);
+        assert_eq!(snapcast.reconnect_interval_ms, 250);
+    }
+
+    #[test]
+    fn snapcast_integration_config_needs_a_host() {
+        let errors = load_errors("snapcast_invalid", "[integrations.snapcast]\nport = 1705\n");
+
+        insta::assert_snapshot!(errors, @"
+        Error: Validation error in 'integrations.snapcast.host'
+           ╭─[ config.toml:1:1 ]
+           │
+         1 │ [integrations.snapcast]
+           │ ───────────┬───────────  
+           │            ╰───────────── host is required
+        ───╯
+        ");
     }
 
     #[test]
