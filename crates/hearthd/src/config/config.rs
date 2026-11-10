@@ -113,6 +113,9 @@ pub struct IntegrationsConfig {
     #[cfg(feature = "integration_snapcast")]
     pub snapcast: Option<crate::integrations::snapcast::SnapcastConfig>,
 
+    #[cfg(feature = "integration_apc")]
+    pub apc: Option<crate::integrations::apc::ApcConfig>,
+
     #[cfg(feature = "integration_wake_on_lan")]
     pub wake_on_lan: Option<crate::integrations::wake_on_lan::WolConfig>,
 }
@@ -1203,6 +1206,53 @@ broadcast = "192.168.1.255"
         assert_eq!(ws.port, 7);
         assert_eq!(ws.broadcast.as_deref(), Some("192.168.1.255"));
         assert_eq!(ws.name, None);
+
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_apc_integration_config() {
+        let temp_dir = std::env::temp_dir().join("hearthd_test_apc");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let config_path = temp_dir.join("apc.toml");
+        let mut config_file = fs::File::create(&config_path).unwrap();
+        write!(
+            config_file,
+            r#"
+[integrations.apc.pdus.rack]
+model = "apc_ap7921"
+host = "10.0.0.2"
+write_community = "secret"
+
+[integrations.apc.pdus.rack.outlets.3]
+switchable = false
+
+[integrations.apc.pdus.rack.outlets.8]
+enabled = false
+"#
+        )
+        .unwrap();
+
+        let (config, diagnostics) = Config::from_files(&[config_path]).expect("config should load");
+        assert_eq!(diagnostics.0.len(), 0, "Expected no diagnostics");
+
+        let apc = config.integrations.apc.expect("apc integration configured");
+        let rack = &apc.pdus["rack"];
+        assert_eq!(rack.model, "apc_ap7921");
+        assert_eq!(rack.write_community, "secret");
+        // Defaults from the generated default functions.
+        assert_eq!(rack.port, 161);
+        assert_eq!(rack.read_community, "public");
+        assert_eq!(rack.poll_interval_ms, 10_000);
+        assert_eq!(rack.timeout_ms, 2_000);
+
+        let outlets = &rack.outlets;
+        assert_eq!(outlets.len(), 2);
+        assert!(outlets["3"].enabled);
+        assert!(!outlets["3"].switchable);
+        assert!(!outlets["8"].enabled);
+        assert!(outlets["8"].switchable);
 
         fs::remove_dir_all(&temp_dir).ok();
     }
