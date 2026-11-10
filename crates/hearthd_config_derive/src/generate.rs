@@ -1149,6 +1149,51 @@ pub fn expand_try_from_partial(input: DeriveInput) -> Result<TokenStream> {
                 }
             }
         }
+
+        // Lets a section that is still merged through its partial sit inside
+        // a struct that derives FromConfig.
+        impl hearthd_config::FromConfig for #name #where_clause {
+            fn from_config(
+                definitions: hearthd_config::Definitions<'_>,
+                context: &mut hearthd_config::Context,
+            ) -> Option<Self> {
+                let mut merged = #partial_name::default();
+                let mut field_locs = std::collections::HashMap::new();
+                let mut readable = true;
+
+                for node in definitions.nodes() {
+                    match node.deserialize::<#partial_name>() {
+                        Ok(mut partial) => {
+                            partial.attach_source_info(node.source().clone());
+                            merged.merge_from(
+                                partial,
+                                &mut field_locs,
+                                node.source(),
+                                definitions.path(),
+                                &mut context.diagnostics,
+                            );
+                        }
+                        Err(error) => {
+                            context.diagnostics.push(error);
+                            readable = false;
+                        }
+                    }
+                }
+                if !readable {
+                    return None;
+                }
+
+                match <Self as hearthd_config::TryFromPartial>::try_from_partial(merged) {
+                    Ok(value) => Some(value),
+                    Err(errors) => {
+                        context.diagnostics.extend(
+                            errors.into_iter().map(|d| d.prepend_path(definitions.path())),
+                        );
+                        None
+                    }
+                }
+            }
+        }
     })
 }
 

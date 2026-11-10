@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use syn::DeriveInput;
 use syn::parse_macro_input;
 
+mod from_config;
 mod generate;
 
 /// Derive macro for root configuration structs that can be loaded from files and merged.
@@ -159,6 +160,21 @@ pub fn derive_try_from_partial(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     match generate::expand_try_from_partial(input) {
+        Ok(expanded) => expanded.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derive `FromConfig` for a struct, reading each field from the key of the
+/// same name.
+///
+/// A table written across several files is read as one: every field sees
+/// each place it was set, whichever file that was in.
+#[proc_macro_derive(FromConfig, attributes(config))]
+pub fn derive_from_config(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    match from_config::expand(input) {
         Ok(expanded) => expanded.into(),
         Err(err) => err.to_compile_error().into(),
     }

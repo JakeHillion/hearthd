@@ -156,6 +156,18 @@ impl<'s> Document<'s> {
             value: &self.root,
         }
     }
+
+    /// Whether the file sets nothing at all.
+    pub fn is_empty(&self) -> bool {
+        matches!(self.root.get_ref(), DeValue::Table(table) if table.is_empty())
+    }
+
+    /// Drop a top-level key, so that nothing reading the file sees it.
+    pub fn remove(&mut self, key: &str) {
+        if let DeValue::Table(table) = self.root.get_mut() {
+            table.remove(key);
+        }
+    }
 }
 
 /// One value as written in one file.
@@ -172,6 +184,19 @@ impl<'a> Node<'a> {
 
     pub fn span(&self) -> Range<usize> {
         self.value.span()
+    }
+
+    pub fn is_table(&self) -> bool {
+        self.value.get_ref().is_table()
+    }
+
+    /// What this table sets `key` to, if it is a table and sets it.
+    pub fn get(&self, key: &str) -> Option<Node<'a>> {
+        let value = self.value.get_ref().as_table()?.get(key)?;
+        Some(Node {
+            source: self.source,
+            value,
+        })
     }
 
     /// Read this one value with serde, as if it were a whole file.
