@@ -1,4 +1,10 @@
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::hash::Hash;
+use std::ops::Range;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use crate::Diagnostic;
 use crate::Diagnostics;
@@ -31,6 +37,49 @@ impl<T: FromConfig> FromConfig for Option<T> {
     }
 }
 
+/// A table read as a map, entry by entry: files may each add entries, and
+/// an entry written in several files is read as the one value.
+impl<K, V> FromConfig for HashMap<K, V>
+where
+    K: FromStr + Eq + Hash,
+    K::Err: Display,
+    V: FromConfig,
+{
+    fn from_config(definitions: Definitions<'_>, context: &mut Context) -> Option<Self> {
+        let tables = definitions.tables(context)?;
+        let mut entries: Vec<(&str, K, Option<V>)> = Vec::new();
+        let mut complete = true;
+
+        for name in tables.keys() {
+            let entry = tables.field(name);
+            let path = entry.path.clone();
+            let written = entry.nodes[0];
+            let value = V::from_config(entry, context);
+            complete &= value.is_some();
+
+            let problem = match name.parse::<K>() {
+                Ok(key) => match entries.iter().find(|(_, other, _)| *other == key) {
+                    Some((other, ..)) => format!("the same key as `{other}`"),
+                    None => {
+                        entries.push((name, key, value));
+                        continue;
+                    }
+                },
+                Err(error) => format!("invalid key: {error}"),
+            };
+            context.key_error(&path, written, problem);
+            complete = false;
+        }
+
+        complete.then(|| {
+            entries
+                .into_iter()
+                .filter_map(|(_, key, value)| Some((key, value?)))
+                .collect()
+        })
+    }
+}
+
 /// What has been found wrong so far.
 #[derive(Debug, Default)]
 pub struct Context {
@@ -40,11 +89,20 @@ pub struct Context {
 impl Context {
     /// Report `message` against what was written at `node`.
     pub fn error(&mut self, path: &str, node: Node<'_>, message: impl Into<String>) {
+        self.report(path, node, node.span(), message.into());
+    }
+
+    /// Report `message` against the key that names `node`.
+    pub fn key_error(&mut self, path: &str, node: Node<'_>, message: impl Into<String>) {
+        self.report(path, node, node.key_span(), message.into());
+    }
+
+    fn report(&mut self, path: &str, node: Node<'_>, span: Range<usize>, message: String) {
         self.diagnostics
             .push(Diagnostic::Error(Error::Validation(ValidationError {
                 field_path: path.to_string(),
-                message: message.into(),
-                span: Some(node.span()),
+                message,
+                span: Some(span),
                 source: Some(node.source().clone()),
             })));
     }
@@ -56,6 +114,7 @@ impl Context {
 pub struct Definitions<'a> {
     path: String,
     nodes: Vec<Node<'a>>,
+    claimed: &'static [&'static str],
 }
 
 impl<'a> Definitions<'a> {
@@ -63,6 +122,7 @@ impl<'a> Definitions<'a> {
         Self {
             path: String::new(),
             nodes: documents.iter().map(Document::root).collect(),
+            claimed: &[],
         }
     }
 
@@ -91,6 +151,7 @@ impl<'a> Definitions<'a> {
         all.then_some(Tables {
             path: self.path,
             tables: self.nodes,
+            claimed: self.claimed,
         })
     }
 }
@@ -100,6 +161,7 @@ impl<'a> Definitions<'a> {
 pub struct Tables<'a> {
     path: String,
     tables: Vec<Node<'a>>,
+    claimed: &'static [&'static str],
 }
 
 impl<'a> Tables<'a> {
@@ -117,6 +179,26 @@ impl<'a> Tables<'a> {
                 .iter()
                 .filter_map(|table| table.get(name))
                 .collect(),
+            claimed: &[],
+        }
+    }
+
+    /// The keys set in any file, in order.
+    pub fn keys(&self) -> BTreeSet<&'a str> {
+        self.tables
+            .iter()
+            .flat_map(Node::keys)
+            .filter(|key| !self.claimed.contains(key))
+            .collect()
+    }
+
+    /// This table without the keys in `claimed`, for a map that takes
+    /// whatever the fields beside it do not.
+    pub fn rest(&self, claimed: &'static [&'static str]) -> Definitions<'a> {
+        Definitions {
+            path: self.path.clone(),
+            nodes: self.tables.clone(),
+            claimed,
         }
     }
 }
