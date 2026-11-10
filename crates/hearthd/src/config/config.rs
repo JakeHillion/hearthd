@@ -83,32 +83,15 @@ pub struct Location {
     pub timezone: Option<String>,
 }
 
-fn default_listen() -> String {
-    "127.0.0.1".to_string()
-}
-
-fn default_http_port() -> u16 {
-    8565
-}
-
-#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Clone, FromConfig)]
 pub struct HttpConfig {
     /// Listen address for the HTTP API server
-    #[config(default = "default_listen")]
+    #[config(default = "127.0.0.1")]
     pub listen: String,
 
     /// Port for the HTTP API server
-    #[config(default = "default_http_port")]
+    #[config(default = 8565)]
     pub port: u16,
-}
-
-impl Default for HttpConfig {
-    fn default() -> Self {
-        Self {
-            listen: default_listen(),
-            port: default_http_port(),
-        }
-    }
 }
 
 #[derive(Debug, Default, FromConfig)]
@@ -326,6 +309,10 @@ file = "heating.hda"
         let err = load_single(
             "two_types",
             r#"
+[http]
+listen = 1
+port = "8565"
+
 [locations.home]
 latitude = "north"
 elevation_m = "high"
@@ -334,6 +321,8 @@ elevation_m = "high"
         .unwrap_err()
         .to_string();
 
+        assert!(err.contains("'http.listen'"), "{err}");
+        assert!(err.contains("'http.port'"), "{err}");
         assert!(err.contains("'locations.home.latitude'"), "{err}");
         assert!(err.contains("'locations.home.elevation_m'"), "{err}");
         assert!(err.contains("'locations.home.longitude'"), "{err}");
