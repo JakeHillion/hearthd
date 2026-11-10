@@ -1,5 +1,15 @@
+use std::collections::HashMap;
 use std::ops::Range;
+use std::path::Path;
 use std::path::PathBuf;
+
+use ariadne::Color;
+use ariadne::Config;
+use ariadne::IndexType;
+use ariadne::Label;
+use ariadne::Report;
+use ariadne::ReportKind;
+use ariadne::Source;
 
 /// Source information for where a diagnostic came from
 #[derive(Debug, Clone)]
@@ -70,37 +80,37 @@ pub enum LoadError {
     },
 }
 
+impl LoadError {
+    fn render(&self, color: bool) -> String {
+        match self {
+            LoadError::Io { path, error } => headline(
+                ReportKind::Error,
+                "Failed to read config file",
+                path,
+                error,
+                color,
+            ),
+            LoadError::Parse { path, error } => headline(
+                ReportKind::Error,
+                "Failed to parse config file",
+                path,
+                error,
+                color,
+            ),
+            LoadError::ImportCycle { path, cycle } => headline(
+                ReportKind::Error,
+                "Import cycle detected",
+                path,
+                &format!("Import cycle involves {} file(s)", cycle.len()),
+                color,
+            ),
+        }
+    }
+}
+
 impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LoadError::Io { path, error } => {
-                // Format as ariadne-style error
-                write!(
-                    f,
-                    "\x1b[31mError\x1b[0m: Failed to read config file\n  ┌─ {}:1:1\n  │\n  = {}\n",
-                    path.display(),
-                    error
-                )
-            }
-            LoadError::Parse { path, error } => {
-                // Format as ariadne-style error with TOML error details
-                write!(
-                    f,
-                    "\x1b[31mError\x1b[0m: Failed to parse config file\n  ┌─ {}:1:1\n  │\n  = {}\n",
-                    path.display(),
-                    error
-                )
-            }
-            LoadError::ImportCycle { path, cycle } => {
-                // Format as ariadne-style error
-                write!(
-                    f,
-                    "\x1b[31mError\x1b[0m: Import cycle detected\n  ┌─ {}:1:1\n  │\n  = Import cycle involves {} file(s)\n",
-                    path.display(),
-                    cycle.len()
-                )
-            }
-        }
+        f.write_str(&self.render(true))
     }
 }
 
@@ -166,140 +176,143 @@ impl Diagnostic {
     }
 }
 
-/// Format all diagnostics for display using Ariadne
+/// Format all diagnostics for display on a terminal, in colour.
 pub fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
-    use ariadne::Color;
-    use ariadne::Label;
-    use ariadne::Report;
-    use ariadne::ReportKind;
-    use ariadne::Source;
+    render(diagnostics, true)
+}
 
+/// Format all diagnostics without colour escapes.
+pub fn format_diagnostics_plain(diagnostics: &[Diagnostic]) -> String {
+    render(diagnostics, false)
+}
+
+/// A report about a file as a whole, with no excerpt from it.
+fn headline(kind: ReportKind, title: &str, path: &Path, detail: &str, color: bool) -> String {
+    let (name, code) = match kind {
+        ReportKind::Warning => ("Warning", "33"),
+        _ => ("Error", "31"),
+    };
+    let name = if color {
+        format!("\x1b[{code}m{name}\x1b[0m")
+    } else {
+        name.to_string()
+    };
+    format!(
+        "{name}: {title}\n  ┌─ {}:1:1\n  │\n  = {detail}\n",
+        path.display()
+    )
+}
+
+fn file_id(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn render(diagnostics: &[Diagnostic], color: bool) -> String {
+    // toml reports byte offsets, which is not what ariadne assumes.
+    let config = Config::default()
+        .with_color(color)
+        .with_index_type(IndexType::Byte);
     let mut output = Vec::new();
 
     for diagnostic in diagnostics {
         match diagnostic {
-            Diagnostic::Warning(warning) => match warning {
-                Warning::EmptyConfig { file_path } => {
-                    // Format manually since ariadne doesn't render notes well without source
-                    use std::io::Write;
-                    writeln!(
-                        &mut output,
-                        "\x1b[33mWarning\x1b[0m: Empty configuration file"
+            Diagnostic::Warning(Warning::EmptyConfig { file_path }) => {
+                output.extend_from_slice(
+                    headline(
+                        ReportKind::Warning,
+                        "Empty configuration file",
+                        file_path,
+                        &format!(
+                            "Config file '{}' is empty and has no effect",
+                            file_path.display()
+                        ),
+                        color,
                     )
-                    .ok();
-                    writeln!(&mut output, "  ┌─ {}:1:1", file_path.display()).ok();
-                    writeln!(&mut output, "  │").ok();
-                    writeln!(
-                        &mut output,
-                        "  = Config file '{}' is empty and has no effect",
-                        file_path.display()
-                    )
-                    .ok();
-                    writeln!(&mut output).ok();
+                    .as_bytes(),
+                );
+                output.push(b'\n');
+            }
+            Diagnostic::Error(Error::Merge(merge_error)) => {
+                let first = &merge_error.conflicts[0];
+                let mut report = Report::build(
+                    ReportKind::Error,
+                    (file_id(&first.file_path), first.span.clone()),
+                )
+                .with_config(config)
+                .with_message(format!(
+                    "Merge conflict in field '{}'",
+                    merge_error.field_path
+                ))
+                .with_note(&merge_error.message);
+
+                for (idx, conflict) in merge_error.conflicts.iter().enumerate() {
+                    let (message, label_color) = if idx == 0 {
+                        ("first definition here", Color::Red)
+                    } else {
+                        ("conflicts with this definition", Color::Yellow)
+                    };
+                    report = report.with_label(
+                        Label::new((file_id(&conflict.file_path), conflict.span.clone()))
+                            .with_message(message)
+                            .with_color(label_color),
+                    );
                 }
-            },
-            Diagnostic::Error(error) => {
-                match error {
-                    Error::Merge(merge_error) => {
-                        // Build a report with the first conflict's span
-                        let first_conflict = &merge_error.conflicts[0];
-                        let mut report = Report::build(
-                            ReportKind::Error,
-                            (
-                                first_conflict.file_path.to_string_lossy().to_string(),
-                                first_conflict.span.clone(),
-                            ),
-                        )
+
+                // One report over every file involved, so each definition is
+                // shown in place and none is printed twice.
+                let files: HashMap<String, &str> = merge_error
+                    .conflicts
+                    .iter()
+                    .map(|conflict| (file_id(&conflict.file_path), conflict.content.as_str()))
+                    .collect();
+                report
+                    .finish()
+                    .write(ariadne::sources(files), &mut output)
+                    .ok();
+            }
+            Diagnostic::Error(Error::Validation(validation_error)) => {
+                if let (Some(span), Some(source_info)) =
+                    (&validation_error.span, &validation_error.source)
+                {
+                    let id = file_id(&source_info.file_path);
+                    Report::build(ReportKind::Error, (id.clone(), span.clone()))
+                        .with_config(config)
                         .with_message(format!(
-                            "Merge conflict in field '{}'",
-                            merge_error.field_path
+                            "Validation error in '{}'",
+                            validation_error.field_path
                         ))
-                        .with_note(&merge_error.message);
-
-                        // Add labels for each conflict location
-                        for (idx, conflict) in merge_error.conflicts.iter().enumerate() {
-                            let label_msg = if idx == 0 {
-                                "first definition here"
-                            } else {
-                                "conflicts with this definition"
-                            };
-
-                            report =
-                                report.with_label(
-                                    Label::new((
-                                        conflict.file_path.to_string_lossy().to_string(),
-                                        conflict.span.clone(),
-                                    ))
-                                    .with_message(label_msg)
-                                    .with_color(if idx == 0 { Color::Red } else { Color::Yellow }),
-                                );
-                        }
-
-                        // Finish the report and write it
-                        let finished_report = report.finish();
-
-                        // Write to each unique source file
-                        // Note: Ariadne will emit "Unable to fetch source" warnings for labels
-                        // that reference files not in the current cache, but this is expected
-                        // behavior and the output is still correct.
-                        let mut written_files = std::collections::HashSet::new();
-                        for conflict in &merge_error.conflicts {
-                            let file_id = conflict.file_path.to_string_lossy().to_string();
-                            if written_files.insert(file_id.clone()) {
-                                let source = Source::from(conflict.content.clone());
-                                finished_report.write((file_id, source), &mut output).ok();
-                            }
-                        }
-                    }
-                    Error::Validation(validation_error) => {
-                        // Use ariadne for validation errors with span information when available
-                        if let (Some(span), Some(source_info)) =
-                            (&validation_error.span, &validation_error.source)
-                        {
-                            let file_id = source_info.file_path.to_string_lossy().to_string();
-                            let report =
-                                Report::build(ReportKind::Error, (file_id.clone(), span.clone()))
-                                    .with_message(format!(
-                                        "Validation error in '{}'",
-                                        validation_error.field_path
-                                    ))
-                                    .with_label(
-                                        Label::new((file_id.clone(), span.clone()))
-                                            .with_message(&validation_error.message)
-                                            .with_color(Color::Red),
-                                    )
-                                    .finish();
-
-                            let source = Source::from(source_info.content.clone());
-                            report.write((file_id, source), &mut output).ok();
-                        } else {
-                            // Fallback for validation errors without span information
-                            // Format manually since ariadne doesn't render notes well without source
-                            use std::io::Write;
-                            let file_path = validation_error
-                                .source
-                                .as_ref()
-                                .map(|s| s.file_path.display().to_string())
-                                .unwrap_or_else(|| "<unknown>".to_string());
-
-                            writeln!(
-                                &mut output,
-                                "\x1b[31mError\x1b[0m: Validation error in '{}'",
-                                validation_error.field_path
-                            )
-                            .ok();
-                            writeln!(&mut output, "  ┌─ {}:1:1", file_path).ok();
-                            writeln!(&mut output, "  │").ok();
-                            writeln!(&mut output, "  = {}", validation_error.message).ok();
-                            writeln!(&mut output).ok();
-                        }
-                    }
-                    Error::Load(load_error) => {
-                        // Use LoadError's Display implementation
-                        use std::io::Write;
-                        write!(&mut output, "{}", load_error).ok();
-                    }
+                        .with_label(
+                            Label::new((id.clone(), span.clone()))
+                                .with_message(&validation_error.message)
+                                .with_color(Color::Red),
+                        )
+                        .finish()
+                        .write(
+                            (id, Source::from(source_info.content.as_str())),
+                            &mut output,
+                        )
+                        .ok();
+                } else {
+                    let file_path = validation_error
+                        .source
+                        .as_ref()
+                        .map(|s| s.file_path.as_path())
+                        .unwrap_or(Path::new("<unknown>"));
+                    output.extend_from_slice(
+                        headline(
+                            ReportKind::Error,
+                            &format!("Validation error in '{}'", validation_error.field_path),
+                            file_path,
+                            &validation_error.message,
+                            color,
+                        )
+                        .as_bytes(),
+                    );
+                    output.push(b'\n');
                 }
+            }
+            Diagnostic::Error(Error::Load(load_error)) => {
+                output.extend_from_slice(load_error.render(color).as_bytes());
             }
         }
     }
@@ -338,46 +351,119 @@ mod tests {
             file_path: PathBuf::from("/tmp/empty.toml"),
         })];
 
-        let output = format_diagnostics(&diagnostics);
-        let expected = "\u{1b}[33mWarning\u{1b}[0m: Empty configuration file
-  ┌─ /tmp/empty.toml:1:1
-  │
-  = Config file '/tmp/empty.toml' is empty and has no effect
+        insta::assert_snapshot!(format_diagnostics_plain(&diagnostics), @"
+        Warning: Empty configuration file
+          ┌─ /tmp/empty.toml:1:1
+          │
+          = Config file '/tmp/empty.toml' is empty and has no effect
+        ");
+    }
 
-";
-        assert_eq!(output, expected);
+    fn conflict_across_files() -> Vec<Diagnostic> {
+        vec![Diagnostic::Error(Error::Merge(MergeError {
+            field_path: "logging.level".to_string(),
+            message: "Logging level defined in multiple config files".to_string(),
+            conflicts: vec![
+                MergeConflictLocation {
+                    file_path: PathBuf::from("/tmp/base.toml"),
+                    span: 18..24,
+                    content: "[logging]\nlevel = \"info\"\n".to_string(),
+                },
+                MergeConflictLocation {
+                    file_path: PathBuf::from("/tmp/override.toml"),
+                    span: 18..25,
+                    content: "[logging]\nlevel = \"debug\"\n".to_string(),
+                },
+            ],
+        }))]
     }
 
     #[test]
-    fn test_format_merge_error() {
-        let content = r#"[logging]
-level = "info"
-"#;
-        let conflicts = vec![
-            MergeConflictLocation {
-                file_path: PathBuf::from("/tmp/base.toml"),
-                span: 10..24,
-                content: content.to_string(),
-            },
-            MergeConflictLocation {
-                file_path: PathBuf::from("/tmp/override.toml"),
-                span: 10..25,
-                content: r#"[logging]
-level = "debug"
-"#
-                .to_string(),
-            },
-        ];
+    fn a_conflict_across_files_is_one_report() {
+        insta::assert_snapshot!(format_diagnostics_plain(&conflict_across_files()), @r#"
+        Error: Merge conflict in field 'logging.level'
+           ╭─[ /tmp/base.toml:2:9 ]
+           │
+         2 │ level = "info"
+           │         ───┬──  
+           │            ╰──── first definition here
+           │
+           ├─[ /tmp/override.toml:2:9 ]
+           │
+         2 │ level = "debug"
+           │         ───┬───  
+           │            ╰───── conflicts with this definition
+           │ 
+           │ Note: Logging level defined in multiple config files
+        ───╯
+        "#);
+    }
 
+    #[test]
+    fn colour_is_only_added_on_request() {
+        assert!(format_diagnostics(&conflict_across_files()).contains("\x1b["));
+        assert!(!format_diagnostics_plain(&conflict_across_files()).contains("\x1b["));
+    }
+
+    #[test]
+    fn a_conflict_within_one_file_shows_both_definitions() {
+        let content = "[logging]\nlevel = \"info\"\n\n[logging.overrides]\nlevel = \"debug\"\n";
         let diagnostics = vec![Diagnostic::Error(Error::Merge(MergeError {
-            field_path: "logging.level".to_string(),
-            message: "Logging level defined in multiple config files".to_string(),
-            conflicts,
+            field_path: "logging.overrides.level".to_string(),
+            message: "Field 'logging.overrides.level' defined in multiple config files".to_string(),
+            conflicts: vec![
+                MergeConflictLocation {
+                    file_path: PathBuf::from("/tmp/config.toml"),
+                    span: 18..24,
+                    content: content.to_string(),
+                },
+                MergeConflictLocation {
+                    file_path: PathBuf::from("/tmp/config.toml"),
+                    span: 54..61,
+                    content: content.to_string(),
+                },
+            ],
         }))];
 
-        let output = format_diagnostics(&diagnostics);
-        let expected = "\u{1b}[31mError:\u{1b}[0m Merge conflict in field 'logging.level'\n   \u{1b}[38;5;246m╭\u{1b}[0m\u{1b}[38;5;246m─\u{1b}[0m\u{1b}[38;5;246m[\u{1b}[0m /tmp/base.toml:2:1 \u{1b}[38;5;246m]\u{1b}[0m\n   \u{1b}[38;5;246m│\u{1b}[0m\n \u{1b}[38;5;246m2 │\u{1b}[0m \u{1b}[31ml\u{1b}[0m\u{1b}[31me\u{1b}[0m\u{1b}[31mv\u{1b}[0m\u{1b}[31me\u{1b}[0m\u{1b}[31ml\u{1b}[0m\u{1b}[31m \u{1b}[0m\u{1b}[31m=\u{1b}[0m\u{1b}[31m \u{1b}[0m\u{1b}[31m\"\u{1b}[0m\u{1b}[31mi\u{1b}[0m\u{1b}[31mn\u{1b}[0m\u{1b}[31mf\u{1b}[0m\u{1b}[31mo\u{1b}[0m\u{1b}[31m\"\u{1b}[0m\n \u{1b}[38;5;240m  │\u{1b}[0m \u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m┬\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m  \n \u{1b}[38;5;240m  │\u{1b}[0m        \u{1b}[31m╰\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m first definition here\n \u{1b}[38;5;240m  │\u{1b}[0m \n \u{1b}[38;5;240m  │\u{1b}[0m \u{1b}[38;5;115mNote\u{1b}[0m: Logging level defined in multiple config files\n\u{1b}[38;5;246m───╯\u{1b}[0m\n\u{1b}[31mError:\u{1b}[0m Merge conflict in field 'logging.level'\n   \u{1b}[38;5;246m╭\u{1b}[0m\u{1b}[38;5;246m─\u{1b}[0m\u{1b}[38;5;246m[\u{1b}[0m /tmp/override.toml:2:1 \u{1b}[38;5;246m]\u{1b}[0m\n   \u{1b}[38;5;246m│\u{1b}[0m\n \u{1b}[38;5;246m2 │\u{1b}[0m \u{1b}[33ml\u{1b}[0m\u{1b}[33me\u{1b}[0m\u{1b}[33mv\u{1b}[0m\u{1b}[33me\u{1b}[0m\u{1b}[33ml\u{1b}[0m\u{1b}[33m \u{1b}[0m\u{1b}[33m=\u{1b}[0m\u{1b}[33m \u{1b}[0m\u{1b}[33m\"\u{1b}[0m\u{1b}[33md\u{1b}[0m\u{1b}[33me\u{1b}[0m\u{1b}[33mb\u{1b}[0m\u{1b}[33mu\u{1b}[0m\u{1b}[33mg\u{1b}[0m\u{1b}[33m\"\u{1b}[0m\n \u{1b}[38;5;240m  │\u{1b}[0m \u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m┬\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m  \n \u{1b}[38;5;240m  │\u{1b}[0m        \u{1b}[33m╰\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m\u{1b}[33m─\u{1b}[0m conflicts with this definition\n \u{1b}[38;5;240m  │\u{1b}[0m \n \u{1b}[38;5;240m  │\u{1b}[0m \u{1b}[38;5;115mNote\u{1b}[0m: Logging level defined in multiple config files\n\u{1b}[38;5;246m───╯\u{1b}[0m\n";
-        assert_eq!(output, expected);
+        insta::assert_snapshot!(format_diagnostics_plain(&diagnostics), @r#"
+        Error: Merge conflict in field 'logging.overrides.level'
+           ╭─[ /tmp/config.toml:2:9 ]
+           │
+         2 │ level = "info"
+           │         ───┬──  
+           │            ╰──── first definition here
+           │ 
+         5 │ level = "debug"
+           │         ───┬───  
+           │            ╰───── conflicts with this definition
+           │ 
+           │ Note: Field 'logging.overrides.level' defined in multiple config files
+        ───╯
+        "#);
+    }
+
+    #[test]
+    fn spans_are_byte_offsets() {
+        let content = "# søk\nname = \"x\"\n";
+        let diagnostics = vec![Diagnostic::Error(Error::Validation(ValidationError {
+            field_path: "name".to_string(),
+            message: "too short".to_string(),
+            span: Some(14..17),
+            source: Some(SourceInfo {
+                file_path: PathBuf::from("/tmp/config.toml"),
+                content: content.to_string(),
+            }),
+        }))];
+
+        insta::assert_snapshot!(format_diagnostics_plain(&diagnostics), @r#"
+        Error: Validation error in 'name'
+           ╭─[ /tmp/config.toml:2:8 ]
+           │
+         2 │ name = "x"
+           │        ─┬─  
+           │         ╰─── too short
+        ───╯
+        "#);
     }
 
     #[test]
@@ -395,9 +481,15 @@ latitude = 59.9139
             }),
         }))];
 
-        let output = format_diagnostics(&diagnostics);
-        let expected = "\u{1b}[31mError:\u{1b}[0m Validation error in 'locations.home.longitude'\n   \u{1b}[38;5;246m╭\u{1b}[0m\u{1b}[38;5;246m─\u{1b}[0m\u{1b}[38;5;246m[\u{1b}[0m /tmp/config.toml:1:1 \u{1b}[38;5;246m]\u{1b}[0m\n   \u{1b}[38;5;246m│\u{1b}[0m\n \u{1b}[38;5;246m1 │\u{1b}[0m \u{1b}[31m[\u{1b}[0m\u{1b}[31ml\u{1b}[0m\u{1b}[31mo\u{1b}[0m\u{1b}[31mc\u{1b}[0m\u{1b}[31ma\u{1b}[0m\u{1b}[31mt\u{1b}[0m\u{1b}[31mi\u{1b}[0m\u{1b}[31mo\u{1b}[0m\u{1b}[31mn\u{1b}[0m\u{1b}[31ms\u{1b}[0m\u{1b}[31m.\u{1b}[0m\u{1b}[31mh\u{1b}[0m\u{1b}[31mo\u{1b}[0m\u{1b}[31mm\u{1b}[0m\u{1b}[31me\u{1b}[0m\u{1b}[31m]\u{1b}[0m\n \u{1b}[38;5;240m  │\u{1b}[0m \u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m┬\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m  \n \u{1b}[38;5;240m  │\u{1b}[0m         \u{1b}[31m╰\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m\u{1b}[31m─\u{1b}[0m longitude is required\n\u{1b}[38;5;246m───╯\u{1b}[0m\n";
-        assert_eq!(output, expected);
+        insta::assert_snapshot!(format_diagnostics_plain(&diagnostics), @"
+        Error: Validation error in 'locations.home.longitude'
+           ╭─[ /tmp/config.toml:1:1 ]
+           │
+         1 │ [locations.home]
+           │ ────────┬───────  
+           │         ╰───────── longitude is required
+        ───╯
+        ");
     }
 
     #[test]
@@ -412,9 +504,12 @@ latitude = 59.9139
             }),
         }))];
 
-        let output = format_diagnostics(&diagnostics);
-        let expected = "\u{1b}[31mError\u{1b}[0m: Validation error in 'locations.default'\n  ┌─ /tmp/config.toml:1:1\n  │\n  = default location 'nonexistent' not found in locations\n\n";
-        assert_eq!(output, expected);
+        insta::assert_snapshot!(format_diagnostics_plain(&diagnostics), @"
+        Error: Validation error in 'locations.default'
+          ┌─ /tmp/config.toml:1:1
+          │
+          = default location 'nonexistent' not found in locations
+        ");
     }
 
     #[test]
@@ -431,9 +526,17 @@ latitude = 59.9139
             })),
         ];
 
-        let output = format_diagnostics(&diagnostics);
-        let expected = "\u{1b}[33mWarning\u{1b}[0m: Empty configuration file\n  ┌─ /tmp/empty.toml:1:1\n  │\n  = Config file '/tmp/empty.toml' is empty and has no effect\n\n\u{1b}[31mError\u{1b}[0m: Validation error in 'test.field'\n  ┌─ <unknown>:1:1\n  │\n  = test error\n\n";
-        assert_eq!(output, expected);
+        insta::assert_snapshot!(format_diagnostics_plain(&diagnostics), @"
+        Warning: Empty configuration file
+          ┌─ /tmp/empty.toml:1:1
+          │
+          = Config file '/tmp/empty.toml' is empty and has no effect
+
+        Error: Validation error in 'test.field'
+          ┌─ <unknown>:1:1
+          │
+          = test error
+        ");
     }
 
     #[test]
