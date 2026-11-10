@@ -3,6 +3,7 @@ mod document;
 mod finalize;
 mod from_config;
 mod located;
+mod scalar;
 
 // Re-export diagnostic types
 pub use diagnostics::Diagnostic;
@@ -31,6 +32,7 @@ pub use hearthd_config_derive::MergeableConfig;
 pub use hearthd_config_derive::SubConfig;
 pub use hearthd_config_derive::TryFromPartial;
 pub use located::Located;
+pub use scalar::scalar;
 
 /// Trait that associates a config type with its partial variant.
 ///

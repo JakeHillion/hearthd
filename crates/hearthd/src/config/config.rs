@@ -57,20 +57,17 @@ pub struct LoggingConfig {
     pub overrides: HashMap<String, LogLevel>,
 }
 
-#[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
+#[derive(Debug, Default, FromConfig)]
 pub struct LocationsConfig {
     /// The default location to use
     pub default: Option<String>,
 
     /// Named locations with their configurations
-    #[serde(flatten)]
+    #[config(flatten)]
     pub locations: HashMap<String, Location>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, TryFromPartial, SubConfig)]
-// Required: toml deserializer cannot wrap fields in Spanned when the parent HashMap
-// is flattened. Without this, deserialization fails with "expected a spanned value".
-#[config(no_span)]
+#[derive(Debug, Clone, Default, FromConfig)]
 #[allow(dead_code)] // Fields are used by application code, not in tests
 pub struct Location {
     /// Latitude in decimal degrees
@@ -139,8 +136,7 @@ pub struct AutomationsConfig {
     pub automations: HashMap<String, AutomationEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize, TryFromPartial, SubConfig)]
-#[config(no_span)]
+#[derive(Debug, Clone, FromConfig)]
 pub struct AutomationEntry {
     /// Path to the .hda file
     pub file: String,
@@ -156,8 +152,7 @@ pub struct AliasesConfig {
     pub aliases: HashMap<String, AliasTarget>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TryFromPartial, SubConfig)]
-#[config(no_span)]
+#[derive(Debug, Clone, PartialEq, Eq, FromConfig)]
 pub struct AliasTarget {
     /// Name of the integration that owns the node.
     pub integration: String,
@@ -324,6 +319,24 @@ file = "heating.hda"
         assert_eq!(automations.len(), 2);
         assert_eq!(automations["lights"].file, "lights.hda");
         assert_eq!(automations["heating"].file, "heating.hda");
+    }
+
+    #[test]
+    fn every_wrong_type_in_a_table_is_reported() {
+        let err = load_single(
+            "two_types",
+            r#"
+[locations.home]
+latitude = "north"
+elevation_m = "high"
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("'locations.home.latitude'"), "{err}");
+        assert!(err.contains("'locations.home.elevation_m'"), "{err}");
+        assert!(err.contains("'locations.home.longitude'"), "{err}");
     }
 
     #[test]

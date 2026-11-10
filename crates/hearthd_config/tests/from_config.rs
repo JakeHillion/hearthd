@@ -372,3 +372,141 @@ fn a_flattened_entry_is_named_without_the_field_holding_it() {
     ───╯
     ");
 }
+
+#[derive(Debug, PartialEq, FromConfig)]
+struct Server {
+    host: String,
+    port: Option<u16>,
+    tls: Option<bool>,
+    weight: Option<f64>,
+}
+
+#[derive(Debug, FromConfig)]
+struct Cluster {
+    server: Server,
+    replicas: HashMap<String, Server>,
+}
+
+#[test]
+fn values_are_read_where_they_are_written() {
+    let (config, diagnostics) = load::<Cluster>(&[(
+        "a.toml",
+        "[server]\nhost = \"a.lan\"\n\n[replicas.b]\nhost = \"b.lan\"\nport = 81\ntls = true\nweight = 2\n",
+    )]);
+
+    assert_eq!(diagnostics, "");
+    let config = config.unwrap();
+    assert_eq!(
+        config.server,
+        Server {
+            host: "a.lan".to_string(),
+            port: None,
+            tls: None,
+            weight: None,
+        }
+    );
+    assert_eq!(
+        config.replicas["b"],
+        Server {
+            host: "b.lan".to_string(),
+            port: Some(81),
+            tls: Some(true),
+            weight: Some(2.0),
+        }
+    );
+}
+
+#[test]
+fn a_missing_value_points_at_the_table_it_belongs_in() {
+    let (config, diagnostics) = load::<Cluster>(&[
+        (
+            "a.toml",
+            "[server]\nhost = \"a.lan\"\n\n[replicas.b]\nport = 81\n",
+        ),
+        ("b.toml", "[replicas.b]\ntls = true\n"),
+    ]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @"
+    Error: Validation error in 'replicas.b.host'
+       ╭─[ a.toml:4:1 ]
+       │
+     4 │ [replicas.b]
+       │ ──────┬─────  
+       │       ╰─────── host is required
+    ───╯
+    ");
+}
+
+#[test]
+fn a_missing_value_in_a_section_nobody_wrote_names_the_file() {
+    let (config, diagnostics) = load::<Cluster>(&[("a.toml", "[replicas]\n")]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @"
+    Error: Validation error in 'server.host'
+      ┌─ a.toml:1:1
+      │
+      = host is required
+    ");
+}
+
+#[test]
+fn every_value_of_the_wrong_type_is_reported() {
+    let (config, diagnostics) = load::<Cluster>(&[(
+        "a.toml",
+        "[server]\nhost = 4\nport = \"80\"\ntls = \"yes\"\n",
+    )]);
+
+    assert!(config.is_none());
+    insta::assert_snapshot!(diagnostics, @r#"
+    Error: Validation error in 'server.host'
+       ╭─[ a.toml:2:8 ]
+       │
+     2 │ host = 4
+       │        ┬  
+       │        ╰── invalid type: integer `4`, expected a string
+    ───╯
+    Error: Validation error in 'server.port'
+       ╭─[ a.toml:3:8 ]
+       │
+     3 │ port = "80"
+       │        ──┬─  
+       │          ╰─── invalid type: string "80", expected u16
+    ───╯
+    Error: Validation error in 'server.tls'
+       ╭─[ a.toml:4:7 ]
+       │
+     4 │ tls = "yes"
+       │       ──┬──  
+       │         ╰──── invalid type: string "yes", expected a boolean
+    ───╯
+    "#);
+}
+
+#[test]
+fn a_value_written_in_two_files_conflicts() {
+    let (config, diagnostics) = load::<Cluster>(&[
+        ("a.toml", "[server]\nhost = \"a.lan\"\n"),
+        ("b.toml", "[server]\nhost = \"b.lan\"\n"),
+    ]);
+
+    assert_eq!(config.unwrap().server.host, "a.lan");
+    insta::assert_snapshot!(diagnostics, @r#"
+    Error: Merge conflict in field 'server.host'
+       ╭─[ a.toml:2:8 ]
+       │
+     2 │ host = "a.lan"
+       │        ───┬───  
+       │           ╰───── first definition here
+       │
+       ├─[ b.toml:2:8 ]
+       │
+     2 │ host = "b.lan"
+       │        ───┬───  
+       │           ╰───── conflicts with this definition
+       │ 
+       │ Note: Field 'server.host' defined in multiple config files
+    ───╯
+    "#);
+}

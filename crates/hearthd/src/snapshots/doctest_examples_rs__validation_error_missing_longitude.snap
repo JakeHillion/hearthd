@@ -2,7 +2,10 @@
 source: crates/hearthd/src/examples.rs
 expression: error_str
 ---
-[31mError[0m: Validation error in 'locations.home.longitude'
-  ┌─ <unknown>:1:1
-  │
-  = longitude is required
+[31mError:[0m Validation error in 'locations.home.longitude'
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m config.toml:2:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m2 │[0m [31m[[0m[31ml[0m[31mo[0m[31mc[0m[31ma[0m[31mt[0m[31mi[0m[31mo[0m[31mn[0m[31ms[0m[31m.[0m[31mh[0m[31mo[0m[31mm[0m[31me[0m[31m][0m
+ [38;5;240m  │[0m [31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m┬[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m  
+ [38;5;240m  │[0m         [31m╰[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m[31m─[0m longitude is required
+[38;5;246m───╯[0m
