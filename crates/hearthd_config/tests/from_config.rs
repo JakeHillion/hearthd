@@ -4,8 +4,6 @@ use hearthd_config::ConfigValue;
 use hearthd_config::FromConfig;
 use hearthd_config::SourceInfo;
 use hearthd_config::Sources;
-use hearthd_config::SubConfig;
-use hearthd_config::TryFromPartial;
 use hearthd_config::format_diagnostics_plain;
 use hearthd_config::from_sources;
 use serde::Deserialize;
@@ -37,27 +35,17 @@ struct Services {
     http: Http,
 }
 
-mod partial {
-    use super::*;
-
-    fn default_port() -> u16 {
-        8565
-    }
-
-    #[derive(Debug, PartialEq, Deserialize, TryFromPartial, SubConfig)]
-    pub struct Http {
-        #[config(default = "default_port")]
-        pub port: u16,
-        pub host: Option<String>,
-    }
-
-    #[derive(Debug, PartialEq, Deserialize, TryFromPartial, SubConfig)]
-    pub struct Logging {
-        pub level: Option<String>,
-    }
+#[derive(Debug, PartialEq, FromConfig)]
+struct Http {
+    #[config(default = 8565)]
+    port: u16,
+    host: Option<String>,
 }
-use partial::Http;
-use partial::Logging;
+
+#[derive(Debug, PartialEq, FromConfig)]
+struct Logging {
+    level: Option<String>,
+}
 
 #[test]
 fn a_table_written_in_several_files_is_read_as_one() {
@@ -122,14 +110,14 @@ fn a_mistake_in_one_section_does_not_hide_another() {
 
     assert!(config.is_none());
     insta::assert_snapshot!(diagnostics, @r#"
-    Error: Failed to parse config file
+    Error: Validation error in 'http.port'
        ╭─[ a.toml:2:8 ]
        │
      2 │ port = "80"
        │        ──┬─  
        │          ╰─── invalid type: string "80", expected u16
     ───╯
-    Error: Failed to parse config file
+    Error: Validation error in 'logging.level'
        ╭─[ a.toml:5:9 ]
        │
      5 │ level = 3
@@ -199,7 +187,7 @@ fn an_optional_section_that_is_written_must_be_valid() {
 
     assert!(config.is_none());
     insta::assert_snapshot!(diagnostics, @"
-    Error: Failed to parse config file
+    Error: Validation error in 'logging.level'
        ╭─[ a.toml:2:9 ]
        │
      2 │ level = 3

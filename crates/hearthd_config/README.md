@@ -1,143 +1,138 @@
 # hearthd_config
 
-Runtime support library for mergeable configuration with diagnostics and error reporting.
+Reads configuration that is split across several TOML files into one typed
+value, and says precisely what is wrong when it cannot.
 
-## Overview
+## How configuration is read
 
-This crate provides the runtime types and error handling for the config merging system. It re-exports the derive macros from `hearthd_config_derive` and provides diagnostic formatting using the `ariadne` library.
+Every file is parsed first, keeping the position of each key and value. A type
+is then read through `FromConfig`, which is handed every place its path is
+written, across all the files, and decides what several definitions mean:
 
-## Features
+- A single value (a number, string, boolean, or any `ConfigValue` type) is
+  written once. A second definition is a conflict, and both are shown.
+- A struct is one table however many files its keys are spread over.
+- A map gathers its entries from every file, and each entry is in turn read
+  from everywhere it is written. Keys are parsed with `FromStr`.
+- Lists are joined in the order the files were loaded.
+- An `Option` is `None` when nothing is written.
 
-- Beautiful error messages with source context
-- Multi-file conflict visualization
-- Validation error tracking
-- Load error reporting
+Nothing is silently overridden, and every problem found is reported, not just
+the first.
 
 ## Usage
 
 ```rust
-use hearthd_config::{MergeableConfig, SubConfig};
+use std::collections::HashMap;
+
+use hearthd_config::ConfigValue;
+use hearthd_config::FromConfig;
 use serde::Deserialize;
 
-#[derive(MergeableConfig, Deserialize)]
+#[derive(Debug, FromConfig)]
 struct Config {
+    http: Http,
+    pdus: HashMap<String, Pdu>,
+}
+
+#[derive(Debug, FromConfig)]
+struct Http {
+    #[config(default = "127.0.0.1")]
+    listen: String,
+    #[config(default = 8565)]
     port: u16,
+}
+
+#[derive(Debug, FromConfig)]
+struct Pdu {
+    model: Model,
     host: String,
+    outlets: HashMap<u8, Outlet>,
 }
 
-impl TryFrom<PartialConfig> for Config {
-    type Error = hearthd_config::ValidationError;
-
-    fn try_from(partial: PartialConfig) -> Result<Self, Self::Error> {
-        // Extract required fields with helpful errors
-        let port = partial.port
-            .ok_or_else(|| hearthd_config::ValidationError {
-                field: "port".to_string(),
-                message: "port is required".to_string(),
-                source: partial.source,
-            })?
-            .into_inner();
-
-        let host = partial.host
-            .ok_or_else(|| hearthd_config::ValidationError {
-                field: "host".to_string(),
-                message: "host is required".to_string(),
-                source: partial.source,
-            })?
-            .into_inner();
-
-        Ok(Config { port, host })
-    }
+#[derive(Debug, FromConfig)]
+struct Outlet {
+    label: Option<String>,
 }
 
-// Load and validate
-let configs = PartialConfig::load_with_imports(&["config.toml"])?;
-let merged = PartialConfig::merge(configs)?;
-let config: Config = merged.try_into()?;
-```
-
-## Error Types
-
-### `LoadError`
-
-Errors that occur when loading TOML files:
-
-```rust
-pub struct LoadError {
-    pub path: PathBuf,
-    pub source: toml::de::Error,
+#[derive(Debug, Deserialize, ConfigValue)]
+#[serde(rename_all = "snake_case")]
+enum Model {
+    ApcAp7920,
+    ApcAp7921,
 }
+
+let (config, diagnostics) = hearthd_config::load::<Config>(&paths);
 ```
 
-### `MergeError`
+`load` returns the value, if one could be built, and every diagnostic. A value
+can come back alongside errors, so check the diagnostics before using it.
 
-Errors from merging configurations with conflicts:
+### `#[derive(FromConfig)]`
 
-```rust
-pub struct MergeError {
-    pub field: String,
-    pub locations: Vec<MergeConflictLocation>,
-}
+For a struct with named fields. Each field is read from the key of its name.
+
+- `#[config(default = <expr>)]` gives the field's value when no file sets it.
+  A string literal is converted with `Into`, so it can stand for a `String`.
+- `#[config(flatten)]` on one map field makes it take every key the struct's
+  other fields do not read.
+
+A field with no default that nothing sets is an error. That includes the fields
+of a section no file mentions, which is read as an empty table.
+
+### `#[derive(ConfigValue)]`
+
+For a type written as a single value, such as an enum or a string that is
+parsed. The type says how it is read by implementing `serde::Deserialize`, and
+whatever its deserializer rejects is reported where it is written.
+
+## Imports
+
+A file may list others to load before it:
+
+```toml
+imports = ["base.toml", "secrets.toml"]
 ```
 
-### `ValidationError`
+Relative paths are taken from the importing file's directory. A cycle is an
+error.
 
-Errors from validating the final configuration:
+## Diagnostics
 
-```rust
-pub struct ValidationError {
-    pub field: String,
-    pub message: String,
-    pub source: Option<SourceInfo>,
-}
-```
-
-## Diagnostic Output
-
-Errors are formatted with color-coded source context:
+`format_diagnostics` renders for a terminal and `format_diagnostics_plain`
+leaves out the colour.
 
 ```
-Error: Configuration conflict
-
-  × Field 'port' defined in multiple files
-   ╭─[config/base.toml:5:1]
- 5 │ port = 8080
-   · ──────┬─────
-   ·       ╰── first defined here
-   ╰────
-   ╭─[config/override.toml:2:1]
- 2 │ port = 3000
-   · ──────┬─────
-   ·       ╰── conflicts with previous definition
-   ╰────
+Error: Validation error in 'pdus.rack.host'
+   ╭─[ config.toml:4:1 ]
+   │
+ 4 │ [pdus.rack]
+   │ ─────┬─────
+   │      ╰─────── host is required
+───╯
+Error: Validation error in 'pdus.rack.model'
+   ╭─[ config.toml:5:9 ]
+   │
+ 5 │ model = "apc_ap9999"
+   │         ──────┬─────
+   │               ╰─────── unknown variant `apc_ap9999`, expected `apc_ap7920` or `apc_ap7921`
+───╯
+Error: Merge conflict in field 'http.port'
+   ╭─[ base.toml:2:8 ]
+   │
+ 2 │ port = 8565
+   │        ──┬─
+   │          ╰─── first definition here
+   │
+   ├─[ local.toml:2:8 ]
+   │
+ 2 │ port = 9000
+   │        ──┬─
+   │          ╰─── conflicts with this definition
+   │
+   │ Note: Field 'http.port' defined in multiple config files
+───╯
 ```
-
-Validation errors show the source location:
-
-```
-Error: Validation failed
-
-  × Field 'locations.home.latitude' is required
-   ╭─[config/locations.toml:1:1]
- 1 │ [home]
-   · ───┬───
-   ·    ╰── location defined here but missing latitude
-   ╰────
-```
-
-## Re-exports
-
-This crate re-exports the derive macros for convenience:
-
-```rust
-pub use hearthd_config_derive::{MergeableConfig, SubConfig};
-```
-
-## Dependencies
-
-- `ariadne`: Beautiful diagnostic output
-- `toml`: TOML parsing with span tracking
-- `serde`: Serialization framework
 
 ## License
 

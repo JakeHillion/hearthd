@@ -239,17 +239,6 @@ impl<'a> Node<'a> {
         })
     }
 
-    /// Read this one value with serde, as if it were a whole file.
-    pub fn deserialize<T: DeserializeOwned>(&self) -> Result<T, Diagnostic> {
-        self.read().map_err(|(span, message)| {
-            Diagnostic::Error(Error::Load(LoadError::Parse {
-                source: self.source.clone(),
-                span,
-                message,
-            }))
-        })
-    }
-
     /// Read this one value with serde. On failure, where it went wrong and
     /// why.
     pub fn read<T: DeserializeOwned>(&self) -> Result<T, (Range<usize>, String)> {
@@ -332,31 +321,20 @@ mod tests {
     }
 
     #[test]
-    fn a_value_of_the_wrong_type_is_located() {
-        #[derive(Debug, Deserialize)]
-        #[allow(dead_code)]
-        struct Http {
-            port: u16,
-        }
-        #[derive(Debug, Deserialize)]
-        #[allow(dead_code)]
-        struct Root {
-            http: Http,
-        }
-
+    fn a_value_of_the_wrong_type_says_where_and_why() {
         let sources = sources(&[("a.toml", "[http]\nport = \"8565\"\n")]);
         let documents = sources.parse().unwrap();
-        let error = documents[0].root().deserialize::<Root>().unwrap_err();
+        let http = documents[0].root().get("http").unwrap();
+        let port = http.get("port").unwrap();
 
-        insta::assert_snapshot!(format_diagnostics_plain(&[error]), @r#"
-        Error: Failed to parse config file
-           ╭─[ a.toml:2:8 ]
-           │
-         2 │ port = "8565"
-           │        ───┬──  
-           │           ╰──── invalid type: string "8565", expected u16
-        ───╯
-        "#);
+        assert_eq!(port.read::<String>(), Ok("8565".to_string()));
+        assert_eq!(
+            port.read::<u16>(),
+            Err((
+                14..20,
+                "invalid type: string \"8565\", expected u16".to_string()
+            ))
+        );
     }
 
     #[test]
