@@ -71,6 +71,23 @@ change without iteration noise.
 This section is for general notes on working in the repository. Add further
 operational guidance here as it arises.
 
+### Integration boundaries
+
+Keep a new integration's device behaviour, transport and session lifecycle,
+freshness handling, and command policy within its own integration directory.
+Use the engine's existing interfaces and node lifecycle rather than extending
+the engine to accommodate integration-specific behaviour.
+
+Changes outside that directory should normally be limited to additive
+registration, configuration and CLI wiring, dependencies and build setup,
+documentation, and small Matter model additions needed to represent the device.
+
+Engine, API, shared state and daemon lifecycle changes need a concrete,
+compelling justification and explicit design agreement before implementation.
+Normally discuss and land those separately ahead of the integration. If an
+existing engine contract limits an integration, explain that limitation rather
+than silently changing the contract as part of the integration.
+
 ### Formatting
 
 **Always** format the repository with the official formatter, and run it across

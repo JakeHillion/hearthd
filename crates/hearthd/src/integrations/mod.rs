@@ -8,3 +8,5 @@ pub mod mqtt;
 pub mod snapcast;
 #[cfg(feature = "integration_wake_on_lan")]
 pub mod wake_on_lan;
+#[cfg(feature = "integration_anker_solix")]
+pub mod anker_solix;

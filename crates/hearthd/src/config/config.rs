@@ -101,6 +101,8 @@ impl Default for HttpConfig {
 
 #[derive(Debug, Default, Deserialize, TryFromPartial, SubConfig)]
 pub struct IntegrationsConfig {
+    #[cfg(feature = "integration_anker_solix")]
+    pub anker_solix: Option<crate::integrations::anker_solix::Config>,
     #[cfg(feature = "integration_mqtt")]
     pub mqtt: Option<crate::integrations::mqtt::MqttConfig>,
 
@@ -198,6 +200,10 @@ impl Config {
 
     /// Validate the configuration, naming the offending field on failure.
     pub fn validate(&self) -> Result<(), (String, String)> {
+        #[cfg(feature = "integration_anker_solix")]
+        if let Some(config) = &self.integrations.anker_solix {
+            config.validate().map_err(|error| ("integrations.anker_solix".into(), error.to_string()))?;
+        }
         // Validate that default location exists if specified
         if let Some(ref default) = self.locations.default {
             if !self.locations.locations.contains_key(default) {
@@ -1153,6 +1159,7 @@ longitude = 11.0
     }
 
     #[test]
+    #[cfg(feature = "integration_wake_on_lan")]
     fn test_wol_integration_config() {
         let temp_dir = std::env::temp_dir().join("hearthd_test_wol");
         fs::create_dir_all(&temp_dir).unwrap();

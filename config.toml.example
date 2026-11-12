@@ -93,6 +93,18 @@ longitude = 10.7579
 #                                  # broadcast derived from `host` + `netmask`
 # netmask = "255.255.255.0"        # only used when `broadcast` is unset
 
+# Anker SOLIX S2000 (AS220), over the running Linux system BlueZ daemon.
+# Values below are synthetic. Keep the real bound client_id in a secrets file.
+# Use `hearthd integration anker-solix check` to verify an existing binding,
+# or `enrol` only for a new registration with physical confirmation.
+# See docs/integrations/anker_solix/README.md for permissions and controls.
+# [integrations.anker_solix.devices.rack]
+# model = "s2000"
+# adapter = "hci0"
+# address = "00:11:22:33:44:55"
+# serial = "TEST1234567890123"
+# client_id = "11111111-2222-4333-8444-555555555555"
+
 # Aliases: extra names for nodes. Every node is already addressable by the
 # slugged name its integration gave it (a Zigbee2MQTT friendly name, a
 # Snapcast client name, a config key) and by its id, both shown in
