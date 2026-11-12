@@ -86,3 +86,8 @@ Example with secrets:
   };
 }
 ```
+# Anker SOLIX S2000
+
+Local Linux BlueZ support is described in the
+[Anker SOLIX integration guide](docs/integrations/anker_solix/README.md), including
+enrollment, checking existing bindings, controls and planned hardware validation.

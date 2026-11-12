@@ -463,6 +463,24 @@ pub struct ModeSelectCluster {
     pub current_mode: Option<u8>,
 }
 
+/// hearthd vendor cluster 0xFC09. FC06--FC08 are reserved by the Dyson work.
+pub const CLUSTER_ID_SOLIX_SETTINGS: u32 = 0xFC09;
+pub const CLUSTER_NAME_SOLIX_SETTINGS: &str = "SolixSettings";
+
+/// Native S2000 settings plus device-reported diagnostics. Only charge cap,
+/// backup SoC and maximum SoC are writable. Watts here are whole watts.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct SolixSettingsCluster {
+    pub charge_cap_watts: Option<u16>,
+    pub maximum_charge_cap_watts: Option<u16>,
+    pub backup_soc: Option<u8>,
+    pub maximum_soc: Option<u8>,
+    /// Native enum: 0 idle, 1 discharging, 2 charging. This is not watts.
+    pub battery_flow: Option<u8>,
+    pub battery_health_percent: Option<u8>,
+    pub ac_pass_through_watts: Option<u16>,
+}
+
 /// Media Playback `PlaybackState` values (attribute 0x0000 `CurrentState`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, facet::Facet)]
 #[repr(u8)]

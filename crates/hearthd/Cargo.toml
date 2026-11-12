@@ -5,7 +5,8 @@ edition = "2021"
 license.workspace = true
 
 [features]
-default = ["integration_mqtt", "integration_ecoflow", "integration_metno", "integration_snapcast", "integration_wake_on_lan"]
+default = ["integration_mqtt", "integration_ecoflow", "integration_metno", "integration_snapcast", "integration_wake_on_lan", "integration_anker_solix"]
+integration_anker_solix = ["dep:bluer", "dep:nix", "dep:futures", "dep:uuid", "dep:aes-gcm", "dep:p256"]
 integration_mqtt = ["dep:rumqttc"]
 integration_ecoflow = [
   "dep:base64",
@@ -52,6 +53,14 @@ reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
 surge-ping = { workspace = true, optional = true }
+futures = { version = "0.3", optional = true }
+uuid = { version = "1", features = ["v4", "serde"], optional = true }
+aes-gcm = { version = "0.10", optional = true }
+p256 = { version = "0.13", default-features = false, features = ["ecdh", "std"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { version = "0.17", features = ["bluetoothd"], optional = true }
+nix = { version = "0.29", default-features = false, features = ["fs"], optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }

@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
@@ -10,24 +9,17 @@ use tracing::warn;
 use tracing_subscriber::filter::Targets as TracingTargets;
 use tracing_subscriber::prelude::*;
 
-#[derive(Parser)]
-#[command(name = "hearthd")]
-#[command(about = "Home automation made declarative", long_about = None)]
-struct Cli {
-    /// Path to configuration file(s). Can be specified multiple times to merge configs.
-    /// Example: --config base.toml --config secrets.toml
-    #[arg(
-        short,
-        long,
-        value_name = "FILE",
-        default_value = "/etc/hearthd/config.toml"
-    )]
-    config: Vec<PathBuf>,
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = hearthd::cli::Cli::parse();
+    match cli.run_helper().await {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("{error:#}");
+            std::process::exit(1);
+        }
+    }
 
     // Load and parse the configuration files
     let (cfg, diagnostics) = match hearthd::Config::from_files(&cli.config) {

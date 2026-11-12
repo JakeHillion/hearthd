@@ -99,6 +99,9 @@ pub use clusters::MediaInputCluster;
 pub use clusters::MediaPlaybackCluster;
 pub use clusters::ModeOption;
 pub use clusters::ModeSelectCluster;
+pub use clusters::SolixSettingsCluster;
+pub use clusters::CLUSTER_ID_SOLIX_SETTINGS;
+pub use clusters::CLUSTER_NAME_SOLIX_SETTINGS;
 pub use clusters::OccupancySensingCluster;
 pub use clusters::OnOffCluster;
 pub use clusters::PlaybackState;
@@ -151,6 +154,7 @@ pub enum Cluster {
     PowerSource(PowerSourceCluster),
     ElectricalPowerMeasurement(ElectricalPowerMeasurementCluster),
     ModeSelect(ModeSelectCluster),
+    SolixSettings(SolixSettingsCluster),
     PressureMeasurement(PressureMeasurementCluster),
     MediaPlayback(MediaPlaybackCluster),
     MediaInput(MediaInputCluster),
@@ -182,6 +186,7 @@ impl Cluster {
             Cluster::PowerSource(_) => CLUSTER_ID_POWER_SOURCE,
             Cluster::ElectricalPowerMeasurement(_) => CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT,
             Cluster::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
+            Cluster::SolixSettings(_) => CLUSTER_ID_SOLIX_SETTINGS,
             Cluster::PressureMeasurement(_) => CLUSTER_ID_PRESSURE_MEASUREMENT,
             Cluster::MediaPlayback(_) => CLUSTER_ID_MEDIA_PLAYBACK,
             Cluster::MediaInput(_) => CLUSTER_ID_MEDIA_INPUT,
@@ -213,6 +218,7 @@ impl Cluster {
             Cluster::PowerSource(_) => CLUSTER_NAME_POWER_SOURCE,
             Cluster::ElectricalPowerMeasurement(_) => CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT,
             Cluster::ModeSelect(_) => CLUSTER_NAME_MODE_SELECT,
+            Cluster::SolixSettings(_) => CLUSTER_NAME_SOLIX_SETTINGS,
             Cluster::PressureMeasurement(_) => CLUSTER_NAME_PRESSURE_MEASUREMENT,
             Cluster::MediaPlayback(_) => CLUSTER_NAME_MEDIA_PLAYBACK,
             Cluster::MediaInput(_) => CLUSTER_NAME_MEDIA_INPUT,
@@ -244,6 +250,7 @@ impl Cluster {
                 | CLUSTER_ID_POWER_SOURCE
                 | CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT
                 | CLUSTER_ID_MODE_SELECT
+                | CLUSTER_ID_SOLIX_SETTINGS
                 | CLUSTER_ID_PRESSURE_MEASUREMENT
                 | CLUSTER_ID_MEDIA_PLAYBACK
                 | CLUSTER_ID_MEDIA_INPUT

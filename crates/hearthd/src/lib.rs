@@ -17,3 +17,4 @@ pub use config::LogLevel;
 pub use config::format_diagnostics;
 pub use engine::Engine;
 pub use engine::State;
+pub mod cli;
