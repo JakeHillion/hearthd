@@ -82,8 +82,9 @@
           commonArgs = {
             inherit src;
             strictDeps = true;
-            buildInputs = [ ];
-            nativeBuildInputs = [ ];
+            buildInputs = [ pkgs.dbus ];
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            env.RUSTFLAGS = "-C link-arg=-Wl,-rpath,${lib.makeLibraryPath [ pkgs.dbus ]}";
           };
 
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
@@ -136,9 +137,12 @@
               rust-analyzer
               cargo-insta
               fmt-toolchain
+              dbus
+              pkg-config
             ];
 
             HA_PYTHON_INTERPRETER = "${haPythonEnv}/bin/python";
+            LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.dbus ];
           };
 
           formatter = treefmtEval.config.build.wrapper;

@@ -5,7 +5,8 @@ edition = "2021"
 license.workspace = true
 
 [features]
-default = ["integration_mqtt", "integration_ecoflow", "integration_metno", "integration_snapcast", "integration_apc", "integration_wake_on_lan"]
+default = ["integration_mqtt", "integration_ecoflow", "integration_metno", "integration_snapcast", "integration_apc", "integration_wake_on_lan", "integration_anker_solix"]
+integration_anker_solix = ["hearthd_config/uuid", "dep:bluer", "dep:libc", "dep:futures", "dep:uuid", "dep:aes-gcm", "dep:p256", "dep:toml"]
 integration_mqtt = ["dep:rumqttc"]
 integration_ecoflow = [
   "dep:base64",
@@ -53,6 +54,15 @@ rustls = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
 surge-ping = { workspace = true, optional = true }
 snmp2 = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["v4"], optional = true }
+aes-gcm = { workspace = true, optional = true }
+p256 = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }

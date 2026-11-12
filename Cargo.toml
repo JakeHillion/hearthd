@@ -50,3 +50,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 twox-hash = { version = "2", default-features = false, features = ["xxhash3_128"] }
 uuid = { version = "1", features = ["serde"] }
+aes-gcm = "0.10"
+bluer = { version = "0.17", features = ["bluetoothd"] }
+futures = "0.3"
+libc = "0.2"
+p256 = { version = "0.13", default-features = false, features = ["ecdh", "std"] }

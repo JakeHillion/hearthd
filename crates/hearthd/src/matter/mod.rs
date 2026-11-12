@@ -34,6 +34,7 @@ mod write;
 
 pub use clusters::BatChargeLevel;
 pub use clusters::BatChargeState;
+pub use clusters::BatteryStorageControlCluster;
 pub use clusters::BooleanStateCluster;
 pub use clusters::CloudCoverCluster;
 pub use clusters::ColorControlCluster;
@@ -132,6 +133,7 @@ pub enum Cluster {
     UvIndex(UvIndexCluster) = 0xFC03,
     Precipitation(PrecipitationCluster) = 0xFC04,
     WeatherCondition(WeatherConditionCluster) = 0xFC05,
+    BatteryStorageControl(BatteryStorageControlCluster) = 0xFC06,
 }
 
 const _: () = {
