@@ -35,52 +35,6 @@ mod write;
 pub use clusters::BatChargeLevel;
 pub use clusters::BatChargeState;
 pub use clusters::BooleanStateCluster;
-pub use clusters::CLUSTER_ID_BOOLEAN_STATE;
-pub use clusters::CLUSTER_ID_CLOUD_COVER;
-pub use clusters::CLUSTER_ID_COLOR_CONTROL;
-pub use clusters::CLUSTER_ID_DEHUMIDIFICATION_CONTROL;
-pub use clusters::CLUSTER_ID_DEW_POINT;
-pub use clusters::CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT;
-pub use clusters::CLUSTER_ID_FAN_CONTROL;
-pub use clusters::CLUSTER_ID_LEVEL_CONTROL;
-pub use clusters::CLUSTER_ID_MEDIA_INPUT;
-pub use clusters::CLUSTER_ID_MEDIA_PLAYBACK;
-pub use clusters::CLUSTER_ID_MODE_SELECT;
-pub use clusters::CLUSTER_ID_OCCUPANCY_SENSING;
-pub use clusters::CLUSTER_ID_ON_OFF;
-pub use clusters::CLUSTER_ID_POWER_SOURCE;
-pub use clusters::CLUSTER_ID_PRECIPITATION;
-pub use clusters::CLUSTER_ID_PRESSURE_MEASUREMENT;
-pub use clusters::CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT;
-pub use clusters::CLUSTER_ID_TEMPERATURE_MEASUREMENT;
-pub use clusters::CLUSTER_ID_THERMOSTAT;
-pub use clusters::CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
-pub use clusters::CLUSTER_ID_UV_INDEX;
-pub use clusters::CLUSTER_ID_WEATHER_CONDITION;
-pub use clusters::CLUSTER_ID_WIND_MEASUREMENT;
-pub use clusters::CLUSTER_NAME_BOOLEAN_STATE;
-pub use clusters::CLUSTER_NAME_CLOUD_COVER;
-pub use clusters::CLUSTER_NAME_COLOR_CONTROL;
-pub use clusters::CLUSTER_NAME_DEHUMIDIFICATION_CONTROL;
-pub use clusters::CLUSTER_NAME_DEW_POINT;
-pub use clusters::CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT;
-pub use clusters::CLUSTER_NAME_FAN_CONTROL;
-pub use clusters::CLUSTER_NAME_LEVEL_CONTROL;
-pub use clusters::CLUSTER_NAME_MEDIA_INPUT;
-pub use clusters::CLUSTER_NAME_MEDIA_PLAYBACK;
-pub use clusters::CLUSTER_NAME_MODE_SELECT;
-pub use clusters::CLUSTER_NAME_OCCUPANCY_SENSING;
-pub use clusters::CLUSTER_NAME_ON_OFF;
-pub use clusters::CLUSTER_NAME_POWER_SOURCE;
-pub use clusters::CLUSTER_NAME_PRECIPITATION;
-pub use clusters::CLUSTER_NAME_PRESSURE_MEASUREMENT;
-pub use clusters::CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT;
-pub use clusters::CLUSTER_NAME_TEMPERATURE_MEASUREMENT;
-pub use clusters::CLUSTER_NAME_THERMOSTAT;
-pub use clusters::CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
-pub use clusters::CLUSTER_NAME_UV_INDEX;
-pub use clusters::CLUSTER_NAME_WEATHER_CONDITION;
-pub use clusters::CLUSTER_NAME_WIND_MEASUREMENT;
 pub use clusters::CloudCoverCluster;
 pub use clusters::ColorControlCluster;
 pub use clusters::ColorControlOptions;
@@ -133,127 +87,82 @@ pub use write::AttributeWrite;
 pub type EndpointId = u16;
 
 /// A Matter cluster instance carrying its current attribute values.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, facet::Facet)]
+///
+/// Each variant's discriminant is its cluster ID and its name is the cluster's
+/// name, so the compiler rejects two clusters sharing either. hearthd-local
+/// clusters, for quantities Matter does not (yet) model, take IDs from the
+/// manufacturer-specific range (0xFC00-0xFFFE); if Matter later standardises
+/// one, swap it for the official cluster.
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, facet::Facet, strum::EnumDiscriminants,
+)]
+#[strum_discriminants(
+    name(ClusterId),
+    derive(
+        Hash,
+        strum::EnumString,
+        strum::FromRepr,
+        strum::IntoStaticStr,
+        strum::VariantArray
+    )
+)]
 #[serde(tag = "cluster")]
-#[repr(u8)]
+#[repr(u32)]
 pub enum Cluster {
-    OnOff(OnOffCluster),
-    LevelControl(LevelControlCluster),
-    ColorControl(ColorControlCluster),
-    TemperatureMeasurement(TemperatureMeasurementCluster),
-    RelativeHumidityMeasurement(RelativeHumidityMeasurementCluster),
-    OccupancySensing(OccupancySensingCluster),
-    BooleanState(BooleanStateCluster),
-    Thermostat(ThermostatCluster),
-    FanControl(FanControlCluster),
-    DehumidificationControl(DehumidificationControlCluster),
-    ThermostatUserInterfaceConfiguration(ThermostatUserInterfaceConfigurationCluster),
-    PowerSource(PowerSourceCluster),
-    ElectricalPowerMeasurement(ElectricalPowerMeasurementCluster),
-    ModeSelect(ModeSelectCluster),
-    PressureMeasurement(PressureMeasurementCluster),
-    MediaPlayback(MediaPlaybackCluster),
-    MediaInput(MediaInputCluster),
-    WindMeasurement(WindMeasurementCluster),
-    CloudCover(CloudCoverCluster),
-    DewPoint(DewPointCluster),
-    UvIndex(UvIndexCluster),
-    Precipitation(PrecipitationCluster),
-    WeatherCondition(WeatherConditionCluster),
+    OnOff(OnOffCluster) = 0x0006,
+    LevelControl(LevelControlCluster) = 0x0008,
+    ColorControl(ColorControlCluster) = 0x0300,
+    TemperatureMeasurement(TemperatureMeasurementCluster) = 0x0402,
+    RelativeHumidityMeasurement(RelativeHumidityMeasurementCluster) = 0x0405,
+    OccupancySensing(OccupancySensingCluster) = 0x0406,
+    BooleanState(BooleanStateCluster) = 0x0045,
+    Thermostat(ThermostatCluster) = 0x0201,
+    FanControl(FanControlCluster) = 0x0202,
+    DehumidificationControl(DehumidificationControlCluster) = 0x0203,
+    ThermostatUserInterfaceConfiguration(ThermostatUserInterfaceConfigurationCluster) = 0x0204,
+    PowerSource(PowerSourceCluster) = 0x002F,
+    ElectricalPowerMeasurement(ElectricalPowerMeasurementCluster) = 0x0090,
+    ModeSelect(ModeSelectCluster) = 0x0050,
+    PressureMeasurement(PressureMeasurementCluster) = 0x0403,
+    MediaPlayback(MediaPlaybackCluster) = 0x0506,
+    MediaInput(MediaInputCluster) = 0x0507,
+    WindMeasurement(WindMeasurementCluster) = 0xFC00,
+    CloudCover(CloudCoverCluster) = 0xFC01,
+    DewPoint(DewPointCluster) = 0xFC02,
+    UvIndex(UvIndexCluster) = 0xFC03,
+    Precipitation(PrecipitationCluster) = 0xFC04,
+    WeatherCondition(WeatherConditionCluster) = 0xFC05,
 }
+
+const _: () = {
+    let ids = <ClusterId as strum::VariantArray>::VARIANTS;
+    let mut i = 0;
+    while i < ids.len() {
+        let id = ids[i] as u32;
+        assert!(
+            id <= 0x7FFF || (id >= 0xFC00 && id <= 0xFFFE),
+            "cluster IDs are standard (0x0000-0x7FFF) or manufacturer-specific (0xFC00-0xFFFE)"
+        );
+        i += 1;
+    }
+};
 
 impl Cluster {
     /// Matter cluster ID.
-    pub fn id(&self) -> u32 {
-        match self {
-            Cluster::OnOff(_) => CLUSTER_ID_ON_OFF,
-            Cluster::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
-            Cluster::ColorControl(_) => CLUSTER_ID_COLOR_CONTROL,
-            Cluster::TemperatureMeasurement(_) => CLUSTER_ID_TEMPERATURE_MEASUREMENT,
-            Cluster::RelativeHumidityMeasurement(_) => CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT,
-            Cluster::OccupancySensing(_) => CLUSTER_ID_OCCUPANCY_SENSING,
-            Cluster::BooleanState(_) => CLUSTER_ID_BOOLEAN_STATE,
-            Cluster::Thermostat(_) => CLUSTER_ID_THERMOSTAT,
-            Cluster::FanControl(_) => CLUSTER_ID_FAN_CONTROL,
-            Cluster::DehumidificationControl(_) => CLUSTER_ID_DEHUMIDIFICATION_CONTROL,
-            Cluster::ThermostatUserInterfaceConfiguration(_) => {
-                CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION
-            }
-            Cluster::PowerSource(_) => CLUSTER_ID_POWER_SOURCE,
-            Cluster::ElectricalPowerMeasurement(_) => CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT,
-            Cluster::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
-            Cluster::PressureMeasurement(_) => CLUSTER_ID_PRESSURE_MEASUREMENT,
-            Cluster::MediaPlayback(_) => CLUSTER_ID_MEDIA_PLAYBACK,
-            Cluster::MediaInput(_) => CLUSTER_ID_MEDIA_INPUT,
-            Cluster::WindMeasurement(_) => CLUSTER_ID_WIND_MEASUREMENT,
-            Cluster::CloudCover(_) => CLUSTER_ID_CLOUD_COVER,
-            Cluster::DewPoint(_) => CLUSTER_ID_DEW_POINT,
-            Cluster::UvIndex(_) => CLUSTER_ID_UV_INDEX,
-            Cluster::Precipitation(_) => CLUSTER_ID_PRECIPITATION,
-            Cluster::WeatherCondition(_) => CLUSTER_ID_WEATHER_CONDITION,
-        }
+    pub fn id(&self) -> ClusterId {
+        self.into()
     }
 
     /// Stable name used as the map key inside `Endpoint::clusters`.
     pub fn name(&self) -> &'static str {
-        match self {
-            Cluster::OnOff(_) => CLUSTER_NAME_ON_OFF,
-            Cluster::LevelControl(_) => CLUSTER_NAME_LEVEL_CONTROL,
-            Cluster::ColorControl(_) => CLUSTER_NAME_COLOR_CONTROL,
-            Cluster::TemperatureMeasurement(_) => CLUSTER_NAME_TEMPERATURE_MEASUREMENT,
-            Cluster::RelativeHumidityMeasurement(_) => CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT,
-            Cluster::OccupancySensing(_) => CLUSTER_NAME_OCCUPANCY_SENSING,
-            Cluster::BooleanState(_) => CLUSTER_NAME_BOOLEAN_STATE,
-            Cluster::Thermostat(_) => CLUSTER_NAME_THERMOSTAT,
-            Cluster::FanControl(_) => CLUSTER_NAME_FAN_CONTROL,
-            Cluster::DehumidificationControl(_) => CLUSTER_NAME_DEHUMIDIFICATION_CONTROL,
-            Cluster::ThermostatUserInterfaceConfiguration(_) => {
-                CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION
-            }
-            Cluster::PowerSource(_) => CLUSTER_NAME_POWER_SOURCE,
-            Cluster::ElectricalPowerMeasurement(_) => CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT,
-            Cluster::ModeSelect(_) => CLUSTER_NAME_MODE_SELECT,
-            Cluster::PressureMeasurement(_) => CLUSTER_NAME_PRESSURE_MEASUREMENT,
-            Cluster::MediaPlayback(_) => CLUSTER_NAME_MEDIA_PLAYBACK,
-            Cluster::MediaInput(_) => CLUSTER_NAME_MEDIA_INPUT,
-            Cluster::WindMeasurement(_) => CLUSTER_NAME_WIND_MEASUREMENT,
-            Cluster::CloudCover(_) => CLUSTER_NAME_CLOUD_COVER,
-            Cluster::DewPoint(_) => CLUSTER_NAME_DEW_POINT,
-            Cluster::UvIndex(_) => CLUSTER_NAME_UV_INDEX,
-            Cluster::Precipitation(_) => CLUSTER_NAME_PRECIPITATION,
-            Cluster::WeatherCondition(_) => CLUSTER_NAME_WEATHER_CONDITION,
-        }
+        self.id().name()
     }
+}
 
-    /// Whether a cluster ID has a variant here, and so can appear on an
-    /// endpoint at all.
-    pub fn is_modelled(id: u32) -> bool {
-        matches!(
-            id,
-            CLUSTER_ID_ON_OFF
-                | CLUSTER_ID_LEVEL_CONTROL
-                | CLUSTER_ID_COLOR_CONTROL
-                | CLUSTER_ID_TEMPERATURE_MEASUREMENT
-                | CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT
-                | CLUSTER_ID_OCCUPANCY_SENSING
-                | CLUSTER_ID_BOOLEAN_STATE
-                | CLUSTER_ID_THERMOSTAT
-                | CLUSTER_ID_FAN_CONTROL
-                | CLUSTER_ID_DEHUMIDIFICATION_CONTROL
-                | CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION
-                | CLUSTER_ID_POWER_SOURCE
-                | CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT
-                | CLUSTER_ID_MODE_SELECT
-                | CLUSTER_ID_PRESSURE_MEASUREMENT
-                | CLUSTER_ID_MEDIA_PLAYBACK
-                | CLUSTER_ID_MEDIA_INPUT
-                | CLUSTER_ID_WIND_MEASUREMENT
-                | CLUSTER_ID_CLOUD_COVER
-                | CLUSTER_ID_DEW_POINT
-                | CLUSTER_ID_UV_INDEX
-                | CLUSTER_ID_PRECIPITATION
-                | CLUSTER_ID_WEATHER_CONDITION
-        )
+impl ClusterId {
+    /// The cluster's name, as `Cluster::name()` gives it.
+    pub fn name(self) -> &'static str {
+        self.into()
     }
 }
 
@@ -294,14 +203,16 @@ impl Endpoint {
     /// Identify and Groups on nearly everything, and an endpoint cannot carry
     /// a cluster there is no type for.
     pub fn missing_mandatory_clusters(&self) -> Vec<(DeviceType, u32)> {
-        let present: Vec<u32> = self.clusters.values().map(Cluster::id).collect();
+        let present: Vec<ClusterId> = self.clusters.values().map(Cluster::id).collect();
         self.device_types
             .iter()
             .flat_map(|device_type| {
                 device_type
                     .mandatory_clusters()
                     .iter()
-                    .filter(|id| Cluster::is_modelled(**id) && !present.contains(id))
+                    .filter(|id| {
+                        ClusterId::from_repr(**id).is_some_and(|id| !present.contains(&id))
+                    })
                     .map(move |id| (*device_type, *id))
             })
             .collect()
@@ -376,7 +287,7 @@ mod tests {
 
         assert_eq!(
             endpoint.missing_mandatory_clusters(),
-            [(DeviceType::Speaker, CLUSTER_ID_LEVEL_CONTROL)]
+            [(DeviceType::Speaker, ClusterId::LevelControl as u32)]
         );
     }
 
@@ -404,17 +315,5 @@ mod tests {
         .with_device_types([DeviceType::ContactSensor]);
 
         assert_eq!(endpoint.missing_mandatory_clusters(), []);
-    }
-
-    #[test]
-    fn every_modelled_cluster_id_reports_itself_modelled() {
-        for cluster in [
-            Cluster::OnOff(OnOffCluster::default()),
-            Cluster::Thermostat(ThermostatCluster::default()),
-            Cluster::WeatherCondition(WeatherConditionCluster::default()),
-        ] {
-            assert!(Cluster::is_modelled(cluster.id()), "{}", cluster.name());
-        }
-        assert!(!Cluster::is_modelled(0x0003));
     }
 }

@@ -220,7 +220,7 @@ mod tests {
 
         let mut grown = speaker("A", true);
         grown.endpoints.get_mut(&1).unwrap().clusters.insert(
-            crate::matter::CLUSTER_NAME_LEVEL_CONTROL.to_string(),
+            crate::matter::ClusterId::LevelControl.name().to_string(),
             Cluster::LevelControl(LevelControlCluster::default()),
         );
         publisher.publish(grown).await.unwrap();

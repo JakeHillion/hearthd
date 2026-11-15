@@ -316,7 +316,7 @@ fn build_magic_packet(mac: &[u8; 6]) -> [u8; 102] {
 fn node_for(host: &Host) -> Node {
     let mut endpoint = Endpoint::default().with_device_types([DeviceType::OnOffPlugInUnit]);
     endpoint.clusters.insert(
-        crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
+        crate::matter::ClusterId::OnOff.name().to_string(),
         Cluster::OnOff(OnOffCluster {
             on_off: host.on_off,
         }),

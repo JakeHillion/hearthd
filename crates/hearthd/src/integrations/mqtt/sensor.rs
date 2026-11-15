@@ -163,14 +163,18 @@ impl Sensor {
         let mut endpoint = Endpoint::default();
         if let Some(temp) = &self.temperature {
             endpoint.clusters.insert(
-                crate::matter::CLUSTER_NAME_TEMPERATURE_MEASUREMENT.to_string(),
+                crate::matter::ClusterId::TemperatureMeasurement
+                    .name()
+                    .to_string(),
                 Cluster::TemperatureMeasurement(temp.cluster.clone()),
             );
             endpoint.device_types.push(DeviceType::TemperatureSensor);
         }
         if let Some(humidity) = &self.humidity {
             endpoint.clusters.insert(
-                crate::matter::CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT.to_string(),
+                crate::matter::ClusterId::RelativeHumidityMeasurement
+                    .name()
+                    .to_string(),
                 Cluster::RelativeHumidityMeasurement(humidity.cluster.clone()),
             );
             endpoint.device_types.push(DeviceType::HumiditySensor);
@@ -319,12 +323,12 @@ mod tests {
         assert!(
             endpoint
                 .clusters
-                .contains_key(crate::matter::CLUSTER_NAME_TEMPERATURE_MEASUREMENT)
+                .contains_key(crate::matter::ClusterId::TemperatureMeasurement.name())
         );
         assert!(
             !endpoint
                 .clusters
-                .contains_key(crate::matter::CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT)
+                .contains_key(crate::matter::ClusterId::RelativeHumidityMeasurement.name())
         );
     }
 
@@ -355,12 +359,12 @@ mod tests {
         assert!(
             endpoint
                 .clusters
-                .contains_key(crate::matter::CLUSTER_NAME_TEMPERATURE_MEASUREMENT)
+                .contains_key(crate::matter::ClusterId::TemperatureMeasurement.name())
         );
         assert!(
             endpoint
                 .clusters
-                .contains_key(crate::matter::CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT)
+                .contains_key(crate::matter::ClusterId::RelativeHumidityMeasurement.name())
         );
     }
 

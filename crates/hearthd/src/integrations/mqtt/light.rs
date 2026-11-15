@@ -149,18 +149,18 @@ impl Light {
     pub fn to_node(&self) -> Node {
         let mut endpoint = Endpoint::default().with_device_types([self.device_type()]);
         endpoint.clusters.insert(
-            crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
+            crate::matter::ClusterId::OnOff.name().to_string(),
             Cluster::OnOff(self.on_off.clone()),
         );
         if let Some(lc) = &self.level_control {
             endpoint.clusters.insert(
-                crate::matter::CLUSTER_NAME_LEVEL_CONTROL.to_string(),
+                crate::matter::ClusterId::LevelControl.name().to_string(),
                 Cluster::LevelControl(lc.clone()),
             );
         }
         if let Some(cc) = &self.color_control {
             endpoint.clusters.insert(
-                crate::matter::CLUSTER_NAME_COLOR_CONTROL.to_string(),
+                crate::matter::ClusterId::ColorControl.name().to_string(),
                 Cluster::ColorControl(cc.clone()),
             );
         }
@@ -346,7 +346,7 @@ impl Light {
                 return Err(format!(
                     "Light {} does not expose cluster 0x{:04X}",
                     self.key,
-                    other.cluster_id()
+                    other.cluster_id() as u32
                 )
                 .into());
             }

@@ -7,13 +7,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::clusters::CLUSTER_ID_COLOR_CONTROL;
-use super::clusters::CLUSTER_ID_LEVEL_CONTROL;
-use super::clusters::CLUSTER_ID_MEDIA_INPUT;
-use super::clusters::CLUSTER_ID_MEDIA_PLAYBACK;
-use super::clusters::CLUSTER_ID_MODE_SELECT;
-use super::clusters::CLUSTER_ID_ON_OFF;
-use super::clusters::CLUSTER_ID_THERMOSTAT;
+use super::ClusterId;
 
 /// OnOff cluster (0x0006) commands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -148,15 +142,15 @@ pub enum ClusterCommand {
 
 impl ClusterCommand {
     /// Cluster this command targets.
-    pub fn cluster_id(&self) -> u32 {
+    pub fn cluster_id(&self) -> ClusterId {
         match self {
-            ClusterCommand::OnOff(_) => CLUSTER_ID_ON_OFF,
-            ClusterCommand::LevelControl(_) => CLUSTER_ID_LEVEL_CONTROL,
-            ClusterCommand::ColorControl(_) => CLUSTER_ID_COLOR_CONTROL,
-            ClusterCommand::Thermostat(_) => CLUSTER_ID_THERMOSTAT,
-            ClusterCommand::ModeSelect(_) => CLUSTER_ID_MODE_SELECT,
-            ClusterCommand::MediaPlayback(_) => CLUSTER_ID_MEDIA_PLAYBACK,
-            ClusterCommand::MediaInput(_) => CLUSTER_ID_MEDIA_INPUT,
+            ClusterCommand::OnOff(_) => ClusterId::OnOff,
+            ClusterCommand::LevelControl(_) => ClusterId::LevelControl,
+            ClusterCommand::ColorControl(_) => ClusterId::ColorControl,
+            ClusterCommand::Thermostat(_) => ClusterId::Thermostat,
+            ClusterCommand::ModeSelect(_) => ClusterId::ModeSelect,
+            ClusterCommand::MediaPlayback(_) => ClusterId::MediaPlayback,
+            ClusterCommand::MediaInput(_) => ClusterId::MediaInput,
         }
     }
 }
