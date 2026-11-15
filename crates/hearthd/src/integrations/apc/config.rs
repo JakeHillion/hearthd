@@ -52,14 +52,20 @@ pub struct PduConfig {
 impl Validate for PduConfig {
     fn validate(&self, validation: &mut Validation<'_>) {
         let outlets = self.model.profile().outlets;
+        let mut out_of_range: Vec<u8> = self
+            .outlets
+            .keys()
+            .copied()
+            .filter(|number| !(1..=outlets).contains(number))
+            .collect();
+        out_of_range.sort_unstable();
+
         let mut field = validation.field("outlets");
-        for number in self.outlets.keys() {
-            if !(1..=outlets).contains(number) {
-                field.key(number).error(format!(
-                    "{} has outlets 1 to {outlets}, not {number}",
-                    self.model
-                ));
-            }
+        for number in out_of_range {
+            field.key(number).error(format!(
+                "{} has outlets 1 to {outlets}, not {number}",
+                self.model
+            ));
         }
     }
 }
