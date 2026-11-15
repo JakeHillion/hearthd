@@ -358,6 +358,14 @@ impl Engine {
                         );
                     }
                 }
+                for (endpoint_id, device_type) in node.ambiguous_endpoints() {
+                    warn!(
+                        "Node {} endpoint {} shares {} with a sibling but has no tags telling them apart",
+                        node_id,
+                        endpoint_id,
+                        device_type.name()
+                    );
+                }
 
                 {
                     let mut state = State::clone(&self.state.load());
