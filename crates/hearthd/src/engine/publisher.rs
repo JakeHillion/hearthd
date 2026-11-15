@@ -15,6 +15,7 @@ use super::integration::StreamClosed;
 use crate::matter::EndpointId;
 use crate::matter::LocalKey;
 use crate::matter::Node;
+use crate::matter::SemanticTag;
 
 /// Emits the minimal events that move the engine's view of a node from what
 /// was last published to what an integration now holds.
@@ -24,10 +25,10 @@ pub struct Publisher {
 }
 
 /// The parts of a node that only `NodeAdded` can change: its name, and per
-/// endpoint its device types and the set of clusters it carries.
+/// endpoint its device types, its tags and the set of clusters it carries.
 type Shape<'a> = (
     Option<&'a str>,
-    BTreeSet<(EndpointId, Vec<String>, Vec<&'a str>)>,
+    BTreeSet<(EndpointId, Vec<String>, &'a [SemanticTag], Vec<&'a str>)>,
 );
 
 /// A difference in the shape re-announces the node; anything else is a
@@ -44,7 +45,7 @@ fn shape(node: &Node) -> Shape<'_> {
                 .collect();
             let mut clusters: Vec<&str> = endpoint.clusters.keys().map(String::as_str).collect();
             clusters.sort_unstable();
-            (*id, device_types, clusters)
+            (*id, device_types, endpoint.tags.as_slice(), clusters)
         })
         .collect();
     (node.name.as_deref(), endpoints)
@@ -119,10 +120,12 @@ mod tests {
     use crate::engine::Event;
     use crate::engine::Stamped;
     use crate::matter::Cluster;
+    use crate::matter::CommonLocationTag;
     use crate::matter::DeviceType;
     use crate::matter::Endpoint;
     use crate::matter::LevelControlCluster;
     use crate::matter::OnOffCluster;
+    use crate::matter::Tag;
 
     fn publisher() -> (Publisher, mpsc::Receiver<Stamped>) {
         let (tx, rx) = mpsc::channel(16);
@@ -224,6 +227,24 @@ mod tests {
             Cluster::LevelControl(LevelControlCluster::default()),
         );
         publisher.publish(grown).await.unwrap();
+
+        assert!(matches!(
+            drain(&mut rx).as_slice(),
+            [Event::NodeAdded { .. }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_retagged_endpoint_is_reannounced() {
+        let (publisher, mut rx) = publisher();
+
+        publisher.publish(speaker("A", true)).await.unwrap();
+        drain(&mut rx);
+
+        let mut tagged = speaker("A", true);
+        tagged.endpoints.get_mut(&1).unwrap().tags =
+            vec![Tag::CommonLocation(CommonLocationTag::Indoor).into()];
+        publisher.publish(tagged).await.unwrap();
 
         assert!(matches!(
             drain(&mut rx).as_slice(),

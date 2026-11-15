@@ -57,6 +57,7 @@ use crate::matter::BooleanStateCluster;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
 use crate::matter::ClusterId;
+use crate::matter::CommonLocationTag;
 use crate::matter::ControlSequenceOfOperation;
 use crate::matter::DehumidificationControlCluster;
 use crate::matter::DeviceType;
@@ -77,8 +78,11 @@ use crate::matter::PowerMode;
 use crate::matter::PowerSourceCluster;
 use crate::matter::PowerSourceStatus;
 use crate::matter::RelativeHumidityMeasurementCluster;
+use crate::matter::RoomAirConditionerTag;
+use crate::matter::SemanticTag;
 use crate::matter::SetpointMode;
 use crate::matter::SystemMode;
+use crate::matter::Tag;
 use crate::matter::TemperatureDisplayMode;
 use crate::matter::TemperatureMeasurementCluster;
 use crate::matter::ThermostatCluster;
@@ -325,13 +329,14 @@ fn power_source(state: &DeviceState) -> PowerSourceCluster {
     }
 }
 
-fn temperature_endpoint(celsius: Option<f32>) -> Endpoint {
+fn temperature_endpoint(celsius: Option<f32>, tag: SemanticTag) -> Endpoint {
     Endpoint::from_clusters([Cluster::TemperatureMeasurement(
         TemperatureMeasurementCluster {
             measured_value: celsius.map(celsius_to_centi),
         },
     )])
     .with_device_types([DeviceType::TemperatureSensor])
+    .with_tags([tag])
 }
 
 fn power_cluster(
@@ -402,23 +407,42 @@ pub fn build_endpoints(state: &DeviceState) -> HashMap<EndpointId, Endpoint> {
 
     endpoints.insert(
         EP_TEMP_OUTLET_AIR,
-        temperature_endpoint(display.temp_indoor_supply_air),
+        temperature_endpoint(
+            display.temp_indoor_supply_air,
+            Tag::CommonLocation(CommonLocationTag::Indoor).into(),
+        ),
     );
     endpoints.insert(
         EP_TEMP_OUTDOOR,
-        temperature_endpoint(runtime.temp_outdoor_ambient),
+        temperature_endpoint(
+            runtime.temp_outdoor_ambient,
+            Tag::CommonLocation(CommonLocationTag::Outdoor).into(),
+        ),
     );
     endpoints.insert(
         EP_TEMP_CONDENSER,
-        temperature_endpoint(runtime.temp_condenser),
+        temperature_endpoint(
+            runtime.temp_condenser,
+            Tag::RoomAirConditioner(RoomAirConditionerTag::Condenser).into(),
+        ),
     );
     endpoints.insert(
         EP_TEMP_EVAPORATOR,
-        temperature_endpoint(runtime.temp_evaporator),
+        temperature_endpoint(
+            runtime.temp_evaporator,
+            Tag::RoomAirConditioner(RoomAirConditionerTag::Evaporator).into(),
+        ),
     );
+    // No namespace names a compressor, so the label carries it.
     endpoints.insert(
         EP_TEMP_COMPRESSOR_DISCHARGE,
-        temperature_endpoint(runtime.temp_compressor_discharge),
+        temperature_endpoint(
+            runtime.temp_compressor_discharge,
+            SemanticTag {
+                tag: Tag::CommonLocation(CommonLocationTag::Inside),
+                label: Some("Compressor discharge".to_string()),
+            },
+        ),
     );
 
     endpoints.insert(
@@ -868,6 +892,8 @@ mod tests {
     use crate::integrations::ecoflow::wave3::codec::DisplayProperties;
     use crate::integrations::ecoflow::wave3::codec::ModeParamItem;
     use crate::integrations::ecoflow::wave3::codec::RuntimeProperties;
+    use crate::matter::LocalKey;
+    use crate::matter::Node;
 
     /// A six-entry mode parameter list, as the device sends it.
     fn mode_list() -> Vec<ModeParamItem> {
@@ -1826,5 +1852,40 @@ mod tests {
         for (id, endpoint) in &endpoints {
             assert_eq!(endpoint.missing_mandatory_clusters(), [], "endpoint {id}");
         }
+    }
+
+    #[test]
+    fn the_temperature_sensors_are_told_apart_by_their_tags() {
+        let node = Node {
+            key: LocalKey::from("wave3"),
+            name: None,
+            endpoints: build_endpoints(&DeviceState::default()),
+        };
+        let tags = |id| node.endpoints[&id].tags.clone();
+
+        assert_eq!(
+            tags(EP_TEMP_OUTLET_AIR),
+            [Tag::CommonLocation(CommonLocationTag::Indoor).into()]
+        );
+        assert_eq!(
+            tags(EP_TEMP_OUTDOOR),
+            [Tag::CommonLocation(CommonLocationTag::Outdoor).into()]
+        );
+        assert_eq!(
+            tags(EP_TEMP_CONDENSER),
+            [Tag::RoomAirConditioner(RoomAirConditionerTag::Condenser).into()]
+        );
+        assert_eq!(
+            tags(EP_TEMP_EVAPORATOR),
+            [Tag::RoomAirConditioner(RoomAirConditionerTag::Evaporator).into()]
+        );
+        assert_eq!(
+            tags(EP_TEMP_COMPRESSOR_DISCHARGE),
+            [SemanticTag {
+                tag: Tag::CommonLocation(CommonLocationTag::Inside),
+                label: Some("Compressor discharge".to_string()),
+            }]
+        );
+        assert_eq!(node.ambiguous_endpoints(), []);
     }
 }

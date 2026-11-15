@@ -115,19 +115,24 @@
           # Python environment configuration
           haPythonEnv = pkgs.callPackage ./nixos/pkgs/ha-python-env.nix { };
 
-          matterDeviceTypes = import ./nix/matter-device-types.nix {
-            inherit pkgs connectedhomeip;
+          matterGenerated = name: script: file: import ./nix/matter-generated.nix {
+            inherit pkgs connectedhomeip name script file;
             specVersion = "1.4";
             rustfmt = fmt-toolchain;
             rustfmtConfig = ./rustfmt.toml;
             src = self;
           };
+          matterDeviceTypes = matterGenerated "matter-device-types"
+            ./nix/matter-device-types.py "device_types.rs";
+          matterSemanticTags = matterGenerated "matter-semantic-tags"
+            ./nix/matter-semantic-tags.py "semantic_tags.rs";
         in
         {
           packages = {
             inherit hearthd;
             default = hearthd;
             matter-device-types = matterDeviceTypes.generated;
+            matter-semantic-tags = matterSemanticTags.generated;
           };
 
           devShells.default = craneLib.devShell {
@@ -143,7 +148,7 @@
 
           formatter = treefmtEval.config.build.wrapper;
 
-          checks = {
+          checks = self.packages.${system} // self.devShells.${system} // {
             hearthd-clippy = craneLib.cargoClippy (commonArgs // {
               inherit cargoArtifacts;
               cargoClippyExtraArgs = "--all-targets -- --deny warnings";
@@ -157,6 +162,8 @@
             formatting = treefmtEval.config.build.check self;
 
             matter-device-types = matterDeviceTypes.check;
+
+            matter-semantic-tags = matterSemanticTags.check;
 
             hearthd-audit = craneLib.cargoAudit {
               inherit advisory-db;
@@ -182,6 +189,6 @@
               partitionType = "count";
               cargoNextestPartitionsExtraArgs = "--no-tests=pass";
             });
-          } // self.packages.${system} // self.devShells.${system};
+          };
         });
 }

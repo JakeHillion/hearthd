@@ -30,6 +30,7 @@ use serde::Serialize;
 mod clusters;
 mod commands;
 mod device_types;
+mod semantic_tags;
 mod write;
 
 pub use clusters::BatChargeLevel;
@@ -81,6 +82,7 @@ pub use commands::OnOffCommand;
 pub use commands::SetpointMode;
 pub use commands::ThermostatCommand;
 pub use device_types::DeviceType;
+pub use semantic_tags::*;
 pub use write::AttributeWrite;
 
 /// Endpoint identifier within a node (Matter endpoints are u16).
@@ -174,8 +176,31 @@ pub struct Endpoint {
     /// endpoint may carry more, and one with no fitting type declares none.
     pub device_types: Vec<DeviceType>,
 
+    /// What tells this endpoint apart from its siblings, as its Descriptor
+    /// cluster's `TagList` would say. Matter allows at most six, and requires
+    /// them on every endpoint that shares a device type with a sibling; see
+    /// `Node::ambiguous_endpoints`.
+    pub tags: Vec<SemanticTag>,
+
     /// Clusters keyed by `Cluster::name()`.
     pub clusters: HashMap<String, Cluster>,
+}
+
+/// A `SemanticTagStruct`: a tag from a standard namespace, optionally with a
+/// human-readable label.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, facet::Facet)]
+pub struct SemanticTag {
+    #[serde(flatten)]
+    pub tag: Tag,
+
+    /// At most 64 bytes, for display.
+    pub label: Option<String>,
+}
+
+impl From<Tag> for SemanticTag {
+    fn from(tag: Tag) -> Self {
+        Self { tag, label: None }
+    }
 }
 
 impl Endpoint {
@@ -183,6 +208,7 @@ impl Endpoint {
     pub fn from_clusters(clusters: impl IntoIterator<Item = Cluster>) -> Self {
         Self {
             device_types: Vec::new(),
+            tags: Vec::new(),
             clusters: clusters
                 .into_iter()
                 .map(|c| (c.name().to_string(), c))
@@ -193,6 +219,12 @@ impl Endpoint {
     /// Declare the endpoint's device types.
     pub fn with_device_types(mut self, device_types: impl IntoIterator<Item = DeviceType>) -> Self {
         self.device_types = device_types.into_iter().collect();
+        self
+    }
+
+    /// Declare the endpoint's semantic tags.
+    pub fn with_tags(mut self, tags: impl IntoIterator<Item = SemanticTag>) -> Self {
+        self.tags = tags.into_iter().collect();
         self
     }
 
@@ -265,6 +297,40 @@ pub struct Node {
     pub endpoints: HashMap<EndpointId, Endpoint>,
 }
 
+impl Node {
+    /// Endpoints whose tags do not tell them apart from a sibling of the same
+    /// device type, as (endpoint, type) pairs in endpoint order.
+    ///
+    /// Matter requires every endpoint that shares a device type with a
+    /// sibling to carry a tag list, and no two of them to carry the same one.
+    pub fn ambiguous_endpoints(&self) -> Vec<(EndpointId, DeviceType)> {
+        let mut ambiguous = Vec::new();
+        for (id, endpoint) in &self.endpoints {
+            for device_type in &endpoint.device_types {
+                let clashes = self.endpoints.iter().any(|(other_id, other)| {
+                    other_id != id
+                        && other.device_types.contains(device_type)
+                        && (endpoint.tags.is_empty() || same_tags(&endpoint.tags, &other.tags))
+                });
+                if clashes {
+                    ambiguous.push((*id, *device_type));
+                }
+            }
+        }
+        ambiguous.sort_by_key(|(id, device_type)| (*id, device_type.id()));
+        ambiguous
+    }
+}
+
+/// Whether two tag lists hold the same tags, in any order.
+fn same_tags(a: &[SemanticTag], b: &[SemanticTag]) -> bool {
+    let mut a = a.to_vec();
+    let mut b = b.to_vec();
+    a.sort();
+    b.sort();
+    a == b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +381,95 @@ mod tests {
         .with_device_types([DeviceType::ContactSensor]);
 
         assert_eq!(endpoint.missing_mandatory_clusters(), []);
+    }
+
+    fn sensor(tags: impl IntoIterator<Item = SemanticTag>) -> Endpoint {
+        Endpoint::from_clusters([Cluster::TemperatureMeasurement(
+            TemperatureMeasurementCluster::default(),
+        )])
+        .with_device_types([DeviceType::TemperatureSensor])
+        .with_tags(tags)
+    }
+
+    fn node(endpoints: impl IntoIterator<Item = (EndpointId, Endpoint)>) -> Node {
+        Node {
+            key: LocalKey::from("test"),
+            name: None,
+            endpoints: endpoints.into_iter().collect(),
+        }
+    }
+
+    const INDOOR: Tag = Tag::CommonLocation(CommonLocationTag::Indoor);
+    const OUTDOOR: Tag = Tag::CommonLocation(CommonLocationTag::Outdoor);
+
+    #[test]
+    fn a_lone_device_type_needs_no_tags() {
+        let node = node([
+            (1, sensor([])),
+            (
+                2,
+                Endpoint::from_clusters([Cluster::OnOff(OnOffCluster::default())])
+                    .with_device_types([DeviceType::OnOffLight]),
+            ),
+        ]);
+
+        assert_eq!(node.ambiguous_endpoints(), []);
+    }
+
+    #[test]
+    fn siblings_sharing_a_device_type_need_tags() {
+        let node = node([(1, sensor([INDOOR.into()])), (2, sensor([]))]);
+
+        assert_eq!(
+            node.ambiguous_endpoints(),
+            [(2, DeviceType::TemperatureSensor)]
+        );
+    }
+
+    #[test]
+    fn siblings_with_the_same_tags_are_ambiguous_in_any_order() {
+        let node = node([
+            (1, sensor([INDOOR.into(), OUTDOOR.into()])),
+            (2, sensor([OUTDOOR.into(), INDOOR.into()])),
+        ]);
+
+        assert_eq!(
+            node.ambiguous_endpoints(),
+            [
+                (1, DeviceType::TemperatureSensor),
+                (2, DeviceType::TemperatureSensor)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_label_tells_siblings_apart() {
+        let labelled = SemanticTag {
+            tag: INDOOR,
+            label: Some("Hallway".to_string()),
+        };
+        let node = node([(1, sensor([INDOOR.into()])), (2, sensor([labelled]))]);
+
+        assert_eq!(node.ambiguous_endpoints(), []);
+    }
+
+    #[test]
+    fn a_tag_serializes_by_namespace_and_tag_name() {
+        let tag = SemanticTag {
+            tag: Tag::RoomAirConditioner(RoomAirConditionerTag::Condenser),
+            label: None,
+        };
+
+        let json = serde_json::to_value(&tag).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "namespace": "RoomAirConditioner",
+                "tag": "Condenser",
+                "label": null,
+            })
+        );
+        assert_eq!(serde_json::from_value::<SemanticTag>(json).unwrap(), tag);
     }
 }
