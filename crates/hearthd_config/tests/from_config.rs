@@ -10,6 +10,59 @@ use hearthd_config::format_diagnostics_plain;
 use hearthd_config::from_sources;
 use serde::Deserialize;
 
+#[derive(Debug, FromConfig)]
+struct UuidConfig {
+    id: uuid::Uuid,
+}
+
+#[test]
+fn uuid_values_are_read_as_typed_scalars() {
+    let (config, diagnostics) = load::<UuidConfig>(&[(
+        "identity.local.toml",
+        "id = 'ABCDEF01-2345-4678-9ABC-0123456789AB'",
+    )]);
+    assert_eq!(diagnostics, "");
+    assert_eq!(
+        config.unwrap().id.to_string(),
+        "abcdef01-2345-4678-9abc-0123456789ab"
+    );
+}
+
+#[test]
+fn malformed_or_missing_uuid_values_are_reported_at_their_sources() {
+    for value in ["'not-a-uuid'", "42"] {
+        let (config, diagnostics) =
+            load::<UuidConfig>(&[("identity.local.toml", &format!("id = {value}"))]);
+        assert!(config.is_none());
+        assert!(diagnostics.contains("'id'"), "{diagnostics}");
+        assert!(diagnostics.contains("identity.local.toml"), "{diagnostics}");
+    }
+    let (config, diagnostics) = load::<UuidConfig>(&[("identity.local.toml", "")]);
+    assert!(config.is_none());
+    assert!(diagnostics.contains("id is required"), "{diagnostics}");
+}
+
+#[test]
+fn uuid_definitions_in_separate_files_conflict() {
+    let (config, diagnostics) = load::<UuidConfig>(&[
+        (
+            "base.local.toml",
+            "id = '11111111-2222-4333-8444-555555555555'",
+        ),
+        (
+            "secrets.local.toml",
+            "id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'",
+        ),
+    ]);
+    assert!(config.is_some());
+    assert!(
+        diagnostics.contains("Merge conflict in field 'id'"),
+        "{diagnostics}"
+    );
+    assert!(diagnostics.contains("base.local.toml"), "{diagnostics}");
+    assert!(diagnostics.contains("secrets.local.toml"), "{diagnostics}");
+}
+
 /// Reads `files` as a `T`, returning it with the rendered diagnostics.
 fn load<T: FromConfig>(files: &[(&str, &str)]) -> (Option<T>, String) {
     let sources = Sources::from(

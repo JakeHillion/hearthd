@@ -49,3 +49,4 @@ snmp2 = { version = "0.5", default-features = false, features = ["heap_buffers",
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 twox-hash = { version = "2", default-features = false, features = ["xxhash3_128"] }
+uuid = { version = "1", features = ["serde"] }
