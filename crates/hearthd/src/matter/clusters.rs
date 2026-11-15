@@ -17,63 +17,6 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-// Cluster IDs from the Matter Application Cluster Specification.
-pub const CLUSTER_ID_ON_OFF: u32 = 0x0006;
-pub const CLUSTER_ID_LEVEL_CONTROL: u32 = 0x0008;
-pub const CLUSTER_ID_COLOR_CONTROL: u32 = 0x0300;
-pub const CLUSTER_ID_POWER_SOURCE: u32 = 0x002F;
-pub const CLUSTER_ID_BOOLEAN_STATE: u32 = 0x0045;
-pub const CLUSTER_ID_MODE_SELECT: u32 = 0x0050;
-pub const CLUSTER_ID_ELECTRICAL_POWER_MEASUREMENT: u32 = 0x0090;
-pub const CLUSTER_ID_THERMOSTAT: u32 = 0x0201;
-pub const CLUSTER_ID_FAN_CONTROL: u32 = 0x0202;
-pub const CLUSTER_ID_DEHUMIDIFICATION_CONTROL: u32 = 0x0203;
-pub const CLUSTER_ID_THERMOSTAT_USER_INTERFACE_CONFIGURATION: u32 = 0x0204;
-pub const CLUSTER_ID_TEMPERATURE_MEASUREMENT: u32 = 0x0402;
-pub const CLUSTER_ID_PRESSURE_MEASUREMENT: u32 = 0x0403;
-pub const CLUSTER_ID_RELATIVE_HUMIDITY_MEASUREMENT: u32 = 0x0405;
-pub const CLUSTER_ID_OCCUPANCY_SENSING: u32 = 0x0406;
-
-// Media clusters from the Matter Application Cluster Specification.
-pub const CLUSTER_ID_MEDIA_PLAYBACK: u32 = 0x0506;
-pub const CLUSTER_ID_MEDIA_INPUT: u32 = 0x0507;
-
-// hearthd-local clusters for meteorological quantities Matter does not (yet)
-// model as standard clusters. IDs live in the manufacturer-specific range
-// (0xFC00-0xFFFE); if Matter later standardises any of these, swap the
-// corresponding ID/type for the official one.
-pub const CLUSTER_ID_WIND_MEASUREMENT: u32 = 0xFC00;
-pub const CLUSTER_ID_CLOUD_COVER: u32 = 0xFC01;
-pub const CLUSTER_ID_DEW_POINT: u32 = 0xFC02;
-pub const CLUSTER_ID_UV_INDEX: u32 = 0xFC03;
-pub const CLUSTER_ID_PRECIPITATION: u32 = 0xFC04;
-pub const CLUSTER_ID_WEATHER_CONDITION: u32 = 0xFC05;
-
-pub const CLUSTER_NAME_ON_OFF: &str = "OnOff";
-pub const CLUSTER_NAME_LEVEL_CONTROL: &str = "LevelControl";
-pub const CLUSTER_NAME_COLOR_CONTROL: &str = "ColorControl";
-pub const CLUSTER_NAME_POWER_SOURCE: &str = "PowerSource";
-pub const CLUSTER_NAME_BOOLEAN_STATE: &str = "BooleanState";
-pub const CLUSTER_NAME_MODE_SELECT: &str = "ModeSelect";
-pub const CLUSTER_NAME_ELECTRICAL_POWER_MEASUREMENT: &str = "ElectricalPowerMeasurement";
-pub const CLUSTER_NAME_THERMOSTAT: &str = "Thermostat";
-pub const CLUSTER_NAME_FAN_CONTROL: &str = "FanControl";
-pub const CLUSTER_NAME_DEHUMIDIFICATION_CONTROL: &str = "DehumidificationControl";
-pub const CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION: &str =
-    "ThermostatUserInterfaceConfiguration";
-pub const CLUSTER_NAME_TEMPERATURE_MEASUREMENT: &str = "TemperatureMeasurement";
-pub const CLUSTER_NAME_PRESSURE_MEASUREMENT: &str = "PressureMeasurement";
-pub const CLUSTER_NAME_RELATIVE_HUMIDITY_MEASUREMENT: &str = "RelativeHumidityMeasurement";
-pub const CLUSTER_NAME_OCCUPANCY_SENSING: &str = "OccupancySensing";
-pub const CLUSTER_NAME_MEDIA_PLAYBACK: &str = "MediaPlayback";
-pub const CLUSTER_NAME_MEDIA_INPUT: &str = "MediaInput";
-pub const CLUSTER_NAME_WIND_MEASUREMENT: &str = "WindMeasurement";
-pub const CLUSTER_NAME_CLOUD_COVER: &str = "CloudCover";
-pub const CLUSTER_NAME_DEW_POINT: &str = "DewPoint";
-pub const CLUSTER_NAME_UV_INDEX: &str = "UvIndex";
-pub const CLUSTER_NAME_PRECIPITATION: &str = "Precipitation";
-pub const CLUSTER_NAME_WEATHER_CONDITION: &str = "WeatherCondition";
-
 /// On/Off cluster (0x0006).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
 pub struct OnOffCluster {

@@ -87,7 +87,7 @@ pub fn group_node(
 ) -> Node {
     let mut endpoint = Endpoint::default();
     endpoint.clusters.insert(
-        crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
+        crate::matter::ClusterId::OnOff.name().to_string(),
         Cluster::OnOff(OnOffCluster {
             on_off: !group.muted,
         }),
@@ -118,7 +118,7 @@ pub fn group_node(
     let current_input = stream_indices.get(&group.stream_id).copied();
 
     endpoint.clusters.insert(
-        crate::matter::CLUSTER_NAME_MEDIA_INPUT.to_string(),
+        crate::matter::ClusterId::MediaInput.name().to_string(),
         Cluster::MediaInput(MediaInputCluster {
             input_list,
             current_input,
@@ -132,7 +132,7 @@ pub fn group_node(
         .map(media_playback_from_stream)
         .unwrap_or_default();
     endpoint.clusters.insert(
-        crate::matter::CLUSTER_NAME_MEDIA_PLAYBACK.to_string(),
+        crate::matter::ClusterId::MediaPlayback.name().to_string(),
         Cluster::MediaPlayback(playback),
     );
 
@@ -150,19 +150,19 @@ pub fn group_node(
 pub fn client_node(client: &Client) -> Node {
     let mut endpoint = Endpoint::default().with_device_types([DeviceType::Speaker]);
     endpoint.clusters.insert(
-        crate::matter::CLUSTER_NAME_ON_OFF.to_string(),
+        crate::matter::ClusterId::OnOff.name().to_string(),
         Cluster::OnOff(OnOffCluster {
             on_off: !client.config.volume.muted,
         }),
     );
     endpoint.clusters.insert(
-        crate::matter::CLUSTER_NAME_LEVEL_CONTROL.to_string(),
+        crate::matter::ClusterId::LevelControl.name().to_string(),
         Cluster::LevelControl(LevelControlCluster {
             current_level: Some(percent_to_level(client.config.volume.percent)),
         }),
     );
     endpoint.clusters.insert(
-        crate::matter::CLUSTER_NAME_BOOLEAN_STATE.to_string(),
+        crate::matter::ClusterId::BooleanState.name().to_string(),
         Cluster::BooleanState(BooleanStateCluster {
             state_value: client.connected,
         }),

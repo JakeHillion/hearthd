@@ -54,12 +54,9 @@ use super::semantics::UserTempUnit;
 use super::state::DeviceState;
 use crate::matter::AttributeWrite;
 use crate::matter::BooleanStateCluster;
-use crate::matter::CLUSTER_NAME_DEHUMIDIFICATION_CONTROL;
-use crate::matter::CLUSTER_NAME_FAN_CONTROL;
-use crate::matter::CLUSTER_NAME_THERMOSTAT;
-use crate::matter::CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION;
 use crate::matter::Cluster;
 use crate::matter::ClusterCommand;
+use crate::matter::ClusterId;
 use crate::matter::ControlSequenceOfOperation;
 use crate::matter::DehumidificationControlCluster;
 use crate::matter::DeviceType;
@@ -538,7 +535,7 @@ pub enum CommandError {
     /// The endpoint does not carry the cluster the command targets.
     UnsupportedOnEndpoint {
         endpoint: EndpointId,
-        cluster_id: u32,
+        cluster_id: ClusterId,
     },
     /// The endpoint does not carry the attribute the write targets, or the
     /// device gives no way to set it.
@@ -564,7 +561,8 @@ impl std::fmt::Display for CommandError {
                 cluster_id,
             } => write!(
                 f,
-                "endpoint {endpoint} does not support cluster 0x{cluster_id:04X}"
+                "endpoint {endpoint} does not support cluster 0x{:04X}",
+                *cluster_id as u32
             ),
             CommandError::UnsupportedWrite {
                 endpoint,
@@ -605,27 +603,31 @@ pub fn write_to_config_write(
     endpoint: EndpointId,
     write: &AttributeWrite,
 ) -> Result<ConfigWrite, CommandError> {
-    match (endpoint, write.cluster.as_str(), write.attribute.as_str()) {
-        (EP_AIR_CONDITIONER, CLUSTER_NAME_THERMOSTAT, "system_mode") => {
+    match (
+        endpoint,
+        write.cluster.parse::<ClusterId>().ok(),
+        write.attribute.as_str(),
+    ) {
+        (EP_AIR_CONDITIONER, Some(ClusterId::Thermostat), "system_mode") => {
             set_system_mode(value_as(write)?)
         }
-        (EP_AIR_CONDITIONER, CLUSTER_NAME_THERMOSTAT, "occupied_cooling_setpoint") => Ok(
+        (EP_AIR_CONDITIONER, Some(ClusterId::Thermostat), "occupied_cooling_setpoint") => Ok(
             setpoint_write(state, centi_to_celsius(value_as(write)?), true),
         ),
-        (EP_AIR_CONDITIONER, CLUSTER_NAME_THERMOSTAT, "occupied_heating_setpoint") => Ok(
+        (EP_AIR_CONDITIONER, Some(ClusterId::Thermostat), "occupied_heating_setpoint") => Ok(
             setpoint_write(state, centi_to_celsius(value_as(write)?), false),
         ),
 
-        (EP_AIR_CONDITIONER, CLUSTER_NAME_FAN_CONTROL, "speed_setting") => {
+        (EP_AIR_CONDITIONER, Some(ClusterId::FanControl), "speed_setting") => {
             fan_write(value_as(write)?)
         }
         // Snap first: the device accepts only the five discrete percentages,
         // so an arbitrary percentage has to be resolved to a step and then
         // back to a permitted value.
-        (EP_AIR_CONDITIONER, CLUSTER_NAME_FAN_CONTROL, "percent_setting") => {
+        (EP_AIR_CONDITIONER, Some(ClusterId::FanControl), "percent_setting") => {
             fan_write(semantics::fan_percent_to_step(value_as(write)?))
         }
-        (EP_AIR_CONDITIONER, CLUSTER_NAME_FAN_CONTROL, "fan_mode") => match value_as(write)? {
+        (EP_AIR_CONDITIONER, Some(ClusterId::FanControl), "fan_mode") => match value_as(write)? {
             FanMode::Low => fan_write(1),
             FanMode::Medium => fan_write(3),
             FanMode::High | FanMode::On => fan_write(5),
@@ -637,7 +639,7 @@ pub fn write_to_config_write(
 
         (
             EP_AIR_CONDITIONER,
-            CLUSTER_NAME_THERMOSTAT_USER_INTERFACE_CONFIGURATION,
+            Some(ClusterId::ThermostatUserInterfaceConfiguration),
             "temperature_display_mode",
         ) => {
             let unit = match value_as(write)? {
@@ -652,7 +654,7 @@ pub fn write_to_config_write(
 
         (
             EP_AIR_CONDITIONER,
-            CLUSTER_NAME_DEHUMIDIFICATION_CONTROL,
+            Some(ClusterId::DehumidificationControl),
             "rh_dehumidification_setpoint",
         ) => Ok(ConfigWrite {
             cfg_humi_set: Some(semantics::clamp_humi_set(value_as(write)?) as f32),
@@ -1236,7 +1238,7 @@ mod tests {
         // this is the invariant that forces six thermistors onto six
         // endpoints.
         for (endpoint_id, endpoint) in build_endpoints(&DeviceState::default()) {
-            let mut ids: Vec<u32> = endpoint.clusters.values().map(Cluster::id).collect();
+            let mut ids: Vec<u32> = endpoint.clusters.values().map(|c| c.id() as u32).collect();
             let before = ids.len();
             ids.sort_unstable();
             ids.dedup();
