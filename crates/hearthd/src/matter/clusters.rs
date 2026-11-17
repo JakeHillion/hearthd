@@ -565,3 +565,24 @@ pub struct WeatherConditionCluster {
     /// Current normalised condition (null if unknown).
     pub condition: Option<WeatherCondition>,
 }
+
+/// Battery storage control (hearthd-local, 0xFC06): the limits a home battery
+/// is charged and discharged within.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, facet::Facet)]
+pub struct BatteryStorageControlCluster {
+    /// Writable ceiling on charging power (int64, milliwatts; null if
+    /// unknown).
+    pub charge_power_limit: Option<i64>,
+
+    /// Highest value `charge_power_limit` accepts (int64, milliwatts; null if
+    /// unknown).
+    pub max_charge_power_limit: Option<i64>,
+
+    /// Writable state of charge charging stops at (uint8, percent 0..100;
+    /// null if unknown).
+    pub charge_limit: Option<u8>,
+
+    /// Writable state of charge held back from discharge (uint8, percent
+    /// 0..100; null if unknown).
+    pub reserve: Option<u8>,
+}

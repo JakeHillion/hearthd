@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
+use clap::Subcommand;
 use tokio::signal::unix::SignalKind;
 use tokio::signal::unix::signal;
 use tracing::debug;
@@ -23,14 +24,31 @@ struct Cli {
         default_value = "/etc/hearthd/config.toml"
     )]
     config: Vec<PathBuf>,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run an integration helper without loading daemon configuration.
+    Integration {
+        #[command(subcommand)]
+        integration: hearthd::IntegrationCommand,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    match cli.command {
+        Some(Command::Integration { integration }) => Ok(integration.run().await?),
+        None => run_daemon(&cli.config).await,
+    }
+}
 
+async fn run_daemon(config: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
     // Load and parse the configuration files
-    let (cfg, diagnostics) = match hearthd::Config::from_files(&cli.config) {
+    let (cfg, diagnostics) = match hearthd::Config::from_files(config) {
         Ok(result) => result,
         Err(e) => {
             eprintln!("{}", e);
@@ -176,4 +194,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("hearthd stopped");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integration_help_is_available_without_any_helpers() {
+        let error = Cli::try_parse_from(["hearthd", "integration", "--help"])
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn integration_helpers_track_their_features() {
+        let result = Cli::try_parse_from(["hearthd", "integration", "anker-solix", "enrol"]);
+        assert_eq!(result.is_ok(), cfg!(feature = "integration_anker_solix"));
+    }
 }

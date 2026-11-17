@@ -91,6 +91,9 @@ pub struct HttpConfig {
 
 #[derive(Debug, Default, FromConfig)]
 pub struct IntegrationsConfig {
+    #[cfg(feature = "integration_anker_solix")]
+    pub anker_solix: Option<crate::integrations::anker_solix::Config>,
+
     #[cfg(feature = "integration_mqtt")]
     pub mqtt: Option<crate::integrations::mqtt::MqttConfig>,
 

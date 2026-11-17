@@ -18,3 +18,4 @@ pub use config::format_diagnostics;
 pub use config::format_diagnostics_plain;
 pub use engine::Engine;
 pub use engine::State;
+pub use integrations::Command as IntegrationCommand;
