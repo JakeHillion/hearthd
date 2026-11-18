@@ -3,6 +3,7 @@
 use super::error::VmError;
 use super::quantity::Quantity;
 use crate::automations::bytecode::Const;
+use crate::engine::NodeId;
 
 /// One constant-pool slot, decoded into the form opcodes actually read.
 ///
@@ -20,6 +21,7 @@ pub(super) enum VmConst {
     String(String),
     Ident(String),
     Quantity(Quantity),
+    Node(NodeId),
 }
 
 impl TryFrom<Const> for VmConst {
@@ -39,6 +41,7 @@ impl TryFrom<Const> for VmConst {
             Const::Float(n) => VmConst::Float(n),
             Const::String(s) => VmConst::String(s),
             Const::Ident(s) => VmConst::Ident(s),
+            Const::Node(id) => VmConst::Node(id),
             Const::UnitLit { value, unit } => {
                 VmConst::Quantity(Quantity::from_unit_literal(unit, &value).ok_or_else(|| {
                     VmError::Overflow(format!("unit literal `{}{}`", value, unit))

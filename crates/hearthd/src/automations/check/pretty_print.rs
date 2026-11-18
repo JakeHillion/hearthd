@@ -254,18 +254,6 @@ impl PrettyPrint for TypedProgram {
 impl PrettyPrint for CheckResult {
     fn pretty_print(&self, indent: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.program.pretty_print(indent, f)?;
-        if !self.constraints.is_empty() {
-            write_indent(indent, f)?;
-            writeln!(f, "EntityConstraints:")?;
-            for c in &self.constraints {
-                write_indent(indent + 1, f)?;
-                writeln!(
-                    f,
-                    "{}.{} @ {}..{}",
-                    c.domain, c.entity, c.span.start, c.span.end
-                )?;
-            }
-        }
         if !self.errors.is_empty() {
             write_indent(indent, f)?;
             writeln!(f, "Errors:")?;
