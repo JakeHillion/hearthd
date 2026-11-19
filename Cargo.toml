@@ -24,7 +24,7 @@ clap = { version = "4", features = ["derive"] }
 hostname = "0.4"
 insta = "1.40"
 linkme = "0.3.35"
-rand = "0.9"
+rand = "0.10"
 # TLS everywhere is rustls with the `ring` provider, never aws-lc-rs: aws-lc-sys
 # needs cmake and bindgen at build time, which the flake's empty
 # nativeBuildInputs does not supply. The `*-no-provider` features below exist to
